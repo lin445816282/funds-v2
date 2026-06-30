@@ -1,0 +1,2162 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>门店资金 V2</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#e4edf7;color:#1a2438;max-width:420px;margin:0 auto;min-height:100vh}
+body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:480px;background:rgba(59,130,246,.10);border-radius:50%;filter:blur(80px);z-index:0;pointer-events:none}
+
+/* 登录 */
+.login-gate{position:fixed;inset:0;z-index:500;background:#e4edf7;display:flex;align-items:center;justify-content:center}
+.login-gate.hide{display:none}
+.login-box{background:#fff;border-radius:16px;padding:32px 24px;width:320px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08)}
+.login-box h2{font-size:20px;margin-bottom:4px}
+.login-box .sub{font-size:12px;color:#8899b0;margin-bottom:20px}
+.login-box input{width:100%;padding:12px;border:1px solid #cdd7e5;border-radius:10px;font-size:15px;text-align:center;margin-bottom:12px;background:#f8fafc}
+.login-box button{width:100%;padding:12px;border-radius:10px;border:none;background:#1e3a5f;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
+.login-box button:active{opacity:.85}
+
+/* 顶栏 */
+.header{background:#fff;padding:10px 16px;position:sticky;top:0;z-index:10;box-shadow:0 1px 3px rgba(0,0,0,.04);display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:16px;font-weight:700}
+.header .hdr-row{display:flex;align-items:center;gap:6px}
+.header .hdr-btn{width:30px;height:30px;border-radius:50%;border:1px solid #cdd7e5;background:#f8fafc;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.header .hdr-btn:active{background:#eef3ff}
+.header .user-pill{padding:4px 10px;background:#f5f7fa;border-radius:14px;font-size:12px;color:#5a6b85;cursor:pointer}
+.header .user-pill:active{background:#dce4f0}
+
+/* 标签导航 */
+.tab-bar{display:flex;margin:0 16px;position:sticky;top:50px;z-index:9;background:#e4edf7;padding:8px 0 4px}
+.tab-bar button{flex:1;padding:8px 0;border:none;background:transparent;font-size:13px;font-weight:600;color:#8899b0;border-bottom:2px solid transparent;cursor:pointer;transition:all .2s}
+.tab-bar button.on{color:#1e3a5f;border-bottom-color:#1e3a5f}
+
+/* 面板 */
+.panel{display:none;padding:0 16px 90px}
+.panel.on{display:block}
+
+/* ===== 年月周导航粒 ===== */
+.period-nav{display:flex;align-items:center;justify-content:center;gap:6px;margin:8px 0 4px;position:relative;z-index:1}
+.period-pill{padding:8px 16px;background:#f5f7fa;border-radius:20px;font-size:14px;font-weight:600;color:#3a5070;cursor:pointer;user-select:none;transition:background .15s}
+.period-pill:active{background:#dce4f0}
+.period-pill .arr{font-size:10px;color:#8899b0;margin-left:3px}
+
+/* 滚轮弹窗 */
+.wheel-modal{position:fixed;inset:0;background:rgba(10,20,40,.3);z-index:160;display:flex}
+.wheel-modal.hide{display:none}
+.wheel-modal .anchor{position:absolute}
+.wheel-sheet{background:#fff;border-radius:14px;width:180px;padding:10px 10px 8px;box-shadow:0 8px 30px rgba(0,0,0,.15)}
+.wheel-sheet .ws-title{text-align:center;font-size:13px;font-weight:700;color:#1a2438;margin-bottom:8px}
+.wheel-wrap{position:relative;overflow:hidden;border-radius:10px;background:#f5f7fa;height:144px}
+.wheel-wrap::before,.wheel-wrap::after{content:'';position:absolute;left:0;right:0;height:48px;z-index:2;pointer-events:none}
+.wheel-wrap::before{top:0;background:linear-gradient(to bottom, #f5f7fa 20%, transparent 100%)}
+.wheel-wrap::after{bottom:0;background:linear-gradient(to top, #f5f7fa 20%, transparent 100%)}
+.wheel-wrap .hl{position:absolute;left:8px;right:8px;top:50%;transform:translateY(-50%);height:32px;background:rgba(59,130,246,.08);border-radius:6px;z-index:1;pointer-events:none}
+.wheel-list{display:flex;flex-direction:column;align-items:center;padding:56px 0;overflow-y:auto;height:100%;scroll-snap-type:y mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.wheel-list::-webkit-scrollbar{display:none}
+.wheel-item{flex-shrink:0;height:32px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;color:#8899b0;scroll-snap-align:center;cursor:pointer;padding:0 12px}
+.wheel-item.sel{color:#1a2438;font-size:17px}
+.ws-btns{display:flex;gap:8px;margin-top:10px}
+.ws-btns button{flex:1;padding:8px;border-radius:10px;border:none;font-size:14px;font-weight:600;cursor:pointer}
+.ws-cancel{background:#f0f3f8;color:#5a6b85}
+.ws-ok{background:#1e3a5f;color:#fff}
+.ws-ok:active,.ws-cancel:active{opacity:.85}
+
+/* 日期滚轮 */
+.date-wheels{display:flex;gap:6px;height:144px;justify-content:center;margin-bottom:10px}
+.date-wheels .wheel-wrap{flex:1;max-width:80px}
+.cal-pill{padding:10px 14px;background:#f5f7fa;border-radius:20px;font-size:14px;font-weight:600;color:#3a5070;cursor:pointer;user-select:none;margin-bottom:10px;display:inline-flex;align-items:center}
+.cal-pill:active{background:#dce4f0}
+.cal-pill .arr{font-size:10px;color:#8899b0;margin-left:4px}
+
+/* 风险条 */
+.risk-bar{margin:4px 0}
+.risk{background:#fffef5;border:1px solid #fde68a;border-radius:10px;padding:8px 12px;font-size:12px;color:#92400e;display:flex;align-items:center;gap:6px;position:relative;z-index:1;margin-bottom:4px}
+
+/* ===== 录入 ===== */
+.entry-form{background:#fff;border-radius:14px;padding:16px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.entry-form label{font-size:12px;color:#8899b0;display:block;margin-bottom:4px;margin-top:10px}
+.entry-form label:first-child{margin-top:0}
+.entry-form input,.entry-form select{width:100%;padding:10px 12px;border:1px solid #cdd7e5;border-radius:10px;font-size:14px;background:#f8fafc;color:#1a2438;margin-bottom:4px}
+.entry-form select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%23899' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+.entry-form .btn-row{display:flex;gap:8px;margin-top:12px}
+.entry-form .btn-row button{flex:1;padding:10px;border-radius:10px;border:none;font-size:14px;font-weight:600;cursor:pointer}
+.btn-save{background:#1e3a5f;color:#fff}
+.btn-clear{background:#f0f3f8;color:#5a6b85}
+.btn-save:active,.btn-clear:active{opacity:.85}
+
+/* 录入双列 */
+.ef-row{display:flex;gap:10px}
+.ef-row .ef-col{flex:1;min-width:0}
+.ef-row .ef-col label{font-size:12px;color:#8899b0;display:block;margin-bottom:4px}
+.ef-row .cal-pill{display:flex;width:100%;justify-content:space-between}
+
+/* 管理页 pills */
+.mgmt-pill{padding:10px 16px;background:#f5f7fa;border-radius:20px;font-size:14px;font-weight:600;color:#3a5070;cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:4px;border:none;transition:background .15s}
+.mgmt-pill:active{background:#dce4f0}
+.mgmt-pill .arr{font-size:10px;color:#8899b0}
+.mgmt-pill-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+
+/* 管理页弹窗 sheet */
+.mgmt-sheet-mask{position:fixed;inset:0;background:rgba(10,20,40,.3);z-index:150;display:flex;align-items:center;justify-content:center}
+.mgmt-sheet-mask.hide{display:none}
+.mgmt-sheet{background:#fff;border-radius:14px;width:280px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.15)}
+.mgmt-sheet .ms-title{text-align:center;font-size:14px;font-weight:700;color:#1a2438;margin-bottom:12px}
+.mgmt-sheet input,.mgmt-sheet select{width:100%;padding:10px 12px;border:1px solid #cdd7e5;border-radius:10px;font-size:14px;background:#f8fafc;color:#1a2438;margin-bottom:8px}
+.mgmt-sheet .ms-btns{display:flex;gap:8px;margin-top:4px}
+.mgmt-sheet .ms-btns button{flex:1;padding:10px;border-radius:10px;border:none;font-size:14px;font-weight:600;cursor:pointer}
+
+/* 日历 */
+.cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.cal-nav{font-size:14px;color:#5a6b85;cursor:pointer;padding:4px 10px;border-radius:8px;user-select:none}
+.cal-nav:active{background:#eef2f7}
+.cal-title{font-size:15px;font-weight:700;color:#1a2438}
+.cal-weekdays{display:flex;margin-bottom:4px}
+.cal-weekdays span{flex:1;text-align:center;font-size:11px;color:#8899b0;padding:4px 0}
+.cal-grid{display:flex;flex-wrap:wrap}
+.cal-day{width:14.285%;text-align:center;padding:8px 0;font-size:14px;font-weight:600;color:#1a2438;border-radius:10px;cursor:pointer;user-select:none}
+.cal-day:active{background:#eef3ff}
+.cal-day.today{background:#eef3ff;color:#1e3a5f}
+.cal-day.sel{background:#1e3a5f;color:#fff}
+.cal-day.other{color:#cdd7e5;pointer-events:none}
+.cal-today-row{text-align:center;margin-top:10px;padding-top:8px;border-top:1px solid #eef2f7}
+.cal-today-row span{font-size:13px;color:#3b82f6;font-weight:600;cursor:pointer;padding:4px 12px;border-radius:8px}
+.cal-today-row span:active{background:#eef3ff}
+
+/* 最近记录 */
+.record-list{margin-top:12px}
+.record-item{background:#fff;border-radius:10px;padding:12px;margin-bottom:6px;display:flex;align-items:center;gap:10px;box-shadow:0 1px 2px rgba(0,0,0,.02)}
+.record-item .cat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.record-item .cat-dot.in{background:#22c55e}
+.record-item .cat-dot.out{background:#ef4444}
+.record-item .info{flex:1;min-width:0}
+.record-item .info .top{font-size:14px;font-weight:600;display:flex;justify-content:space-between}
+.record-item .info .bot{font-size:11px;color:#8899b0;margin-top:2px}
+.record-item .del{font-size:12px;color:#c0c9d4;cursor:pointer;padding:4px 8px}
+.record-item .del:active{color:#ef4444}
+
+/* ===== 总览 ===== */
+.summary-dual{display:flex;gap:8px;margin-bottom:8px}
+.summary-cell{flex:1;background:#fff;border-radius:12px;padding:14px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.summary-cell .num{font-size:26px;font-weight:800;letter-spacing:-1px}
+.summary-cell .lbl{font-size:11px;color:#8899b0;margin-top:2px}
+
+.ov-breakdown{background:#fff;border-radius:12px;padding:14px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.ov-breakdown h3{font-size:13px;margin-bottom:8px;color:#5a6b85}
+.br-row{display:flex;align-items:center;margin-bottom:6px;gap:8px}
+.br-label{font-size:12px;width:40px;flex-shrink:0;color:#5a6b85}
+.br-bar{flex:1;height:8px;background:#eef2f7;border-radius:4px;overflow:hidden}
+.br-fill{height:100%;border-radius:4px}
+.br-amt{font-size:12px;font-weight:600;width:64px;text-align:right;flex-shrink:0}
+.br-row.net{border-top:1px solid #eef2f7;padding-top:6px;margin-top:2px}
+
+.ov-cards{margin-top:8px}
+.ov-card2{background:#fff;border-radius:12px;padding:14px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.03);position:relative}
+.ov-card2 .alert-dot{position:absolute;top:10px;right:10px;width:8px;height:8px;border-radius:50%}
+.ov-card2 .alert-dot.red{background:#ef4444}
+.ov-card2 .alert-dot.yellow{background:#f59e0b}
+.ov-card2 .top-row{display:flex;justify-content:space-between;align-items:flex-start}
+.ov-card2 .s-name{font-size:15px;font-weight:600}
+.ov-card2 .s-bal{font-size:24px;font-weight:800}
+.ov-card2 .cats{display:flex;gap:12px;margin-top:6px;font-size:12px;flex-wrap:wrap}
+.ov-card2 .cats span{white-space:nowrap}
+.ov-card2 .card-btns{margin-top:6px;display:flex;gap:3px}
+.ov-card2 .card-btn{font-size:10px;padding:2px 7px;border-radius:10px;border:1px solid #cdd7e5;background:#f8fafc;color:#8899b0;cursor:pointer}
+.ov-card2 .card-ymd{display:flex;gap:10px;margin-top:4px;font-size:11px;font-weight:600}
+
+.ov-all-card{background:#fff;border-radius:12px;padding:14px;margin-bottom:8px;box-shadow:0 1px 4px rgba(0,0,0,.06);position:relative}
+.ov-all-card .all-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.ov-all-card .all-title{font-size:15px;font-weight:700;color:#1a2438}
+.ov-all-card .all-pills{display:flex;gap:4px}
+.ov-all-card .all-pill{font-size:11px;padding:3px 10px;border-radius:14px;border:1px solid #cdd7e5;background:#f8fafc;color:#5a6d80;cursor:pointer;transition:all .15s}
+.ov-all-card .all-pill.on{background:#3b82f6;color:#fff;border-color:#3b82f6}
+.ov-all-card .all-pill.ana{background:#f0fdf4;color:#166534;border-color:#86efac}
+.ov-all-card .all-pill.ana.on{background:#16a34a;color:#fff;border-color:#16a34a}
+.ov-all-card .all-nums{display:flex;gap:12px;flex-wrap:wrap}
+.ov-all-card .all-num{flex:1;min-width:80px;text-align:center}
+.ov-all-card .all-num .all-label{font-size:11px;color:#8899b0}
+.ov-all-card .all-num .all-val{font-size:20px;font-weight:800;margin-top:2px}
+.ov-all-card .all-num .all-sub{font-size:10px;color:#b0bed0;margin-top:2px}
+.ov-all-card .all-detail{margin-top:8px;padding-top:8px;border-top:1px dashed #eef2f7;font-size:11px;color:#8899b0;display:flex;gap:12px;flex-wrap:wrap}
+.ov-all-card .all-detail span{white-space:nowrap}
+.card-bar{margin-top:10px;height:4px;background:#dae4f0;border-radius:2px;overflow:hidden}
+.card-bar-fill{height:100%;border-radius:2px;transition:width .4s ease}
+
+/* ===== 对比 ===== */
+.cmp-wrap{margin-top:8px}
+.cmp-filters{display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap}
+.cmp-filters button{padding:6px 12px;border-radius:14px;border:1px solid #cdd7e5;background:#f8fafc;font-size:12px;font-weight:600;color:#5a6b85;cursor:pointer}
+.cmp-filters button.on{background:#1e3a5f;color:#fff;border-color:#1e3a5f}
+.cmp-chart{background:#fff;border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.cmp-chart canvas{width:100%;height:220px;display:block}
+.compare-stores{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.store-tag{font-size:12px;color:#5a6b85;display:flex;align-items:center;gap:3px;cursor:pointer;padding:4px 10px;border-radius:14px;border:1px solid #cdd7e5;background:#f8fafc}
+.store-tag.on{border-color:#1e3a5f;background:#eef3ff;color:#1e3a5f;font-weight:600}
+.cmp-gran{display:flex;gap:4px;margin-bottom:8px}
+.cmp-gran button{padding:5px 10px;border-radius:14px;border:1px solid #cdd7e5;background:#f8fafc;font-size:11px;font-weight:600;color:#5a6b85;cursor:pointer}
+.cmp-gran button.on{background:#1e3a5f;color:#fff;border-color:#1e3a5f}
+
+/* ===== 预警 ===== */
+.alert-list{margin-top:8px}
+.alert-item{background:#fff;border-radius:10px;padding:12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px;box-shadow:0 1px 2px rgba(0,0,0,.02);border-left:3px solid #ef4444}
+.alert-item.yellow{border-left-color:#f59e0b}
+.alert-item.green{border-left-color:#22c55e}
+.alert-item .al-icon{font-size:18px;flex-shrink:0}
+.alert-item .al-info{flex:1}
+.alert-item .al-info .al-title{font-size:14px;font-weight:600}
+.alert-item .al-info .al-detail{font-size:12px;color:#8899b0;margin-top:2px}
+.alert-rules{margin-top:12px;background:#fff;border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.alert-rules h3{font-size:13px;margin-bottom:8px;color:#5a6b85}
+.rule-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f3f8}
+.rule-row:last-child{border-bottom:none}
+.rule-row .r-name{font-size:13px;font-weight:600}
+.rule-row .r-val{display:flex;align-items:center;gap:8px}
+.rule-row input{width:80px;padding:6px 8px;border:1px solid #cdd7e5;border-radius:8px;font-size:13px;text-align:center;background:#f8fafc}
+.rule-row select{width:60px;padding:6px;border:1px solid #cdd7e5;border-radius:8px;font-size:12px;background:#f8fafc}
+
+/* ===== 管理 ===== */
+.mgmt-section{background:#fff;border-radius:12px;padding:14px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.mgmt-section h3{font-size:13px;margin-bottom:8px;color:#5a6b85}
+.cat-tag{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:14px;background:#f5f7fa;font-size:12px;margin:2px;cursor:pointer}
+.cat-tag:active{background:#dce4f0}
+.cat-tag .dot2{width:6px;height:6px;border-radius:50%}
+
+.up{color:#22c55e!important}
+.down{color:#ef4444!important}
+.empty{text-align:center;color:#b0bed0;font-size:13px;padding:24px 0}
+
+/* FAB */
+.fab{position:fixed;bottom:28px;right:calc(50% - 210px + 20px);z-index:20}
+.fab-btn{width:50px;height:50px;border-radius:50%;background:#1e3a5f;color:#fff;border:none;font-size:26px;line-height:1;box-shadow:0 4px 14px rgba(30,58,95,.35);cursor:pointer}
+.fab-btn:active{transform:scale(.92)}
+
+/* 弹窗 */
+.modal-mask{position:fixed;inset:0;background:rgba(10,20,40,.4);z-index:100;display:flex;align-items:center;justify-content:center}
+.modal-mask.hide{display:none}
+.modal-box{background:#fff;border-radius:14px;width:300px;padding:20px}
+.modal-box h3{font-size:15px;text-align:center;margin-bottom:12px}
+.modal-box input,.modal-box select{width:100%;padding:10px;border:1px solid #cdd7e5;border-radius:10px;font-size:14px;margin-bottom:8px;background:#f8fafc}
+.modal-btns{display:flex;gap:8px}
+.modal-btns button{flex:1;padding:10px;border-radius:10px;border:none;font-size:14px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+
+<!-- 登录门 -->
+<div class="login-gate" id="login-gate">
+  <div class="login-box">
+    <h2>🔐 门店资金</h2>
+    <div class="sub">输入密码进入</div>
+    <input type="password" id="login-pwd" placeholder="密码" onkeydown="if(event.key==='Enter')doLogin()">
+    <button onclick="doLogin()">进入</button>
+  </div>
+</div>
+
+<!-- 主界面 -->
+<div id="app" style="display:none">
+
+  <!-- 顶栏 -->
+  <div class="header">
+    <h1>📊 门店资金</h1>
+    <div class="hdr-row">
+      <button class="hdr-btn alert-btn" onclick="switchTab('alerts')" title="预警" style="position:relative">
+        🔔<span id="alert-badge" style="display:none;position:absolute;top:-4px;right:-6px;background:#ef4444;color:#fff;font-size:10px;min-width:16px;height:16px;border-radius:8px;line-height:16px;text-align:center;padding:0 3px;font-weight:700">0</span>
+      </button>
+      <button class="hdr-btn" onclick="exportData()" title="导出">📤</button>
+      <button class="hdr-btn" onclick="document.getElementById('import-file').click()" title="导入">📥</button>
+      <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(this)">
+      <span class="user-pill" onclick="doLogout()">👤 退出</span>
+    </div>
+  </div>
+
+  <!-- 标签 -->
+  <div class="tab-bar">
+    <button class="on" onclick="switchTab('entry')">📝 录入</button>
+    <button onclick="switchTab('overview')">📊 总览</button>
+    <button onclick="switchTab('compare')">📈 对比</button>
+    <button onclick="switchTab('alerts')">⚠️ 预警</button>
+    <button onclick="switchTab('mgmt')">⚙️ 管理</button>
+  </div>
+
+  <!-- ====== 录入面板 ====== -->
+  <div class="panel on" id="panel-entry">
+    <button class="mgmt-pill" style="width:100%;justify-content:center;margin-top:8px" onclick="openEntryPopup()">＋ 记一笔</button>
+    <div class="record-list" id="record-list"></div>
+  </div>
+
+  <!-- ====== 总览面板 ====== -->
+  <div class="panel" id="panel-overview">
+    <!-- 年月周导航粒 -->
+    <div class="period-nav">
+      <span class="period-pill" id="pill-year" onclick="pickOne('year')"><span id="pb-year"></span><span class="arr">▾</span></span>
+      <span class="period-pill" id="pill-month" onclick="pickOne('month')"><span id="pb-month"></span><span class="arr">▾</span></span>
+    </div>
+    <!-- 风险条 -->
+    <div class="risk-bar" id="ov-risks"></div>
+    <!-- 分类拆解 -->
+    <div class="ov-breakdown" id="ov-breakdown"></div>
+    <!-- 全部汇总卡片 -->
+    <div class="ov-all-card" id="ov-all-card">
+      <div class="all-header">
+        <span class="all-title">📊 全部</span>
+        <div class="all-pills">
+          <span class="all-pill" onclick="setAllView('year')">年</span>
+          <span class="all-pill on" onclick="setAllView('month')">月</span>
+          <span class="all-pill" onclick="setAllView('day')">日</span>
+          <span class="all-pill ana" onclick="setAllView('analysis')">📈 分析</span>
+        </div>
+      </div>
+      <div class="all-nums" id="all-nums"></div>
+      <div class="all-detail" id="all-detail"></div>
+    </div>
+    <!-- 门店卡片 -->
+    <div class="ov-cards" id="ov-cards"></div>
+  </div>
+
+  <!-- ====== 对比面板 ====== -->
+  <div class="panel" id="panel-compare">
+    <div class="cmp-wrap">
+      <div class="cmp-filters" id="cmp-filters"></div>
+      <div class="compare-stores" id="cmp-stores"></div>
+      <div class="cmp-gran" id="cmp-gran-bar"></div>
+      <div class="cmp-chart"><canvas id="cmp-canvas"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ====== 预警面板 ====== -->
+  <div class="panel" id="panel-alerts">
+    <div class="alert-list" id="alert-list"></div>
+    <div class="alert-rules" id="alert-rules"></div>
+  </div>
+
+  <!-- 预警详情弹窗 -->
+  <div class="mgmt-sheet-mask hide" id="alert-detail-mask" onclick="closeAlertDetail()">
+    <div class="mgmt-sheet" onclick="event.stopPropagation()" style="width:300px;padding:14px">
+      <div class="ms-title" id="ad-title"></div>
+      <div id="ad-body" style="font-size:14px;color:#1a2438;line-height:1.6"></div>
+      <div class="ms-btns" style="margin-top:12px">
+        <button class="ws-ok" onclick="closeAlertDetail()" style="flex:1">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 数据详情弹窗 -->
+  <div class="modal-mask hide" id="data-modal" onclick="closeDataModal()">
+    <div class="modal-box" onclick="event.stopPropagation()" style="width:90%;max-width:400px;max-height:80vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <h3 id="dm-title" style="margin:0"></h3>
+        <span onclick="closeDataModal()" style="font-size:20px;color:#8899b0;cursor:pointer;line-height:1">&times;</span>
+      </div>
+      <div id="dm-body"></div>
+      <div class="modal-btns" style="margin-top:12px">
+        <button style="background:#3b82f6;color:#fff" onclick="closeDataModal()">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 管理面板 ====== -->
+  <div class="panel" id="panel-mgmt">
+    <div class="mgmt-section">
+      <h3>🏪 门店管理</h3>
+      <div id="mgmt-stores"></div>
+      <div class="mgmt-pill-row">
+        <button class="mgmt-pill" onclick="showMgmtSheet('store')">＋ 添加门店 <span class="arr">▾</span></button>
+      </div>
+    </div>
+    <div class="mgmt-section">
+      <h3>🏷️ 分类管理</h3>
+      <div id="mgmt-cats"></div>
+      <div class="mgmt-pill-row">
+        <button class="mgmt-pill" onclick="showMgmtSheet('cat')">＋ 添加分类 <span class="arr">▾</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FAB -->
+  <div class="fab"><button class="fab-btn" onclick="openEntryPopup()">＋</button></div>
+
+</div>
+
+<!-- 单列滚轮弹窗 -->
+<div class="wheel-modal hide" id="wheel-modal" onclick="closePicker()">
+  <div class="anchor" id="wheel-anchor">
+    <div class="wheel-sheet" onclick="event.stopPropagation()">
+      <div class="ws-title" id="ws-title">选择</div>
+      <div class="wheel-wrap"><div class="hl"></div><div class="wheel-list" id="wl-pick"></div></div>
+      <div class="ws-btns">
+        <button class="ws-cancel" onclick="closePicker()">取消</button>
+        <button class="ws-ok" onclick="confirmPicker()">确定</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 录入弹窗 -->
+<div class="mgmt-sheet-mask hide" id="entry-popup" onclick="closeEntryPopup()">
+  <div class="mgmt-sheet" onclick="event.stopPropagation()" style="width:300px;padding:14px">
+    <div class="ms-title">📝 记一笔</div>
+    <label style="font-size:12px;color:#8899b0;display:block;margin-bottom:3px">门店</label>
+    <span class="cal-pill" id="ef-store-pill" onclick="entryPickOne('store')" style="width:100%;display:flex;justify-content:space-between;margin-bottom:8px;padding:9px 14px">🏪 选择门店<span class="arr">▾</span></span>
+    <input type="hidden" id="ef-store" value="">
+    <div class="ef-row" style="gap:8px">
+      <div class="ef-col">
+        <label>分类</label>
+        <span class="cal-pill" id="ef-cat-pill" onclick="entryPickOne('cat')" style="display:flex;width:100%;justify-content:space-between;padding:9px 12px">🏷️ 选择分类<span class="arr">▾</span></span>
+        <input type="hidden" id="ef-cat" value="">
+      </div>
+      <div class="ef-col">
+        <label>数值</label>
+        <input type="number" id="ef-amount" placeholder="+5800">
+      </div>
+    </div>
+    <label style="font-size:12px;color:#8899b0;display:block;margin-top:8px;margin-bottom:3px">名字</label>
+    <input placeholder="选填" id="ef-note" style="width:100%;padding:9px 12px;border:1px solid #cdd7e5;border-radius:10px;font-size:14px;background:#f8fafc;color:#1a2438;margin-bottom:0">
+    <label style="font-size:12px;color:#8899b0;display:block;margin-top:8px;margin-bottom:3px">日期</label>
+    <span class="cal-pill" id="cal-pill" onclick="openCalendar()" style="width:100%;display:flex;justify-content:space-between;margin-bottom:0;padding:9px 14px">📅 选择日期<span class="arr">▾</span></span>
+    <input type="hidden" id="ef-date" value="">
+    <div class="ms-btns">
+      <button class="ws-cancel" onclick="closeEntryPopup()">取消</button>
+      <button class="ws-ok" onclick="saveEntry()">记一笔</button>
+    </div>
+  </div>
+</div>
+
+<!-- 日历表选弹窗 -->
+<div class="wheel-modal hide" id="cal-mask" onclick="closeCalendar()">
+  <div class="anchor" id="cal-anchor">
+    <div class="wheel-sheet" onclick="event.stopPropagation()" style="width:300px">
+      <div class="cal-head">
+        <span class="cal-nav" onclick="calShift(-1)">◀</span>
+        <span class="cal-title" id="cal-title"></span>
+        <span class="cal-nav" onclick="calShift(1)">▶</span>
+      </div>
+      <div class="cal-weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+      <div class="cal-grid" id="cal-grid"></div>
+      <div class="cal-today-row"><span onclick="calGoToday()">今天</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- 管理弹窗 sheet -->
+<div class="mgmt-sheet-mask hide" id="mgmt-sheet-mask" onclick="closeMgmtSheet()">
+  <div class="mgmt-sheet" onclick="event.stopPropagation()" id="mgmt-sheet" style="width:300px">
+    <div class="ms-title" id="ms-title">添加</div>
+    <div class="wheel-wrap" style="height:112px;margin-bottom:10px"><div class="hl"></div><div class="wheel-list" id="ms-wheel"></div></div>
+    <div id="ms-body"></div>
+    <div class="ms-btns">
+      <button class="ws-cancel" onclick="closeMgmtSheet()">取消</button>
+      <button class="ws-ok" onclick="confirmMgmtSheet()">确定</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════ 数据层 ═══════════
+var PWD = '123456';
+var categories = [
+  {id:'income', name:'收入', dir:'+', color:'#22c55e', budget:0, show:true},
+  {id:'purchase', name:'采购', dir:'-', color:'#ef4444', budget:10000, show:true},
+  {id:'salary', name:'工资', dir:'-', color:'#f59e0b', budget:8000, show:true},
+  {id:'rent', name:'租金', dir:'-', color:'#8b5cf6', budget:5000, show:true},
+  {id:'logistics', name:'物流', dir:'-', color:'#3b82f6', budget:3000, show:true},
+  {id:'marketing', name:'营销', dir:'-', color:'#ec4899', budget:2000, show:true},
+  {id:'refund', name:'退款', dir:'-', color:'#f97316', budget:0, show:true},
+  {id:'other_in', name:'其他收入', dir:'+', color:'#14b8a6', budget:0, show:true},
+  {id:'other_out', name:'其他支出', dir:'-', color:'#6366f1', budget:0, show:true},
+];
+var stores = ['一店','二店','三店','四店'];
+var records = [];
+var alertRules = [
+  {id:'R1', cat:'purchase', type:'over', desc:'采购超预算', pct:100, on:true},
+  {id:'R2', cat:'purchase', type:'near', desc:'采购接近预算', pct:90, on:true},
+  {id:'R3', cat:'salary', type:'over', desc:'工资超预算', pct:100, on:true},
+  {id:'R4', cat:'*', type:'net_neg', desc:'门店月净额为负', pct:0, on:true},
+  {id:'combo', cat:'', type:'combo_loss', desc:'组合连续亏损预警', pct:3, on:false},
+  {id:'store_loss', cat:'', type:'store_loss', desc:'各门店连续亏损预警', pct:3, on:true},
+  {id:'store_profit', cat:'', type:'store_profit', desc:'各门店连续赚钱通知', pct:0, on:true},
+  {id:'combo_profit', cat:'', type:'combo_profit', desc:'组合连续赚钱通知', pct:0, on:false},
+];
+var currentTab = 'entry';
+
+// 管理弹窗状态
+var mgmtMode = '';
+
+// 周期状态
+var ovYear, ovMonth;
+var now = new Date();
+ovYear = now.getFullYear();
+ovMonth = now.getMonth() + 1;
+var warnComboOn = false;
+var warnComboStores = {};
+stores.forEach(function(s){ warnComboStores[s] = true; });
+var warnStoreOn = {};
+stores.forEach(function(s){ warnStoreOn[s] = true; });
+var profitStoreOn = {};
+stores.forEach(function(s){ profitStoreOn[s] = true; });
+var allView = 'month';
+var yearStoreSel = {};
+stores.forEach(function(s){ yearStoreSel[s] = true; });
+// 月/日弹窗门店选择（共用，打开时初始化为全选）
+var modalStoreSel = {};
+var singleStoreMode = '';
+function initModalStore() {
+  if (singleStoreMode) return; // 单店模式不复位
+  stores.forEach(function(s){ modalStoreSel[s] = true; });
+}
+function toggleModalStore(s) {
+  if (singleStoreMode && s !== singleStoreMode) return;
+  modalStoreSel[s] = !modalStoreSel[s];
+  var has = false;
+  stores.forEach(function(st){ if (modalStoreSel[st]) has = true; });
+  if (!has) { modalStoreSel[s] = true; return; }
+  // 根据当前弹窗刷新
+  if (!document.getElementById('data-modal').classList.contains('hide')) {
+    var title = document.getElementById('dm-title').innerHTML;
+    if (title.indexOf('月份')>=0) renderDataModal('month');
+    else if (title.indexOf('日期')>=0) renderDataModal('day');
+    else if (title.indexOf('连续趋势')>=0) renderDataModal('analysis');
+  }
+}
+
+function findCat(id) {
+  for (var i=0; i<categories.length; i++) { if (categories[i].id === id) return categories[i]; }
+  return null;
+}
+
+// 对比状态
+var cmpCat = 'total';
+var cmpGran = 'month';
+var cmpStoresSel = []; // 选中的门店
+var cmpColors = {'一店':'#ef4444','二店':'#3b82f6','三店':'#22c55e','四店':'#f59e0b'};
+var cmpMoreColors = ['#ef4444','#3b82f6','#22c55e','#f59e0b','#8b5cf6','#ec4899','#f97316','#14b8a6','#6366f1','#eab308'];
+
+// 日期滚轮状态
+var txYear, txMonth, txDay;
+
+// API 数据同步
+var apiToken = localStorage.getItem('funds_token') || '';
+
+function syncFromAPI() {
+  // 无 token 也尝试拉取（公开 API）
+  try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/funds/data', false);
+    xhr.send();
+    if (xhr.status === 200) {
+      var data = JSON.parse(xhr.responseText);
+      if (data.stores) stores = data.stores;
+      if (data.categories) categories = data.categories;
+      if (data.records) records = data.records;
+      if (data.alert_rules && data.alert_rules.length) alertRules = data.alert_rules;
+      if (data.warn_store_on) warnStoreOn = data.warn_store_on;
+      if (data.profit_store_on) profitStoreOn = data.profit_store_on;
+      return true;
+    }
+  } catch(e) { console.log('API sync err:', e); }
+  return false;
+}
+
+function pushToAPI() {
+  try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/funds/data', true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.send(JSON.stringify({
+      stores: stores,
+      categories: categories,
+      records: records,
+      alert_rules: alertRules,
+      warn_store_on: warnStoreOn,
+      profit_store_on: profitStoreOn
+    }));
+  } catch(e) { console.log('API push err:', e); }
+}
+
+// 持久化
+function loadData() {
+  // 优先 API，失败回退 localStorage
+  if (!syncFromAPI()) {
+    try {
+      var d = JSON.parse(localStorage.getItem('funds_v2')||'{}');
+      if (d.categories) categories = d.categories;
+      if (d.stores) stores = d.stores;
+      if (d.records) records = d.records;
+      if (d.alertRules && d.alertRules.length) alertRules = d.alertRules;
+      if (d.warnStoreOn) warnStoreOn = d.warnStoreOn;
+      if (d.profitStoreOn) profitStoreOn = d.profitStoreOn;
+    } catch(e) { console.log('load err:', e); }
+  }
+  var cr = null;
+  for (var j=0; j<alertRules.length; j++) { if (alertRules[j].type === 'combo_loss') { cr = alertRules[j]; break; } }
+  if (cr) warnComboOn = cr.on;
+}
+function saveData() {
+  localStorage.setItem('funds_v2', JSON.stringify({categories:categories, stores:stores, records:records, alertRules:alertRules, warnStoreOn:warnStoreOn, profitStoreOn:profitStoreOn}));
+  pushToAPI();
+}
+
+// ═══════════ 登录 ═══════════
+function doLogin() {
+  var pwd = document.getElementById('login-pwd').value;
+  if (pwd === PWD) {
+    document.getElementById('login-gate').classList.add('hide');
+    document.getElementById('app').style.display = '';
+    // 尝试 API 登录获取 token
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/funds/auth/login', false);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.send(JSON.stringify({username:'', password:pwd}));
+      if (xhr.status === 200) {
+        var resp = JSON.parse(xhr.responseText);
+        apiToken = resp.token || resp.access_token || '';
+        if (apiToken) localStorage.setItem('funds_token', apiToken);
+      }
+    } catch(e) { console.log('login API err:', e); }
+    initApp();
+  } else {
+    document.getElementById('login-pwd').style.borderColor = '#ef4444';
+    setTimeout(function(){ document.getElementById('login-pwd').style.borderColor = '#cdd7e5'; }, 1000);
+  }
+}
+function doLogout() {
+  apiToken = '';
+  localStorage.removeItem('funds_token');
+  document.getElementById('login-gate').classList.remove('hide');
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-pwd').value = '';
+}
+
+// ═══════════ 初始化 ═══════════
+function initApp() {
+  // 优先从 API 同步数据
+  var fromAPI = syncFromAPI();
+  if (!fromAPI) {
+    // API 不可用 → 回退 localStorage
+    loadData();
+    if (!records.length) seedMockData();
+  }
+  cmpStoresSel = stores.slice();
+  refreshAll();
+}
+
+function seedMockData() {
+  var y = now.getFullYear(), m = now.getMonth()+1;
+  var seed = [
+    ['一店','income',+5800],['一店','purchase',-3200],['一店','salary',-2000],['一店','rent',-800],
+    ['二店','income',+4200],['二店','purchase',-2800],['二店','salary',-1800],
+    ['三店','income',+7200],['三店','purchase',-1500],['三店','marketing',-600],
+    ['四店','income',+3500],['四店','purchase',-2200],['四店','logistics',-400],['四店','refund',-300],
+  ];
+  seed.forEach(function(s){
+    var d = y+'-'+String(m).padStart(2,'0')+'-'+String(15+Math.floor(Math.random()*10)).padStart(2,'0');
+    records.push({id:Date.now()+Math.random(), store:s[0], date:d, category:s[1], amount:s[2], note:''});
+  });
+  saveData();
+}
+
+// ═══════════ 刷新全部 ═══════════
+function refreshAll() {
+  renderEntryForm();
+  renderRecords();
+  renderOverview();
+  renderCompare();
+  renderAlerts();
+  renderMgmt();
+}
+
+// ═══════════ 录入 ═══════════
+function renderEntryForm() {
+  var today = new Date();
+  txYear = today.getFullYear();
+  txMonth = today.getMonth() + 1;
+  txDay = today.getDate();
+  var ds = txYear+'-'+String(txMonth).padStart(2,'0')+'-'+String(txDay).padStart(2,'0');
+  document.getElementById('ef-date').value = ds;
+  document.getElementById('cal-pill').innerHTML = '📅 '+txYear+'年'+txMonth+'月'+txDay+'日<span class="arr">▾</span>';
+
+  // 默认门店/分类
+  if (!document.getElementById('ef-store').value && stores.length) {
+    document.getElementById('ef-store').value = stores[0];
+    document.getElementById('ef-store-pill').innerHTML = '🏪 '+stores[0]+'<span class="arr">▾</span>';
+  }
+  if (!document.getElementById('ef-cat').value && categories.length) {
+    document.getElementById('ef-cat').value = categories[0].id;
+    document.getElementById('ef-cat-pill').innerHTML = categories[0].name+' ('+categories[0].dir+')<span class="arr">▾</span>';
+  }
+}
+
+function saveEntry() {
+  var store = document.getElementById('ef-store').value;
+  var date = document.getElementById('ef-date').value;
+  var catId = document.getElementById('ef-cat').value;
+  var amount = parseFloat(document.getElementById('ef-amount').value);
+  var note = document.getElementById('ef-note').value;
+  if (!store || !date || isNaN(amount)) return alert('请填完整');
+  records.unshift({id:Date.now()+Math.random(), store:store, date:date, category:catId, amount:amount, note:note});
+  saveData();
+  clearEntry();
+  closeEntryPopup();
+  refreshAll();
+}
+
+function openEntryPopup() {
+  renderEntryForm();
+  document.getElementById('entry-popup').classList.remove('hide');
+}
+
+function closeEntryPopup() {
+  document.getElementById('entry-popup').classList.add('hide');
+}
+
+function clearEntry() {
+  document.getElementById('ef-amount').value = '';
+  document.getElementById('ef-note').value = '';
+}
+
+function deleteRecord(id) {
+  if (!confirm('删除这条记录？')) return;
+  records = records.filter(function(r){ return r.id !== id; });
+  saveData();
+  refreshAll();
+}
+
+function renderRecords() {
+  var recent = records.slice(0, 30);
+  var catMap = {};
+  categories.forEach(function(c){ catMap[c.id] = c; });
+  var html = '';
+  recent.forEach(function(r){
+    var cat = catMap[r.category] || {name:r.category, dir:r.amount>=0?'+':'-', color:'#8899b0'};
+    var cls = cat.dir === '+' ? 'in' : 'out';
+    var sign = r.amount >= 0 ? '+' : '';
+    html += '<div class="record-item">'
+      + '<span class="cat-dot '+cls+'"></span>'
+      + '<div class="info">'
+      + '<div class="top"><span>'+cat.name+'</span><span class="'+(r.amount>=0?'up':'down')+'">'+sign+r.amount.toLocaleString()+'</span></div>'
+      + '<div class="bot">'+r.store+' · '+r.date+(r.note?' · '+r.note:'')+'</div>'
+      + '</div>'
+      + '<span class="del" onclick="deleteRecord('+r.id+')">✕</span>'
+      + '</div>';
+  });
+  document.getElementById('record-list').innerHTML = html || '<div class="empty">暂无记录，记一笔吧</div>';
+}
+
+// ═══════════ 连亏/连盈计算 ═══════════
+function getLossWarnings() {
+  var warnings = [];
+  stores.forEach(function(s){
+    if (!warnStoreOn[s]) return;
+    var dayMap = {};
+    records.forEach(function(r){
+      if (r.store !== s) return;
+      dayMap[r.date] = (dayMap[r.date]||0) + r.amount;
+    });
+    var dates = Object.keys(dayMap).sort();
+    if (dates.length < 2) return;
+    var longestLoss = 0, curRun = 0;
+    for (var di=0; di<dates.length; di++) {
+      if (dayMap[dates[di]] < 0) { curRun++; if (curRun > longestLoss) longestLoss = curRun; }
+      else curRun = 0;
+    }
+    if (longestLoss < 2) return;
+    var curLoss = 0;
+    for (var di2=dates.length-1; di2>=0; di2--) {
+      if (dayMap[dates[di2]] < 0) curLoss++;
+      else break;
+    }
+    if (curLoss === 0) return;
+    var gap = longestLoss - curLoss;
+    if (gap <= 3) {
+      var level = gap <= 1 ? '🔴' : '🟡';
+      warnings.push({store:s, cur:curLoss, max:longestLoss, gap:gap, level:level});
+    }
+  });
+  return warnings;
+}
+
+function getComboWarning() {
+  if (!warnComboOn) return null;
+  var sel = [];
+  for (var s2 in warnComboStores) { if (warnComboStores[s2]) sel.push(s2); }
+  if (sel.length < 2) return null;
+  var dayMap = {};
+  records.forEach(function(r){
+    if (warnComboStores[r.store]) dayMap[r.date] = (dayMap[r.date]||0) + r.amount;
+  });
+  var dates = Object.keys(dayMap).sort();
+  if (dates.length < 2) return null;
+  var longestLoss = 0, curRun = 0;
+  for (var di=0; di<dates.length; di++) {
+    if (dayMap[dates[di]] < 0) { curRun++; if (curRun > longestLoss) longestLoss = curRun; }
+    else curRun = 0;
+  }
+  if (longestLoss < 2) return null;
+  var curLoss = 0;
+  for (var di2=dates.length-1; di2>=0; di2--) {
+    if (dayMap[dates[di2]] < 0) curLoss++;
+    else break;
+  }
+  if (curLoss === 0) return null;
+  var gap = longestLoss - curLoss;
+  if (gap > 3) return null;
+  return {cur:curLoss, max:longestLoss, gap:gap, stores:sel.join('+')};
+}
+
+function getComboProfit() {
+  var cr = null;
+  for (var j=0; j<alertRules.length; j++) { if (alertRules[j].type === 'combo_profit' && alertRules[j].on) { cr = alertRules[j]; break; } }
+  if (!cr) return null;
+  var sel = [];
+  for (var s2 in warnComboStores) { if (warnComboStores[s2]) sel.push(s2); }
+  if (sel.length < 2) return null;
+  var dayMap = {};
+  records.forEach(function(r){
+    if (warnComboStores[r.store]) dayMap[r.date] = (dayMap[r.date]||0) + r.amount;
+  });
+  var dates = Object.keys(dayMap).sort();
+  if (dates.length < 2) return null;
+  var longestProfit = 0, curRun = 0;
+  for (var di=0; di<dates.length; di++) {
+    if (dayMap[dates[di]] > 0) { curRun++; if (curRun > longestProfit) longestProfit = curRun; }
+    else curRun = 0;
+  }
+  if (longestProfit < 2) return null;
+  var curProfit = 0;
+  for (var di2=dates.length-1; di2>=0; di2--) {
+    if (dayMap[dates[di2]] > 0) curProfit++;
+    else break;
+  }
+  if (curProfit === 0) return null;
+  return {cur:curProfit, max:longestProfit, stores:sel.join('+')};
+}
+
+function getProfitStreaks() {
+  var streaks = [];
+  stores.forEach(function(s){
+    if (!profitStoreOn[s]) return;
+    var dayMap = {};
+    records.forEach(function(r){
+      if (r.store !== s) return;
+      dayMap[r.date] = (dayMap[r.date]||0) + r.amount;
+    });
+    var dates = Object.keys(dayMap).sort();
+    if (dates.length < 2) return;
+    var longestProfit = 0, curRun = 0;
+    for (var di=0; di<dates.length; di++) {
+      if (dayMap[dates[di]] > 0) { curRun++; if (curRun > longestProfit) longestProfit = curRun; }
+      else curRun = 0;
+    }
+    var curProfit = 0;
+    for (var di2=dates.length-1; di2>=0; di2--) {
+      if (dayMap[dates[di2]] > 0) curProfit++;
+      else break;
+    }
+    streaks.push({store:s, cur:curProfit, max:longestProfit});
+  });
+  return streaks;
+}
+
+function toggleYearStore(s) {
+  if (singleStoreMode && s !== singleStoreMode) return;
+  yearStoreSel[s] = !yearStoreSel[s];
+  // 确保至少选一家
+  var has = false;
+  stores.forEach(function(st){ if (yearStoreSel[st]) has = true; });
+  if (!has) { yearStoreSel[s] = true; return; }
+  renderDataModal('year');
+}
+
+function showStoreModal(store, view) {
+  singleStoreMode = store;
+  stores.forEach(function(s){ modalStoreSel[s] = (s === store); });
+  stores.forEach(function(s){ yearStoreSel[s] = (s === store); });
+  // 高亮全部卡片的对应按钮
+  var pills = document.querySelectorAll('#ov-all-card .all-pill');
+  for (var i=0; i<pills.length; i++) { pills[i].className = pills[i].className.replace(' on','').replace('on',''); }
+  renderDataModal(view);
+  document.getElementById('data-modal').classList.remove('hide');
+}
+
+function setAllView(v) {
+  // 高亮按钮
+  var pills = document.querySelectorAll('#ov-all-card .all-pill');
+  for (var i=0; i<pills.length; i++) { pills[i].className = pills[i].className.replace(' on','').replace('on',''); }
+  event.target.className += ' on';
+  // 月/日弹窗初始化门店选择
+  if (v==='month'||v==='day'||v==='analysis') initModalStore();
+  // 弹窗显示
+  renderDataModal(v);
+  document.getElementById('data-modal').classList.remove('hide');
+}
+
+function closeDataModal() {
+  document.getElementById('data-modal').classList.add('hide');
+  singleStoreMode = '';
+}
+
+function renderAllCard() {
+  // 卡片只保留标题和按钮，数据通过弹窗展示
+  document.getElementById('all-nums').innerHTML = '';
+  document.getElementById('all-detail').innerHTML = '';
+}
+
+function renderDataModal(v) {
+  var now = new Date();
+  var today = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+  var ym = ovYear+'-'+String(ovMonth).padStart(2,'0');
+  var title='', body='';
+
+  var totalIn=0, totalOut=0, storeNet={};
+  stores.forEach(function(s){ storeNet[s]=0; });
+
+  // ── 年 ──
+  if (v === 'year') {
+    title = '📊 门店净额 · 多年对比';
+    // 收集所有年份
+    var years=[], yearSet={};
+    records.forEach(function(r){
+      var y = parseInt(r.date.substring(0,4));
+      if (!yearSet[y]) { yearSet[y]=true; years.push(y); }
+    });
+    years.sort().reverse();
+    // 按 年+门店 汇总（只要收入）
+    var data={}; // data[year][store] = income
+    years.forEach(function(y){ data[y]={}; stores.forEach(function(s){ data[y][s]=0; }); });
+    records.forEach(function(r){
+      var y = parseInt(r.date.substring(0,4));
+      data[y][r.store]+=r.amount;
+    });
+    // 门店选择标签
+    body = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">';
+    stores.forEach(function(s){
+      var on = yearStoreSel[s] !== false;
+      var ds = singleStoreMode && s !== singleStoreMode;
+      body += '<span onclick="event.stopPropagation();toggleYearStore(\''+s+'\')" style="cursor:pointer;padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid '+(on?'#3b82f6':'#cdd7e5')+';background:'+(on?'#eef3ff':'#f8fafc')+';color:'+(on?'#1e3a5f':'#8899b0')+(ds?';opacity:.4;cursor:default':'')+'">🏪 '+s+'</span>';
+    });
+    body += '</div>';
+    // 选中门店的净额累加
+    var selStores = [];
+    stores.forEach(function(s){ if (yearStoreSel[s]) selStores.push(s); });
+    body += '<div style="background:#f0fdf4;border-radius:10px;padding:10px;border-left:3px solid #22c55e">';
+    body += '<div style="font-size:11px;color:#5a6d80;margin-bottom:4px">'+(selStores.length===stores.length?'全部门店':selStores.join('+'))+' 净额累加</div>';
+    var totalAll=0, maxAbs=0;
+    years.forEach(function(y){ var sum=0; selStores.forEach(function(s){ sum+=data[y][s]; }); totalAll+=sum; if (Math.abs(sum)>maxAbs) maxAbs=Math.abs(sum); });
+    years.forEach(function(y){
+      var sum=0;
+      selStores.forEach(function(s){ sum+=data[y][s]; });
+      var barW = maxAbs>0 ? Math.abs(sum)/maxAbs*100 : 0;
+      body += '<div style="display:flex;align-items:center;margin-bottom:3px;font-size:11px">'
+        +'<span style="width:36px;color:#5a6d80;font-weight:600">'+y+'</span>'
+        +'<div style="flex:1;height:5px;background:#eef2f7;border-radius:3px;margin:0 8px"><div style="height:100%;width:'+barW+'%;background:'+(sum>=0?'#22c55e':'#ef4444')+';border-radius:3px"></div></div>'
+        +'<span style="width:64px;text-align:right;color:'+(sum>=0?'#22c55e':'#ef4444')+';font-weight:600">'+(sum>=0?'+':'')+sum.toLocaleString()+'</span>'
+        +'</div>';
+    });
+    body += '<div style="display:flex;align-items:center;font-size:12px;font-weight:700;border-top:1px solid '+(totalAll>=0?'#86efac':'#fca5a5')+';padding-top:4px;margin-top:4px">'
+      +'<span style="width:36px;color:#1a2438">合计</span>'
+      +'<span style="flex:1"></span>'
+      +'<span style="width:64px;text-align:right;color:'+(totalAll>=0?'#16a34a':'#dc2626')+'">'+(totalAll>=0?'+':'')+totalAll.toLocaleString()+'</span>'
+      +'</div>';
+    body += '</div>';
+  }
+
+  // ── 月 ──
+  else if (v === 'month') {
+    title = '📊 所有月份净额';
+    // 收集所有月份（跨年）
+    var monMap={}, monList=[], monSet={};
+    records.forEach(function(r){
+      var ym2 = r.date.substring(0,7); // 2025-01
+      if (!monSet[ym2]) { monSet[ym2]=true; monList.push(ym2); }
+    });
+    monList.sort().reverse();
+    monList.forEach(function(ym2){ monMap[ym2]=0; });
+    records.forEach(function(r){
+      if (!modalStoreSel[r.store]) return;
+      var ym2 = r.date.substring(0,7);
+      monMap[ym2]+=r.amount;
+    });
+    var selStores=[];
+    stores.forEach(function(s){ if (modalStoreSel[s]) selStores.push(s); });
+    body = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">';
+    stores.forEach(function(s){
+      var on = modalStoreSel[s] !== false;
+      var ds = singleStoreMode && s !== singleStoreMode;
+      body += '<span onclick="event.stopPropagation();toggleModalStore(\''+s+'\')" style="cursor:pointer;padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid '+(on?'#3b82f6':'#cdd7e5')+';background:'+(on?'#eef3ff':'#f8fafc')+';color:'+(on?'#1e3a5f':'#8899b0')+(ds?';opacity:.4;cursor:default':'')+'">🏪 '+s+'</span>';
+    });
+    body += '</div>';
+    body += '<div style="background:#f0fdf4;border-radius:10px;padding:10px;border-left:3px solid #22c55e">';
+    body += '<div style="font-size:11px;color:#5a6d80;margin-bottom:4px">'+(selStores.length===stores.length?'全部门店':selStores.join('+'))+' 各月净额</div>';
+    var totalAll=0, maxV=0;
+    monList.forEach(function(ym2){ var v=monMap[ym2]||0; totalAll+=v; if (Math.abs(v)>maxV) maxV=Math.abs(v); });
+    monList.forEach(function(ym2){
+      var v = monMap[ym2]||0;
+      var barW = maxV>0 ? Math.abs(v)/maxV*100 : 0;
+      body += '<div style="display:flex;align-items:center;margin-bottom:3px;font-size:11px">'
+        +'<span style="width:54px;color:#5a6d80;font-weight:600">'+ym2.replace('-','/')+'</span>'
+        +'<div style="flex:1;height:5px;background:#eef2f7;border-radius:3px;margin:0 8px"><div style="height:100%;width:'+barW+'%;background:'+(v>=0?'#22c55e':'#ef4444')+';border-radius:3px"></div></div>'
+        +'<span style="width:64px;text-align:right;color:'+(v>=0?'#22c55e':'#ef4444')+';font-weight:600">'+(v>=0?'+':'')+v.toLocaleString()+'</span>'
+        +'</div>';
+    });
+    body += '<div style="display:flex;align-items:center;font-size:12px;font-weight:700;border-top:1px solid '+(totalAll>=0?'#86efac':'#fca5a5')+';padding-top:4px;margin-top:4px">'
+      +'<span style="width:54px;color:#1a2438">合计</span><span style="flex:1"></span>'
+      +'<span style="width:64px;text-align:right;color:'+(totalAll>=0?'#16a34a':'#dc2626')+'">'+(totalAll>=0?'+':'')+totalAll.toLocaleString()+'</span>'
+      +'</div></div>';
+  }
+
+  // ── 日 ──
+  else if (v === 'day') {
+    title = '📊 所有日期净额';
+    var dayMap={}, dayList=[], daySet={};
+    records.forEach(function(r){
+      if (!daySet[r.date]) { daySet[r.date]=true; dayList.push(r.date); }
+    });
+    dayList.sort();
+    // 序号=年内第几天(DOY)，2020年基准偏移-11（数据从1/12起算）
+    var seqIdx={};
+    dayList.forEach(function(d){
+      var p=d.split('-');
+      var y2=+p[0], m2=+p[1], da=+p[2];
+      var doy=Math.floor((new Date(y2,m2-1,da)-new Date(y2,0,0))/86400000);
+      if (y2===2020) doy-=11;
+      seqIdx[d]=doy;
+    });
+    dayList.reverse(); // 最新在上
+    dayList.forEach(function(d){ dayMap[d]=0; });
+    records.forEach(function(r){
+      if (!modalStoreSel[r.store]) return;
+      dayMap[r.date]+=r.amount;
+    });
+    var selStores=[];
+    stores.forEach(function(s){ if (modalStoreSel[s]) selStores.push(s); });
+    body = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">';
+    stores.forEach(function(s){
+      var on = modalStoreSel[s] !== false;
+      var ds = singleStoreMode && s !== singleStoreMode;
+      body += '<span onclick="event.stopPropagation();toggleModalStore(\''+s+'\')" style="cursor:pointer;padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid '+(on?'#3b82f6':'#cdd7e5')+';background:'+(on?'#eef3ff':'#f8fafc')+';color:'+(on?'#1e3a5f':'#8899b0')+(ds?';opacity:.4;cursor:default':'')+'">🏪 '+s+'</span>';
+    });
+    body += '</div>';
+    body += '<div style="background:#f0fdf4;border-radius:10px;padding:10px;border-left:3px solid #22c55e">';
+    body += '<div style="font-size:11px;color:#5a6d80;margin-bottom:4px">'+(selStores.length===stores.length?'全部门店':selStores.join('+'))+' 每日净额</div>';
+    var totalAll=0, maxV=0;
+    dayList.forEach(function(d){ var v=dayMap[d]||0; totalAll+=v; if (Math.abs(v)>maxV) maxV=Math.abs(v); });
+    dayList.forEach(function(d){
+      var v = dayMap[d]||0;
+      var si = seqIdx[d]||0;
+      var yr = d.substring(0,4);
+      var md = d.substring(5);
+      var barW = maxV>0 ? Math.abs(v)/maxV*100 : 0;
+      body += '<div style="display:flex;align-items:center;margin-bottom:3px;font-size:11px">'
+        +'<span style="width:28px;color:#b0bed0;font-size:10px">'+yr+'</span>'
+        +'<span style="width:38px;color:#5a6d80;font-weight:600">'+md+'</span>'
+        +'<span style="width:26px;color:#b0bed0;font-size:10px;text-align:center">#'+si+'</span>'
+        +'<div style="flex:1;height:5px;background:#eef2f7;border-radius:3px;margin:0 6px"><div style="height:100%;width:'+barW+'%;background:'+(v>=0?'#22c55e':'#ef4444')+';border-radius:3px"></div></div>'
+        +'<span style="width:52px;text-align:right;color:'+(v>=0?'#22c55e':'#ef4444')+';font-weight:600">'+(v>=0?'+':'')+v.toLocaleString()+'</span>'
+        +'</div>';
+    });
+    body += '<div style="display:flex;align-items:center;font-size:12px;font-weight:700;border-top:1px solid '+(totalAll>=0?'#86efac':'#fca5a5')+';padding-top:4px;margin-top:4px">'
+      +'<span style="width:88px;color:#1a2438">合计</span><span style="flex:1"></span>'
+      +'<span style="width:52px;text-align:right;color:'+(totalAll>=0?'#16a34a':'#dc2626')+'">'+(totalAll>=0?'+':'')+totalAll.toLocaleString()+'</span>'
+      +'</div></div>';
+  }
+  // ── 分析 ──
+  else if (v === 'analysis') {
+    title = '📈 连续趋势分析';
+    var selStores=[];
+    stores.forEach(function(s){ if (modalStoreSel[s]) selStores.push(s); });
+    body = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">';
+    stores.forEach(function(s){
+      var on = modalStoreSel[s] !== false;
+      var ds = singleStoreMode && s !== singleStoreMode;
+      body += '<span onclick="event.stopPropagation();toggleModalStore(\''+s+'\')" style="cursor:pointer;padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid '+(on?'#3b82f6':'#cdd7e5')+';background:'+(on?'#eef3ff':'#f8fafc')+';color:'+(on?'#1e3a5f':'#8899b0')+(ds?';opacity:.4;cursor:default':'')+'">🏪 '+s+'</span>';
+    });
+    body += '</div>';
+
+    // 按门店按日汇总净额
+    var storeDays={};
+    selStores.forEach(function(s){
+      var dm={};
+      records.forEach(function(r){
+        if (r.store!==s) return;
+        dm[r.date]=(dm[r.date]||0)+r.amount;
+      });
+      var dates=Object.keys(dm).sort();
+      storeDays[s]=dates.map(function(d){ return {date:d, net:dm[d]}; });
+    });
+
+    // 扫描连续亏损/赚钱/震荡
+    var allLoss=[], allProfit=[], allOsc=[];
+
+    selStores.forEach(function(s){
+      var days=storeDays[s];
+      if (days.length===0) return;
+
+      // 亏损
+      var curLoss=0, curLossStart='', curLossEnd='';
+      var bestLoss=0, bestLossSeg={};
+      for (var i=0; i<days.length; i++) {
+        if (days[i].net < 0) {
+          if (curLoss===0) curLossStart=days[i].date;
+          curLoss++;
+          curLossEnd=days[i].date;
+          if (curLoss > bestLoss) {
+            bestLoss=curLoss;
+            bestLossSeg={store:s, days:curLoss, start:curLossStart, end:curLossEnd};
+          }
+        } else {
+          if (curLoss>=2) allLoss.push({store:s, days:curLoss, start:curLossStart, end:curLossEnd});
+          curLoss=0;
+        }
+      }
+      if (curLoss>=2) allLoss.push({store:s, days:curLoss, start:curLossStart, end:curLossEnd});
+
+      // 赚钱
+      var curProfit=0, curProfitStart='', curProfitEnd='';
+      for (var i=0; i<days.length; i++) {
+        if (days[i].net > 0) {
+          if (curProfit===0) curProfitStart=days[i].date;
+          curProfit++;
+          curProfitEnd=days[i].date;
+        } else {
+          if (curProfit>=2) allProfit.push({store:s, days:curProfit, start:curProfitStart, end:curProfitEnd});
+          curProfit=0;
+        }
+      }
+      if (curProfit>=2) allProfit.push({store:s, days:curProfit, start:curProfitStart, end:curProfitEnd});
+
+      // 震荡（正负交替）
+      var curOsc=0, curOscStart='', curOscEnd='', lastSign=0;
+      for (var i=0; i<days.length; i++) {
+        var sign=days[i].net>0?1:(days[i].net<0?-1:0);
+        if (sign===0) { if (curOsc>=3) allOsc.push({store:s, days:curOsc, start:curOscStart, end:curOscEnd}); curOsc=0; continue; }
+        if (curOsc===0) { curOsc=1; curOscStart=days[i].date; lastSign=sign; }
+        else if (sign!==lastSign) { curOsc++; curOscEnd=days[i].date; lastSign=sign; }
+        else { if (curOsc>=3) allOsc.push({store:s, days:curOsc, start:curOscStart, end:curOscEnd}); curOsc=1; curOscStart=days[i].date; lastSign=sign; }
+      }
+      if (curOsc>=3) allOsc.push({store:s, days:curOsc, start:curOscStart, end:curOscEnd});
+    });
+
+    // 排序取 top5
+    allLoss.sort(function(a,b){ return b.days-a.days; });
+    allProfit.sort(function(a,b){ return b.days-a.days; });
+    allOsc.sort(function(a,b){ return b.days-a.days; });
+
+    function renderTop5(list, icon, color, label) {
+      var top=list.slice(0,5);
+      if (top.length===0) return '<div style="font-size:11px;color:#8899b0;margin-bottom:8px">'+icon+' '+label+'：暂无</div>';
+      var h='<div style="font-size:12px;font-weight:700;color:'+color+';margin-bottom:4px">'+icon+' '+label+' TOP5</div>';
+      top.forEach(function(t,i){
+        var medal=i===0?'🥇':(i===1?'🥈':(i===2?'🥉':'#'+(i+1)));
+        h += '<div style="display:flex;align-items:center;font-size:11px;padding:3px 0;border-bottom:1px solid #f5f7fa">'
+          +'<span style="width:20px">'+medal+'</span>'
+          +'<span style="width:36px;color:#5a6d80">🏪'+t.store+'</span>'
+          +'<span style="font-weight:700;color:'+color+';width:40px;text-align:right">'+t.days+'天</span>'
+          +'<span style="flex:1;text-align:right;font-size:10px;color:#8899b0">'+t.start.substring(5)+' ~ '+t.end.substring(5)+'</span>'
+          +'</div>';
+      });
+      return h;
+    }
+
+    body += '<div style="background:#fef2f2;border-radius:10px;padding:10px;margin-bottom:8px;border-left:3px solid #ef4444">'
+      + renderTop5(allLoss, '📉', '#ef4444', '连续亏损')
+      + '</div>';
+    body += '<div style="background:#f0fdf4;border-radius:10px;padding:10px;margin-bottom:8px;border-left:3px solid #22c55e">'
+      + renderTop5(allProfit, '📈', '#22c55e', '连续赚钱')
+      + '</div>';
+    body += '<div style="background:#fffbeb;border-radius:10px;padding:10px;border-left:3px solid #f59e0b">'
+      + renderTop5(allOsc, '🔄', '#f59e0b', '连续震荡(正负交替)')
+      + '</div>';
+  }
+
+  if (singleStoreMode) title += ' · 🏪 '+singleStoreMode;
+  document.getElementById('dm-title').innerHTML = title;
+  document.getElementById('dm-body').innerHTML = body;
+}
+
+// ═══════════ 总览 ═══════════
+function renderOverview() {
+  buildPills();
+  var ym = ovYear+'-'+String(ovMonth).padStart(2,'0');
+
+  // 筛选本月记录
+  var monthRecords = records.filter(function(r){ return r.date.startsWith(ym); });
+
+  // 按分类汇总
+  var byCat = {};
+  var byStore = {};
+  categories.forEach(function(c){ byCat[c.id] = 0; });
+  stores.forEach(function(s){ byStore[s] = {total:0, cats:{}}; categories.forEach(function(c){ byStore[s].cats[c.id]=0; }); });
+
+  // 快速查 show
+  var catShow = {};
+  categories.forEach(function(c){ catShow[c.id] = c.show !== false; });
+
+  monthRecords.forEach(function(r){
+    if (!catShow[r.category]) return;
+    byCat[r.category] = (byCat[r.category]||0) + r.amount;
+    if (byStore[r.store]) {
+      byStore[r.store].total += r.amount;
+      byStore[r.store].cats[r.category] = (byStore[r.store].cats[r.category]||0) + r.amount;
+    }
+  });
+
+  // 收入/支出
+  var totalIn = 0, totalOut = 0;
+  categories.forEach(function(c){
+    if (c.show === false) return;
+    var v = byCat[c.id] || 0;
+    if (c.dir === '+') totalIn += v; else totalOut += v;
+  });
+  var net = totalIn + totalOut;
+
+  // 风险条
+  var risks = '';
+  // 净额为负 — 仅在规则开启时
+  var netNegOn = false;
+  for (var ai=0; ai<alertRules.length; ai++) { if (alertRules[ai].type === 'net_neg' && alertRules[ai].on) { netNegOn = true; break; } }
+  if (netNegOn) {
+    stores.forEach(function(s){
+      var d = byStore[s];
+      if (d && d.total < 0) risks += '<div class="risk">⚠️ '+s+' 本月净额为负 ¥'+Math.abs(d.total).toLocaleString()+'</div>';
+    });
+  }
+  // 连亏预警
+  var lossWarnings = getLossWarnings();
+  lossWarnings.forEach(function(w){
+    risks += '<div class="risk" style="background:'+(w.level==='🔴'?'#fef2f2':'#fffbeb')+';color:'+(w.level==='🔴'?'#991b1b':'#92400e')+'">'
+      + w.level+' '+w.store+' 连亏'+w.cur+'天（历史最长'+w.max+'天，距红线'+(w.gap===0?'已达':w.gap+'天')+'）</div>';
+  });
+  // 预算类规则警报
+  var catMap = {};
+  categories.forEach(function(c){ catMap[c.id] = c; });
+  alertRules.forEach(function(rule){
+    if (!rule.on || rule.type === 'combo_loss' || rule.type === 'store_loss' || rule.type === 'store_profit' || rule.type === 'combo_profit' || rule.type === 'net_neg') return;
+    var cat = catMap[rule.cat];
+    if (!cat || !cat.budget || cat.budget <= 0) return;
+    stores.forEach(function(s){
+      var d = byStore[s];
+      if (!d) return;
+      var v = Math.abs(d.cats[rule.cat] || 0);
+      if (rule.type === 'over' && v >= cat.budget) {
+        risks += '<div class="risk" style="background:#fef2f2;color:#991b1b">🔴 '+s+' '+cat.name+' 超预算 ¥'+v.toLocaleString()+'/¥'+cat.budget.toLocaleString()+'</div>';
+      } else if (rule.type === 'near' && v >= cat.budget * rule.pct/100) {
+        risks += '<div class="risk" style="background:#fffbeb;color:#92400e">🟡 '+s+' '+cat.name+' 接近预算 ¥'+v.toLocaleString()+'/¥'+cat.budget.toLocaleString()+'</div>';
+      }
+    });
+  });
+  // 组合连亏
+  var cw = getComboWarning();
+  if (cw) {
+    var lvl = cw.gap <= 1 ? '🔴' : '🟡';
+    var bg = cw.gap <= 1 ? '#fef2f2' : '#fffbeb';
+    var fg = cw.gap <= 1 ? '#991b1b' : '#92400e';
+    risks += '<div class="risk" style="background:'+bg+';color:'+fg+'">'
+      + lvl+' 组合('+cw.stores+') 连亏'+cw.cur+'天（历史最长'+cw.max+'天，距红线'+(cw.gap===0?'已达':cw.gap+'天')+'）</div>';
+  }
+  // 组合连盈
+  var cp = getComboProfit();
+  if (cp) {
+    risks += '<div class="risk" style="background:#f0fdf4;color:#166534">🟢 组合('+cp.stores+') 连盈'+cp.cur+'天（历史最长'+cp.max+'天）🎉</div>';
+  }
+  document.getElementById('ov-risks').innerHTML = risks;
+
+  // 分类拆解条
+  var catsSorted = categories.filter(function(c){ return c.show !== false && Math.abs(byCat[c.id]||0) > 0; });
+  var maxAbs = Math.max.apply(null, catsSorted.map(function(c){ return Math.abs(byCat[c.id]||0); })) || 1;
+  var bhtml = '<h3>📊 分类拆解 · '+ym+'</h3>';
+  catsSorted.forEach(function(c){
+    var v = byCat[c.id]||0;
+    var pct = Math.abs(v)/maxAbs*100;
+    bhtml += '<div class="br-row">'
+      + '<span class="br-label">'+c.name+'</span>'
+      + '<div class="br-bar"><div class="br-fill" style="width:'+pct+'%;background:'+c.color+'"></div></div>'
+      + '<span class="br-amt '+(v>=0?'up':'down')+'">'+(v>=0?'+':'')+v.toLocaleString()+'</span>'
+      + '</div>';
+  });
+  bhtml += '<div class="br-row net">'
+    + '<span class="br-label">净额</span>'
+    + '<div class="br-bar" style="background:transparent"></div>'
+    + '<span class="br-amt" style="color:'+(net>=0?'#22c55e':'#ef4444')+'">'+(net>=0?'+':'')+net.toLocaleString()+'</span>'
+    + '</div>';
+  document.getElementById('ov-breakdown').innerHTML = bhtml;
+
+  // 门店卡片 + 进度条
+  // 计算各店年/最后日期净额
+  var lastDate='', lastDates={};
+  stores.forEach(function(s){ lastDates[s]=''; });
+  records.forEach(function(r){
+    if (r.date>lastDates[r.store]) lastDates[r.store]=r.date;
+    if (r.date>lastDate) lastDate=r.date;
+  });
+  storeLast={};
+  stores.forEach(function(s){ storeLast[s]=0; });
+  records.forEach(function(r){
+    if (r.date===lastDates[r.store]) storeLast[r.store]+=r.amount;
+  });
+  var storeMonth={}; stores.forEach(function(s){ storeMonth[s]=0; }); monthRecords.forEach(function(r){ storeMonth[r.store]+=r.amount; });
+  var storeYear={};
+  stores.forEach(function(s){ storeYear[s]=0; });
+  records.forEach(function(r){
+    if (r.date.startsWith(ovYear+"-")) storeYear[r.store]+=r.amount;
+  });
+  var maxStore = Math.max.apply(null, stores.map(function(s){ return Math.abs(storeMonth[s]||0); })) || 1;
+  var cardHtml = '';
+  stores.forEach(function(s){
+    var d = byStore[s];
+    var yv = storeYear[s]||0, mv = d.total;
+    var lastDate = lastDates[s]||'';
+    var lastVal = storeLast[s]||0;
+    var hasAlert = lastVal < 0 ? 'red' : '';
+    var dateShort = lastDate ? lastDate.substring(5) : '——';
+    cardHtml += '<div class="ov-card2">'
+      + (hasAlert ? '<span class="alert-dot '+hasAlert+'"></span>' : '')
+      + '<div class="top-row"><span class="s-name">🏪 '+s+'</span><span class="s-bal" style="color:'+(lastVal>=0?'#1a2438':'#ef4444')+'">'+dateShort+(lastVal>=0?' +':' ')+lastVal.toLocaleString()+'</span></div>'
+      + '<div class="card-ymd"><span style="color:'+(yv>=0?'#22c55e':'#ef4444')+'">'+ovYear+'年 '+(yv>=0?'+':'')+yv.toLocaleString()+'</span><span style="color:'+(mv>=0?'#22c55e':'#ef4444')+'">'+ovMonth+'月 '+(mv>=0?'+':'')+mv.toLocaleString()+'</span></div>'
+      + '<div class="card-bar"><div class="card-bar-fill" style="width:'+(Math.abs(mv)/maxStore*100)+'%;background:#3b82f6"></div></div>'
+      + '<div class="card-btns">'
+      + '<span onclick="event.stopPropagation();showStoreModal(\''+s+'\',\'year\')" class="card-btn">年</span>'
+      + '<span onclick="event.stopPropagation();showStoreModal(\''+s+'\',\'month\')" class="card-btn">月</span>'
+      + '<span onclick="event.stopPropagation();showStoreModal(\''+s+'\',\'day\')" class="card-btn">日</span>'
+      + '<span onclick="event.stopPropagation();showStoreModal(\''+s+'\',\'analysis\')" class="card-btn">分析</span>'
+      + '</div>'
+      + '</div>';
+  });
+  document.getElementById('ov-cards').innerHTML = cardHtml;
+  renderAllCard();
+}
+
+function buildPills() {
+  document.getElementById('pb-year').textContent = ovYear+'年';
+  document.getElementById('pb-month').textContent = ovMonth+'月';
+}
+
+// ═══════════ 滚轮选择器（周期） ═══════════
+var pickField = '';
+
+function pickOne(field) {
+  pickField = field;
+  var wl = document.getElementById('wl-pick');
+  var title = document.getElementById('ws-title');
+  var items = [];
+  var selVal;
+
+  if (field === 'year') {
+    title.textContent = '选择年份';
+    selVal = ovYear;
+    var curY = new Date().getFullYear();
+    for (var y=2021; y<=curY; y++) items.push({v:y, label:y+'年'});
+  } else if (field === 'month') {
+    title.textContent = '选择月份';
+    selVal = ovMonth;
+    var maxM = (ovYear===(new Date().getFullYear())) ? (new Date().getMonth()+1) : 12;
+    for (var m=1; m<=maxM; m++) items.push({v:m, label:m+'月'});
+  }
+
+  var h = '';
+  for (var i=0; i<items.length; i++) {
+    h += '<div class="wheel-item'+(items[i].v===selVal?' sel':'')+'" data-v="'+items[i].v+'">'+items[i].label+'</div>';
+  }
+  wl.innerHTML = h;
+
+  var pill = document.getElementById(field==='year'?'pill-year':'pill-month');
+  var rect = pill.getBoundingClientRect();
+  var anchor = document.getElementById('wheel-anchor');
+  anchor.style.left = Math.max(8, rect.left + rect.width/2 - 90) + 'px';
+  anchor.style.top = (rect.bottom + 6) + 'px';
+  document.getElementById('wheel-modal').classList.remove('hide');
+
+  setTimeout(function(){
+    for (var j=0; j<items.length; j++) {
+      if (items[j].v === selVal) { wl.scrollTop = j * 32; break; }
+    }
+  }, 50);
+}
+
+// 录入页滚轮
+function entryPickOne(field) {
+  pickField = 'ef_'+field;
+  var wl = document.getElementById('wl-pick');
+  var title = document.getElementById('ws-title');
+  var items = [];
+  var selLabel = '';
+
+  if (field === 'store') {
+    title.textContent = '选择门店';
+    stores.forEach(function(s, i){ items.push({v:s, label:s}); });
+    selLabel = document.getElementById('ef-store-pill').textContent.replace(/▾/,'').trim();
+  } else if (field === 'cat') {
+    title.textContent = '选择分类';
+    var curId = document.getElementById('ef-cat').value;
+    categories.forEach(function(c, i){
+      items.push({v:c.id, label:c.name+' ('+c.dir+')'});
+      if (c.id === curId) selLabel = c.name+' ('+c.dir+')';
+    });
+  }
+
+  var h = '';
+  for (var i=0; i<items.length; i++) {
+    var sel = (items[i].label === selLabel) || (items[i].v === selLabel);
+    h += '<div class="wheel-item'+(sel?' sel':'')+'" data-v="'+items[i].v+'">'+items[i].label+'</div>';
+  }
+  wl.innerHTML = h;
+
+  var pill = document.getElementById(field==='store'?'ef-store-pill':'ef-cat-pill');
+  var rect = pill.getBoundingClientRect();
+  var anchor = document.getElementById('wheel-anchor');
+  anchor.style.left = Math.max(8, rect.left + rect.width/2 - 90) + 'px';
+  anchor.style.top = (rect.bottom + 6) + 'px';
+  document.getElementById('wheel-modal').classList.remove('hide');
+}
+
+function confirmPicker() {
+  var wl = document.getElementById('wl-pick');
+  var idx = Math.round(wl.scrollTop / 32);
+  var items = wl.querySelectorAll('.wheel-item');
+  if (!items[idx]) return;
+  var val = items[idx].dataset.v;
+
+  if (pickField === 'year') {
+    if (val !== ovYear+'') { ovYear = parseInt(val); ovMonth = 1; }
+  } else if (pickField === 'month') {
+    if (val !== ovMonth+'') ovMonth = parseInt(val);
+  } else if (pickField === 'ef_store') {
+    document.getElementById('ef-store').value = val;
+    document.getElementById('ef-store-pill').innerHTML = '🏪 '+val+'<span class="arr">▾</span>';
+  } else if (pickField === 'ef_cat') {
+    document.getElementById('ef-cat').value = val;
+    var cat = findCat(val);
+    if (cat) document.getElementById('ef-cat-pill').innerHTML = cat.name+' ('+cat.dir+')<span class="arr">▾</span>';
+  } else if (pickField === 'rule_cat') {
+    document.getElementById('ms-rule-cat').value = val;
+    var rcat = findCat(val);
+    if (rcat) document.getElementById('ms-rule-cat-pill').innerHTML = rcat.name+' ('+rcat.dir+')<span class="arr">▾</span>';
+  } else if (pickField === 'rule_type') {
+    document.getElementById('ms-rule-type').value = val;
+    var labels = {over:'超预算', near:'接近预算', net_neg:'净额为负'};
+    document.getElementById('ms-rule-type-pill').innerHTML = (labels[val]||val)+'<span class="arr">▾</span>';
+  }
+
+  document.getElementById('wheel-modal').classList.add('hide');
+  if (pickField === 'year' || pickField === 'month') renderOverview();
+}
+
+function closePicker() {
+  document.getElementById('wheel-modal').classList.add('hide');
+}
+
+// ═══════════ 日历表选 ==========
+var calYear, calMonth;
+
+function openCalendar() {
+  calYear = txYear;
+  calMonth = txMonth;
+  renderCalGrid();
+  var pill = document.getElementById('cal-pill');
+  var rect = pill.getBoundingClientRect();
+  var anchor = document.getElementById('cal-anchor');
+  anchor.style.left = Math.max(8, rect.left + rect.width/2 - 150) + 'px';
+  anchor.style.top = (rect.bottom + 6) + 'px';
+  document.getElementById('cal-mask').classList.remove('hide');
+}
+
+function renderCalGrid() {
+  document.getElementById('cal-title').textContent = calYear+'年 '+calMonth+'月';
+  var fd = new Date(calYear, calMonth-1, 1).getDay();
+  var dim = new Date(calYear, calMonth, 0).getDate();
+  var prevDim = new Date(calYear, calMonth-1, 0).getDate();
+  var today = new Date();
+  var html = '';
+
+  // 上月末填充
+  for (var i=fd-1; i>=0; i--) {
+    html += '<span class="cal-day other">'+(prevDim-i)+'</span>';
+  }
+  // 本月
+  for (var d=1; d<=dim; d++) {
+    var cls = 'cal-day';
+    if (calYear===today.getFullYear() && calMonth===today.getMonth()+1 && d===today.getDate()) cls += ' today';
+    if (d===txDay && calYear===txYear && calMonth===txMonth) cls += ' sel';
+    html += '<span class="'+cls+'" onclick="selectCalDay('+d+')">'+d+'</span>';
+  }
+  // 下月初填充
+  var remaining = (7 - ((fd+dim)%7)) % 7;
+  for (var d=1; d<=remaining; d++) {
+    html += '<span class="cal-day other">'+d+'</span>';
+  }
+  document.getElementById('cal-grid').innerHTML = html;
+}
+
+function calShift(dir) {
+  calMonth += dir;
+  if (calMonth > 12) { calMonth = 1; calYear++; }
+  if (calMonth < 1) { calMonth = 12; calYear--; }
+  renderCalGrid();
+}
+
+function selectCalDay(d) {
+  txDay = d;
+  txYear = calYear;
+  txMonth = calMonth;
+  var ds = txYear+'-'+String(txMonth).padStart(2,'0')+'-'+String(txDay).padStart(2,'0');
+  document.getElementById('ef-date').value = ds;
+  document.getElementById('cal-pill').innerHTML = '📅 '+txYear+'年'+txMonth+'月'+txDay+'日<span class="arr">▾</span>';
+  document.getElementById('cal-mask').classList.add('hide');
+}
+
+function calGoToday() {
+  var t = new Date();
+  calYear = t.getFullYear();
+  calMonth = t.getMonth()+1;
+  renderCalGrid();
+}
+
+function closeCalendar() {
+  document.getElementById('cal-mask').classList.add('hide');
+}
+
+// ═══════════ 对比 ═══════════
+function renderCompare() {
+  // 分类标签
+  var btnHtml = '<button class="on" onclick="cmpCat=\'total\';changeCmpCat(this)">总额</button>';
+  categories.forEach(function(c){
+    btnHtml += '<button onclick="cmpCat=\''+c.id+'\';changeCmpCat(this)">'+c.name+'</button>';
+  });
+  document.getElementById('cmp-filters').innerHTML = btnHtml;
+
+  // 门店勾选
+  var storeHtml = '';
+  stores.forEach(function(s, i){
+    var on = cmpStoresSel.indexOf(s) >= 0;
+    var c = cmpColors[s] || cmpMoreColors[i%cmpMoreColors.length];
+    storeHtml += '<div class="store-tag'+(on?' on':'')+'" onclick="toggleCmpStore(\''+s+'\')"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+c+';margin-right:2px"></span>'+s+'</div>';
+  });
+  document.getElementById('cmp-stores').innerHTML = storeHtml;
+
+  // 粒度
+  var grans = [
+    {v:'year', label:'月K'},
+    {v:'month', label:'周K'},
+    {v:'day', label:'日K'},
+  ];
+  var granHtml = '';
+  grans.forEach(function(g){
+    granHtml += '<button class="'+(g.v===cmpGran?'on':'')+'" onclick="setCmpGran(this,\''+g.v+'\')">'+g.label+'</button>';
+  });
+  document.getElementById('cmp-gran-bar').innerHTML = granHtml;
+
+  drawCompare();
+}
+
+function changeCmpCat(btn) {
+  var btns = document.querySelectorAll('#cmp-filters button');
+  for (var i=0; i<btns.length; i++) btns[i].className = '';
+  btn.className = 'on';
+  drawCompare();
+}
+
+function toggleCmpStore(name) {
+  var idx = cmpStoresSel.indexOf(name);
+  if (idx >= 0) cmpStoresSel.splice(idx, 1);
+  else cmpStoresSel.push(name);
+  if (cmpStoresSel.length === 0) cmpStoresSel.push(name);
+  renderCompare();
+}
+
+function setCmpGran(btn, g) {
+  cmpGran = g;
+  var btns = document.querySelectorAll('#cmp-gran-bar button');
+  for (var i=0; i<btns.length; i++) btns[i].className = '';
+  btn.className = 'on';
+  drawCompare();
+}
+
+function drawCompare() {
+  var canvas = document.getElementById('cmp-canvas');
+  var ctx = canvas.getContext('2d');
+  var W = canvas.parentElement.clientWidth - 24;
+  var H = 220;
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+
+  ctx.fillStyle = '#fafbfd';
+  ctx.fillRect(0, 0, W, H);
+
+  if (cmpStoresSel.length === 0) {
+    ctx.fillStyle = '#b0bed0';
+    ctx.font = '13px -apple-system,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('勾选门店开始对比', W/2, H/2);
+    return;
+  }
+
+  // 生成每条线的时间序列
+  var allSeries = [];
+  var allV = [];
+  var labels = [];
+
+  // 确定时间范围：用当前选中的年月
+  var y = ovYear, m = ovMonth;
+
+  cmpStoresSel.forEach(function(name, si){
+    var pts = genCmpSeries(name, y, m);
+    allSeries.push({name:name, pts:pts, color:cmpColors[name] || cmpMoreColors[si%cmpMoreColors.length]});
+    pts.forEach(function(p){ allV.push(p.v); });
+    if (labels.length === 0 && pts.length > 0) {
+      pts.forEach(function(p){ labels.push(p.label); });
+    }
+  });
+
+  if (allV.length === 0 || labels.length === 0) {
+    ctx.fillStyle = '#b0bed0';
+    ctx.font = '13px -apple-system,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('暂无数据', W/2, H/2);
+    return;
+  }
+
+  var max = Math.max.apply(null, allV.map(Math.abs)) || 1;
+  max *= 1.2;
+  var padL=45, padR=12, padT=12, padB=30;
+  var plotW = W - padL - padR;
+  var plotH = H - padT - padB;
+  var totalPts = labels.length;
+
+  function cx(i) { return padL + (i+0.5)*plotW/totalPts; }
+  function cy(v) { return padT + plotH/2 - v/(max*2)*plotH; }
+
+  // 网格
+  ctx.strokeStyle = '#eef2f7';
+  ctx.lineWidth = 0.5;
+  for (var i=0; i<5; i++) {
+    var gy = padT + i*plotH/4;
+    ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(W-padR, gy); ctx.stroke();
+  }
+
+  // 零线
+  ctx.strokeStyle = '#cdd7e5';
+  ctx.lineWidth = 1;
+  var zy = cy(0);
+  ctx.beginPath(); ctx.moveTo(padL, zy); ctx.lineTo(W-padR, zy); ctx.stroke();
+
+  // Y轴
+  ctx.fillStyle = '#8899b0';
+  ctx.font = '10px -apple-system,sans-serif';
+  ctx.textAlign = 'right';
+  for (var i=0; i<5; i++) {
+    var gv = max - i*(max*2)/4;
+    ctx.fillText((gv/1000).toFixed(1)+'k', padL-4, padT + i*plotH/4 + 4);
+  }
+
+  // X轴
+  ctx.textAlign = 'center';
+  var step = Math.max(1, Math.floor(totalPts/6));
+  for (var i=0; i<totalPts; i+=step) {
+    ctx.fillText(labels[i], cx(i), H-padB+14);
+  }
+
+  // 折线
+  allSeries.forEach(function(ser){
+    if (ser.pts.length === 0) return;
+    ctx.strokeStyle = ser.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ser.pts.forEach(function(p, i){
+      var x = cx(i), y = cy(p.v);
+      if (i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // 端点
+    ser.pts.forEach(function(p, i){
+      ctx.fillStyle = ser.color;
+      ctx.beginPath();
+      ctx.arc(cx(i), cy(p.v), 3, 0, Math.PI*2);
+      ctx.fill();
+    });
+
+    // 最新值标签
+    var last = ser.pts[ser.pts.length-1];
+    ctx.fillStyle = ser.color;
+    ctx.font = 'bold 11px -apple-system,sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(ser.name+' ¥'+(last.v>=0?'+':'')+last.v.toLocaleString(), cx(ser.pts.length-1)+6, cy(last.v)+4);
+  });
+}
+
+function genCmpSeries(storeName, y, m) {
+  var pts = [];
+  if (cmpGran === 'year') {
+    // 月K: 每个月一条
+    var maxM = (y===(new Date().getFullYear())) ? (new Date().getMonth()+1) : 12;
+    for (var mi=1; mi<=maxM; mi++) {
+      var ym = y+'-'+String(mi).padStart(2,'0');
+      var sum = 0;
+      records.forEach(function(r){
+        if (r.store === storeName && r.date.startsWith(ym)) {
+          if (cmpCat === 'total') sum += r.amount;
+          else if (r.category === cmpCat) sum += r.amount;
+        }
+      });
+      if (sum !== 0 || pts.length > 0) pts.push({label:mi+'月', v:sum});
+    }
+  } else if (cmpGran === 'month') {
+    // 周K: 每周一条
+    var daysInMonth = new Date(y, m, 0).getDate();
+    var firstDow = new Date(y, m-1, 1).getDay();
+    var firstWeekDays = firstDow===0 ? 1 : 8-firstDow;
+    var wim = firstWeekDays >= daysInMonth ? 1 : 1 + Math.ceil((daysInMonth-firstWeekDays)/7);
+    for (var wi=0; wi<wim; wi++) {
+      var startDay = wi===0 ? 1 : firstWeekDays + (wi-1)*7 + 1;
+      var endDay = Math.min(startDay+6, daysInMonth);
+      var sum = 0;
+      for (var d=startDay; d<=endDay; d++) {
+        var ds = y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+        records.forEach(function(r){
+          if (r.store === storeName && r.date === ds) {
+            if (cmpCat === 'total') sum += r.amount;
+            else if (r.category === cmpCat) sum += r.amount;
+          }
+        });
+      }
+      if (sum !== 0 || pts.length > 0) pts.push({label:'W'+(wi+1), v:sum});
+    }
+  } else if (cmpGran === 'day') {
+    var daysInMonth = new Date(y, m, 0).getDate();
+    for (var d=1; d<=daysInMonth; d++) {
+      var ds = y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+      var sum = 0;
+      records.forEach(function(r){
+        if (r.store === storeName && r.date === ds) {
+          if (cmpCat === 'total') sum += r.amount;
+          else if (r.category === cmpCat) sum += r.amount;
+        }
+      });
+      if (sum !== 0 || pts.length > 0) pts.push({label:d+'日', v:sum});
+    }
+  }
+  return pts;
+}
+
+// ═══════════ 预警 ═══════════
+function renderAlerts() {
+  var ym = ovYear+'-'+String(ovMonth).padStart(2,'0');
+  var catMap = {};
+  categories.forEach(function(c){ catMap[c.id] = c; });
+
+  var alerts = [];
+  var storeCat = {};
+  var storeNet = {};
+  stores.forEach(function(s){ storeNet[s] = 0; });
+  records.filter(function(r){ return r.date.startsWith(ym); }).forEach(function(r){
+    var key = r.store+'|'+r.category;
+    storeCat[key] = (storeCat[key]||0) + r.amount;
+    storeNet[r.store] += r.amount;
+  });
+
+  alertRules.forEach(function(rule){
+    if (!rule.on && rule.type !== 'store_loss' && rule.type !== 'store_profit') return;
+    if (rule.type === 'net_neg') {
+      stores.forEach(function(s){
+        if (storeNet[s] < 0) alerts.push({level:'red', title:s+' 月净额为负', detail:'本月净额 '+storeNet[s].toLocaleString()+' 元'});
+      });
+      return;
+    }
+    if (rule.type === 'combo_loss') {
+      var cw = getComboWarning();
+      if (cw) {
+        var lvl2 = cw.gap <= 1 ? 'red' : 'yellow';
+        alerts.push({level:lvl2, title:'组合('+cw.stores+') 连亏预警', detail:'当前连亏'+cw.cur+'天，历史最长'+cw.max+'天，距红线'+(cw.gap===0?'已达':cw.gap+'天')});
+      }
+      return;
+    }
+    if (rule.type === 'combo_profit') {
+      var cp2 = getComboProfit();
+      if (cp2) alerts.push({level:'green', title:'组合('+cp2.stores+') 连续赚钱', detail:'当前连盈'+cp2.cur+'天，历史最长'+cp2.max+'天 🎉'});
+      return;
+    }
+    if (rule.type === 'store_loss' || rule.type === 'store_profit') return;
+    var cat = catMap[rule.cat];
+    if (!cat || !cat.budget || cat.budget <= 0) return;
+    stores.forEach(function(s){
+      var v = storeCat[s+'|'+rule.cat] || 0;
+      var absV = Math.abs(v);
+      var threshold = cat.budget * rule.pct/100;
+      if (rule.type === 'over' && absV >= cat.budget) {
+        alerts.push({level:'red', title:s+' '+cat.name+' 已超预算', detail:'已支出 '+absV.toLocaleString()+' / 预算 '+cat.budget.toLocaleString()});
+      } else if (rule.type === 'near' && absV >= threshold) {
+        alerts.push({level:'yellow', title:s+' '+cat.name+' 接近预算', detail:'已支出 '+absV.toLocaleString()+' / 预算 '+cat.budget.toLocaleString()+' ('+rule.pct+'%)'});
+      }
+    });
+  });
+
+  // 门店连亏预警
+  var slRule = null;
+  for (var ai2=0; ai2<alertRules.length; ai2++) { if (alertRules[ai2].type === 'store_loss') { slRule = alertRules[ai2]; break; } }
+  if (slRule && slRule.on) {
+    var lw = getLossWarnings();
+    lw.forEach(function(w){
+      alerts.push({level:w.level==='🔴'?'red':'yellow', title:w.store+' 连亏预警', detail:'当前连亏'+w.cur+'天，历史最长'+w.max+'天，距红线'+(w.gap===0?'已达':w.gap+'天')});
+    });
+  }
+
+  var ahtml = alerts.length ? '' : '<div class="empty">✅ 暂无预警</div>';
+  currentAlerts = alerts;
+  alerts.forEach(function(a, i){
+    var cls = a.level==='yellow'?'yellow':(a.level==='green'?'green':'');
+    var icon = a.level==='red'?'🔴':(a.level==='green'?'🟢':'🟡');
+    ahtml += '<div class="alert-item '+cls+'" onclick="showAlertDetail('+i+')" style="cursor:pointer">'
+      + '<span class="al-icon">'+icon+'</span>'
+      + '<div class="al-info"><div class="al-title">'+a.title+'</div><div class="al-detail">'+a.detail+'</div></div>'
+      + '</div>';
+  });
+  document.getElementById('alert-list').innerHTML = ahtml;
+
+  var badge = document.getElementById('alert-badge');
+  if (alerts.length > 0) { badge.style.display = ''; badge.textContent = alerts.length; }
+  else { badge.style.display = 'none'; }
+
+  var rhtml = '';
+  // 门店连亏状态
+  var slOn = false;
+  for (var ai3=0; ai3<alertRules.length; ai3++) { if (alertRules[ai3].type === 'store_loss' && alertRules[ai3].on) { slOn = true; break; } }
+  if (slOn) {
+    rhtml += '<div style="margin-bottom:6px;font-size:12px;color:#8899b0;display:flex;align-items:center;justify-content:space-between"><span>📊 门店连续亏损状态</span><span style="font-size:10px">关闭的不参与预警</span></div>';
+    stores.forEach(function(s){
+      var on = warnStoreOn[s] !== false;
+      var dayMap = {};
+      records.forEach(function(r){ if (r.store === s) dayMap[r.date] = (dayMap[r.date]||0) + r.amount; });
+      var dates = Object.keys(dayMap).sort();
+      var longestLoss = 0, curRun = 0, curLoss = 0;
+      if (dates.length >= 2) {
+        for (var di=0; di<dates.length; di++) { if (dayMap[dates[di]] < 0) { curRun++; if (curRun > longestLoss) longestLoss = curRun; } else curRun = 0; }
+        for (var di2=dates.length-1; di2>=0; di2--) { if (dayMap[dates[di2]] < 0) curLoss++; else break; }
+      }
+      var gap = longestLoss - curLoss, icon, cl;
+      if (!on) { icon = '⏸'; cl = '#c0c9d4'; }
+      else if (curLoss === 0) { icon = '✅'; cl = '#22c55e'; }
+      else if (gap <= 1) { icon = '🔴'; cl = '#ef4444'; }
+      else if (gap <= 3) { icon = '🟡'; cl = '#f59e0b'; }
+      else { icon = '⚪'; cl = '#8899b0'; }
+      var status;
+      if (!on) status = '已关闭';
+      else if (dates.length < 2) status = '数据不足';
+      else if (curLoss > 0) status = '连亏'+curLoss+'天 / 历史最长'+longestLoss+'天'+(gap<=3?' ⚠距红线'+gap+'天':'');
+      else status = longestLoss>0 ? '正常 · 历史最长连亏'+longestLoss+'天' : '无亏损记录';
+      rhtml += '<div class="rule-row" style="opacity:'+(on?'1':'.5')+'"><span class="r-name">'+icon+' '+s+'</span><span style="font-size:11px;color:'+cl+';flex:1">'+status+'</span><select onchange="warnStoreOn[\''+s+'\']=this.value===\'1\';saveData();renderAlerts();renderOverview()" style="font-size:11px;padding:2px 4px;border-radius:6px;border:1px solid #cdd7e5"><option value="1"'+(on?' selected':'')+'>开</option><option value="0"'+(on?'':' selected')+'>关</option></select></div>';
+    });
+  }
+  // 门店连盈状态
+  var spOn = false;
+  for (var ai4=0; ai4<alertRules.length; ai4++) { if (alertRules[ai4].type === 'store_profit' && alertRules[ai4].on) { spOn = true; break; } }
+  if (spOn) {
+    rhtml += '<div style="margin-top:10px;margin-bottom:6px;font-size:12px;color:#8899b0"><span>📈 门店连续赚钱状态</span></div>';
+    stores.forEach(function(s){
+      var on = profitStoreOn[s] !== false;
+      var dayMap = {};
+      records.forEach(function(r){ if (r.store === s) dayMap[r.date] = (dayMap[r.date]||0) + r.amount; });
+      var dates = Object.keys(dayMap).sort();
+      var longestProfit = 0, curRun = 0, curProfit = 0;
+      if (dates.length >= 2) {
+        for (var di=0; di<dates.length; di++) { if (dayMap[dates[di]] > 0) { curRun++; if (curRun > longestProfit) longestProfit = curRun; } else curRun = 0; }
+        for (var di2=dates.length-1; di2>=0; di2--) { if (dayMap[dates[di2]] > 0) curProfit++; else break; }
+      }
+      var icon, cl;
+      if (!on) { icon = '⏸'; cl = '#c0c9d4'; }
+      else if (curProfit >= 10) { icon = '🏆'; cl = '#16a34a'; }
+      else if (curProfit > 0) { icon = '🟢'; cl = '#22c55e'; }
+      else { icon = '⚪'; cl = '#8899b0'; }
+      var status;
+      if (!on) status = '已关闭';
+      else if (dates.length < 2) status = '数据不足';
+      else if (curProfit > 0) status = '连盈'+curProfit+'天 / 历史最长'+longestProfit+'天';
+      else status = longestProfit>0 ? '历史最长连盈'+longestProfit+'天' : '无盈利记录';
+      rhtml += '<div class="rule-row" style="opacity:'+(on?'1':'.5')+'"><span class="r-name">'+icon+' '+s+'</span><span style="font-size:11px;color:'+cl+';flex:1">'+status+'</span><select onchange="profitStoreOn[\''+s+'\']=this.value===\'1\';saveData();renderAlerts()" style="font-size:11px;padding:2px 4px;border-radius:6px;border:1px solid #cdd7e5"><option value="1"'+(on?' selected':'')+'>开</option><option value="0"'+(on?'':' selected')+'>关</option></select></div>';
+    });
+  }
+  rhtml += '<div style="border-top:1px dashed #cdd7e5;margin:10px 0"></div>';
+  rhtml += '<h3>⚙️ 预警规则 <button class="mgmt-pill" style="font-size:12px;padding:4px 10px;margin-left:8px" onclick="showRuleSheet()">＋ 添加</button></h3>';
+  alertRules.forEach(function(rule, i){
+    var cat = catMap[rule.cat] || {name:rule.cat};
+    if (rule.type === 'combo_loss' || rule.type === 'combo_profit') {
+      rhtml += '<div class="rule-row" style="flex-wrap:wrap"><span class="r-name">'+rule.desc+'</span><div class="r-val" style="flex-basis:100%;margin-top:4px;display:flex;align-items:center;gap:4px;flex-wrap:wrap"><select onchange="var r=null;for(var k=0;k<alertRules.length;k++)if(alertRules[k].type===\''+rule.type+'\')r=alertRules[k];if(r)r.on=this.value===\'1\';'+(rule.type==='combo_loss'?'warnComboOn=this.value===\'1\';':'')+'saveData();renderAlerts();renderOverview()"><option value="1"'+(rule.on?' selected':'')+'>开</option><option value="0"'+(rule.on?'':' selected')+'>关</option></select>';
+      stores.forEach(function(s){
+        var bg = warnComboStores[s] ? '#eef3ff' : '#f8fafc';
+        var cl2 = warnComboStores[s] ? '#1e3a5f' : '#8899b0';
+        rhtml += '<span class="card-pill" onclick="warnComboStores[\''+s+'\']=!warnComboStores[\''+s+'\'];renderAlerts();renderOverview()" style="cursor:pointer;background:'+bg+';color:'+cl2+'">'+s+'</span>';
+      });
+      rhtml += '</div></div>';
+      return;
+    }
+    if (rule.type === 'store_loss' || rule.type === 'store_profit') {
+      rhtml += '<div class="rule-row"><span class="r-name">'+rule.desc+'</span><div class="r-val"><select onchange="alertRules['+i+'].on=this.value===\'1\';saveData();renderAlerts();renderOverview()"><option value="1"'+(rule.on?' selected':'')+'>开</option><option value="0"'+(rule.on?'':' selected')+'>关</option></select></div></div>';
+      return;
+    }
+    rhtml += '<div class="rule-row"><span class="r-name">'+rule.desc+'</span><div class="r-val">'
+      + (rule.type!=='net_neg' ? '<span style="font-size:11px;color:#8899b0">阈值 '+(rule.pct||cat.budget||0)+'</span>' : '')
+      + '<select onchange="alertRules['+i+'].on=this.value===\'1\';saveData();renderAlerts()"><option value="1"'+(rule.on?' selected':'')+'>开</option><option value="0"'+(rule.on?'':' selected')+'>关</option></select>'
+      + '<span style="font-size:12px;color:#c0c9d4;cursor:pointer;margin-left:4px" onclick="deleteRule('+i+')">✕</span></div></div>';
+  });
+  document.getElementById('alert-rules').innerHTML = rhtml;
+}
+
+// ── 预警详情弹窗 ──
+var currentAlerts = [];
+function showAlertDetail(i) {
+  var a = currentAlerts[i];
+  if (!a) return;
+  document.getElementById('ad-title').textContent = a.title;
+  document.getElementById('ad-body').innerHTML = a.detail+'<br><br>建议：'+(a.level==='red'?'立即关注并采取措施':'留意趋势，控制支出');
+  document.getElementById('alert-detail-mask').classList.remove('hide');
+}
+function closeAlertDetail() {
+  document.getElementById('alert-detail-mask').classList.add('hide');
+}
+
+// ── 添加/删除规则 ──
+function showRuleSheet() {
+  var body = document.getElementById('ms-body');
+  var title = document.getElementById('ms-title');
+  var wheel = document.getElementById('ms-wheel');
+  mgmtMode = 'rule';
+  title.textContent = '添加预警规则';
+  // 隐藏滚轮容器
+  wheel.parentElement.style.display = 'none';
+  wheel.innerHTML = '';
+  // 获取默认分类
+  var defCat = categories[0] || {id:'', name:'无', dir:'+'};
+  body.innerHTML = '<label style="font-size:12px;color:#8899b0;display:block;margin-bottom:4px">分类</label>'
+    + '<div class="cal-pill" id="ms-rule-cat-pill" onclick="rulePickOne(\'cat\')" style="width:100%;margin-bottom:8px">'
+    + defCat.name+' ('+defCat.dir+')<span class="arr">▾</span></div>'
+    + '<input type="hidden" id="ms-rule-cat" value="'+defCat.id+'">'
+    + '<label style="font-size:12px;color:#8899b0;display:block;margin-bottom:4px">类型</label>'
+    + '<div class="cal-pill" id="ms-rule-type-pill" onclick="rulePickOne(\'type\')" style="width:100%;margin-bottom:8px">'
+    + '超预算<span class="arr">▾</span></div>'
+    + '<input type="hidden" id="ms-rule-type" value="over">'
+    + '<input id="ms-rule-pct" placeholder="阈值%（默认100）" type="number" style="width:100%;padding:9px;border:1px solid #cdd7e5;border-radius:10px;font-size:14px;background:#f8fafc;color:#1a2438;margin-bottom:8px">'
+    + '<input id="ms-rule-desc" placeholder="规则描述" style="width:100%;padding:9px;border:1px solid #cdd7e5;border-radius:10px;font-size:14px;background:#f8fafc;color:#1a2438">';
+
+  document.getElementById('mgmt-sheet-mask').classList.remove('hide');
+}
+
+// ── 规则滚轮选择 ──
+function rulePickOne(field) {
+  pickField = 'rule_'+field;
+  var wl = document.getElementById('wl-pick');
+  var title = document.getElementById('ws-title');
+  var items = [];
+
+  if (field === 'cat') {
+    title.textContent = '选择分类';
+    categories.forEach(function(c){
+      items.push({v:c.id, label:c.name+' ('+c.dir+')'});
+    });
+  } else if (field === 'type') {
+    title.textContent = '选择类型';
+    items = [
+      {v:'over', label:'超预算'},
+      {v:'near', label:'接近预算'},
+      {v:'net_neg', label:'净额为负'}
+    ];
+  }
+
+  var h = '';
+  for (var i=0; i<items.length; i++) {
+    h += '<div class="wheel-item" data-v="'+items[i].v+'">'+items[i].label+'</div>';
+  }
+  wl.innerHTML = h;
+
+  var pill = document.getElementById('ms-rule-'+field+'-pill');
+  var rect = pill.getBoundingClientRect();
+  var anchor = document.getElementById('wheel-anchor');
+  anchor.style.left = Math.max(8, rect.left + rect.width/2 - 90) + 'px';
+  anchor.style.top = (rect.bottom + 6) + 'px';
+  document.getElementById('wheel-modal').classList.remove('hide');
+}
+
+function deleteRule(i) {
+  if (!confirm('删除这条规则？')) return;
+  alertRules.splice(i, 1);
+  saveData();
+  refreshAll();
+}
+
+function updateCatBudget(catId, val) {
+  var cat = findCat(catId);
+  if (cat) { cat.budget = parseInt(val)||0; saveData(); }
+}
+
+// ═══════════ 管理 ═══════════
+function renderMgmt() {
+  document.getElementById('mgmt-stores').innerHTML = stores.map(function(s){
+    return '<div class="cat-tag">🏪 '+s+' <span onclick="delStore(\''+s+'\')" style="margin-left:4px;color:#c0c9d4">✕</span></div>';
+  }).join('');
+
+  document.getElementById('mgmt-cats').innerHTML = categories.map(function(c){
+    return '<div class="cat-tag" onclick="toggleCatShow(\''+c.id+'\')" style="cursor:pointer">'
+      + '<span class="dot2" style="background:'+c.color+'"></span>'
+      + c.name+' ('+c.dir+')'
+      + (c.budget ? ' ¥'+c.budget.toLocaleString() : '')
+      + ' <span style="font-size:10px;color:'+(c.show!==false?'#22c55e':'#c0c9d4')+'">'+(c.show!==false?'👁':'—')+'</span>'
+      + ' <span onclick="event.stopPropagation();delCategory(\''+c.id+'\')" style="margin-left:4px;color:#c0c9d4;font-size:12px">✕</span>'
+      + '</div>';
+  }).join('');
+}
+
+// ── 管理弹窗 ──
+function showMgmtSheet(mode) {
+  mgmtMode = mode;
+  var title = document.getElementById('ms-title');
+  var body = document.getElementById('ms-body');
+  var wheel = document.getElementById('ms-wheel');
+
+  if (mode === 'store') {
+    title.textContent = '🏪 门店管理';
+    wheel.parentElement.style.display = '';
+    wheel.style.display = '';
+    var wh = '';
+    stores.forEach(function(s){
+      wh += '<div class="wheel-item" onclick="document.getElementById(\'ms-name\').value=\''+s+'\'">'+s+'</div>';
+    });
+    wheel.innerHTML = wh || '<div class="wheel-item" style="color:#b0bed0">暂无</div>';
+    body.innerHTML = '<input id="ms-name" placeholder="输入新门店名">';
+  } else if (mode === 'cat') {
+    title.textContent = '🏷️ 分类管理';
+    wheel.parentElement.style.display = '';
+    var wh = '';
+    categories.forEach(function(c){
+      wh += '<div class="wheel-item" onclick="document.getElementById(\'ms-name\').value=\''+c.name+'\';document.getElementById(\'ms-dir\').value=\''+c.dir+'\';var b=document.getElementById(\'ms-budget\');if(b)b.value='+(c.budget||0)+'">'+c.name+' ('+c.dir+')</div>';
+    });
+    wheel.innerHTML = wh || '<div class="wheel-item" style="color:#b0bed0">暂无</div>';
+    body.innerHTML = '<input id="ms-name" placeholder="分类名称">'
+      + '<select id="ms-dir"><option value="+">收入 (+）</option><option value="-">支出 (-）</option></select>'
+      + '<input id="ms-budget" placeholder="月度预算（选填）" type="number">';
+  }
+  document.getElementById('mgmt-sheet-mask').classList.remove('hide');
+}
+
+function confirmMgmtSheet() {
+  // 规则模式单独处理
+  if (mgmtMode === 'rule') {
+    var catId = (document.getElementById('ms-rule-cat')||{}).value;
+    var type = (document.getElementById('ms-rule-type')||{}).value || 'over';
+    var pct = parseInt((document.getElementById('ms-rule-pct')||{}).value) || 100;
+    var desc = (document.getElementById('ms-rule-desc')||{}).value || '新规则';
+    if (!catId && type !== 'net_neg') return;
+    alertRules.push({id:'R'+Date.now(), cat:catId||'*', type:type, desc:desc, pct:pct, on:true});
+    closeMgmtSheet();
+    saveData();
+    refreshAll();
+    return;
+  }
+
+  var name = (document.getElementById('ms-name')||{}).value;
+  if (!name || !name.trim()) return;
+  name = name.trim();
+
+  if (mgmtMode === 'store') {
+    if (stores.indexOf(name) >= 0) return alert('已存在');
+    stores.push(name);
+    if (cmpStoresSel.indexOf(name) < 0) cmpStoresSel.push(name);
+  } else if (mgmtMode === 'cat') {
+    var dir = (document.getElementById('ms-dir')||{}).value || '-';
+    var budget = parseInt((document.getElementById('ms-budget')||{}).value) || 0;
+    var id = 'cat_'+Date.now();
+    var colors = ['#ef4444','#f59e0b','#8b5cf6','#3b82f6','#ec4899','#f97316','#14b8a6','#6366f1','#22c55e','#eab308'];
+    categories.push({id:id, name:name, dir:dir, color:colors[Math.floor(Math.random()*colors.length)], budget:budget, show:true});
+  }
+
+  closeMgmtSheet();
+  saveData();
+  refreshAll();
+}
+
+function closeMgmtSheet() {
+  document.getElementById('mgmt-sheet-mask').classList.add('hide');
+}
+
+function toggleCatShow(id) {
+  var cat = findCat(id);
+  if (cat) { cat.show = !cat.show; saveData(); refreshAll(); }
+}
+
+function delStore(name) {
+  if (!confirm('删除「'+name+'」及其所有记录？')) return;
+  stores = stores.filter(function(s){ return s !== name; });
+  records = records.filter(function(r){ return r.store !== name; });
+  cmpStoresSel = cmpStoresSel.filter(function(s){ return s !== name; });
+  saveData();
+  refreshAll();
+}
+
+function delCategory(id) {
+  var cat = findCat(id);
+  if (!cat) return;
+  var cnt = records.filter(function(r){ return r.category === id; }).length;
+  if (!confirm('删除分类「'+cat.name+'」？\n\n将同时删除该分类下 '+cnt+' 条流水记录及相关预警规则，不可恢复。')) return;
+  categories = categories.filter(function(c){ return c.id !== id; });
+  records = records.filter(function(r){ return r.category !== id; });
+  alertRules = alertRules.filter(function(r){ return r.cat !== id; });
+  saveData();
+  refreshAll();
+}
+
+// ═══════════ 导入导出 ═══════════
+function exportData() {
+  var exp = {categories:categories, stores:stores, records:records, alertRules:alertRules};
+  var blob = new Blob([JSON.stringify(exp, null, 2)], {type:'application/json'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'funds-v2-'+ovYear+'-'+String(ovMonth).padStart(2,'0')+'.json';
+  a.click();
+}
+
+function importData(input) {
+  var file = input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var data = JSON.parse(e.target.result);
+      if (data.categories) categories = data.categories;
+      if (data.stores) stores = data.stores;
+      if (data.records) records = data.records;
+      if (data.alertRules) alertRules = data.alertRules;
+      cmpStoresSel = stores.slice();
+      saveData();
+      refreshAll();
+      alert('导入成功！'+stores.length+'家门店，'+records.length+'条记录');
+    } catch(err) {
+      alert('解析失败：'+err.message);
+    }
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
+// ═══════════ 标签切换 ═══════════
+function switchTab(tab) {
+  currentTab = tab;
+  var btns = document.querySelectorAll('.tab-bar button');
+  btns.forEach(function(b,i){
+    b.className = ['entry','overview','compare','alerts','mgmt'][i]===tab ? 'on' : '';
+  });
+  document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('on'); });
+  document.getElementById('panel-'+tab).classList.add('on');
+  if (tab === 'compare') drawCompare();
+}
+
+// 自动登录
+if (localStorage.getItem('funds_v2')) {
+  document.getElementById('login-gate').classList.add('hide');
+  document.getElementById('app').style.display = '';
+  initApp();
+}
+</script>
+</body>
+</html>
