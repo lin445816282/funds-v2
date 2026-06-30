@@ -28,6 +28,17 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
 .header .user-pill{padding:4px 10px;background:#f5f7fa;border-radius:14px;font-size:12px;color:#5a6b85;cursor:pointer}
 .header .user-pill:active{background:#dce4f0}
 
+/* 数据来源标识 */
+.sync-bar{display:flex;align-items:center;justify-content:center;gap:6px;padding:4px 16px;font-size:11px;color:#8899b0;background:#f8fafc;border-bottom:1px solid #eef2f8}
+.sync-bar .src-tag{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
+.sync-bar .src-db{background:#dcfce7;color:#16a34a}
+.sync-bar .src-local{background:#fef3c7;color:#d97706}
+.sync-bar .sync-btn{padding:2px 10px;border-radius:10px;border:1px solid #cdd7e5;background:#fff;font-size:10px;cursor:pointer;color:#5a6b85}
+.sync-bar .sync-btn:active{background:#eef3ff}
+.sync-bar .sync-btn:disabled{opacity:.5;cursor:not-allowed}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.sync-bar .syncing{animation:spin .8s linear infinite;display:inline-block}
+
 /* 标签导航 */
 .tab-bar{display:flex;margin:0 16px;position:sticky;top:50px;z-index:9;background:#e4edf7;padding:8px 0 4px}
 .tab-bar button{flex:1;padding:8px 0;border:none;background:transparent;font-size:13px;font-weight:600;color:#8899b0;border-bottom:2px solid transparent;cursor:pointer;transition:all .2s}
@@ -271,6 +282,13 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     </div>
   </div>
 
+  <!-- 数据来源标识 -->
+  <div class="sync-bar" id="sync-bar">
+    <span id="sync-src" class="src-tag">⏳ 同步中...</span>
+    <span id="sync-time" style="color:#b0bed0"></span>
+    <button class="sync-btn" onclick="doSync()">🔄 同步</button>
+  </div>
+
   <!-- 标签 -->
   <div class="tab-bar">
     <button class="on" onclick="switchTab('entry')">📝 录入</button>
@@ -398,7 +416,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   <div class="mgmt-sheet" onclick="event.stopPropagation()" style="width:300px;padding:14px">
     <div class="ms-title">📝 记一笔</div>
     <label style="font-size:12px;color:#8899b0;display:block;margin-bottom:3px">门店</label>
-    <span class="cal-pill" id="ef-store-pill" onclick="entryPickOne('store')" style="width:100%;display:flex;justify-content:space-between;margin-bottom:8px;padding:9px 14px">🏪 选择门店<span class="arr">▾</span></span>
+    <span class="cal-pill" id="ef-store-pill" onclick="openStoreWheel()" style="width:100%;display:flex;justify-content:space-between;margin-bottom:8px;padding:9px 14px">🏪 选择门店<span class="arr">▾</span></span>
     <input type="hidden" id="ef-store" value="">
     <div class="ef-row" style="gap:8px">
       <div class="ef-col">
@@ -419,6 +437,16 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     <div class="ms-btns">
       <button class="ws-cancel" onclick="closeEntryPopup()">取消</button>
       <button class="ws-ok" onclick="saveEntry()">记一笔</button>
+    </div>
+  </div>
+</div>
+
+<!-- 门店滚轮选择 -->
+<div class="wheel-modal hide" id="store-wheel-mask" onclick="closeStoreWheel()">
+  <div class="anchor" id="store-wheel-anchor">
+    <div class="wheel-sheet" onclick="event.stopPropagation()" style="width:200px">
+      <div class="ws-title">🏪 选择门店</div>
+      <div class="wheel-wrap" style="height:160px"><div class="hl"></div><div class="wheel-list" id="store-wheel-list"></div></div>
     </div>
   </div>
 </div>
@@ -535,6 +563,14 @@ var cmpMoreColors = ['#ef4444','#3b82f6','#22c55e','#f59e0b','#8b5cf6','#ec4899'
 // 日期滚轮状态
 var txYear, txMonth, txDay;
 
+// 数据来源追踪
+var dataSource = '';  // 'api' | 'local' | 'mock'
+var lastSyncTime = '';
+var lastSyncSuccess = 0;  // 上次同步成功时间戳，0=未同步
+
+// 路径前缀：代理下为 /funds-v2，直连为空
+var API_BASE = window.location.pathname.startsWith('/funds-v2') ? '/funds-v2' : '';
+
 // API 数据同步
 var apiToken = localStorage.getItem('funds_token') || '';
 
@@ -542,26 +578,98 @@ function syncFromAPI() {
   // 无 token 也尝试拉取（公开 API）
   try {
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/api/funds/data', false);
+    xhr.open('GET', API_BASE + '/api/funds/data', false);
     xhr.send();
     if (xhr.status === 200) {
       var data = JSON.parse(xhr.responseText);
+      // 数据为空则不算成功，回退本地
+      if (!data.stores || !data.stores.length) return false;
       if (data.stores) stores = data.stores;
       if (data.categories) categories = data.categories;
-      if (data.records) records = data.records;
+      // 仅当 API 有记录时才覆盖，避免空数据清空本地
+      if (data.records && data.records.length) records = data.records;
       if (data.alert_rules && data.alert_rules.length) alertRules = data.alert_rules;
       if (data.warn_store_on) warnStoreOn = data.warn_store_on;
       if (data.profit_store_on) profitStoreOn = data.profit_store_on;
+      dataSource = 'api';
+      lastSyncTime = new Date().toLocaleString('zh-CN');
+      updateSyncBar();
       return true;
     }
   } catch(e) { console.log('API sync err:', e); }
   return false;
 }
 
+function updateSyncBar() {
+  var tag = document.getElementById('sync-src');
+  var time = document.getElementById('sync-time');
+  var btn = document.querySelector('.sync-btn');
+  if (!tag) return;
+  tag.className = 'src-tag ' + (dataSource === 'api' ? 'src-db' : 'src-local');
+  tag.textContent = dataSource === 'api' ? '💾 数据库' : '📱 本地缓存';
+  if (time) time.textContent = lastSyncTime ? ' · ' + lastSyncTime : '';
+  // 30分钟冷却
+  if (btn) {
+    var elapsed = Date.now() - lastSyncSuccess;
+    var cooldown = 30 * 60 * 1000;
+    if (lastSyncSuccess && elapsed < cooldown) {
+      var remain = Math.ceil((cooldown - elapsed) / 60000);
+      btn.disabled = true;
+      btn.textContent = '⏳ ' + remain + '分后可同步';
+    } else {
+      btn.disabled = false;
+      btn.textContent = '🔄 同步';
+    }
+  }
+}
+
+function doSync() {
+  var tag = document.getElementById('sync-src');
+  var btn = document.querySelector('.sync-btn');
+  if (tag) { tag.textContent = '⏳ 同步中...'; tag.className = 'src-tag'; }
+  if (btn) { btn.innerHTML = '<span class="syncing">🔄</span> 同步中'; btn.disabled = true; }
+  // 先推送本地数据到数据库（异步）
+  if (stores.length > 0 && records.length > 0) {
+    pushToAPI();
+    // 等推送完成再拉取
+    setTimeout(function(){
+      var ok = syncFromAPI();
+      if (ok) { saveData(); lastSyncSuccess = Date.now(); }
+      else { loadData(); }
+      updateSyncBar();
+      refreshAll();
+    }, 500);
+    return;
+  }
+  // 再拉取数据库
+  var ok = syncFromAPI();
+  if (ok) {
+    saveData();
+    lastSyncSuccess = Date.now();
+  } else {
+    loadData();
+  }
+  updateSyncBar();
+  refreshAll();
+}
+
+function pushToAPIBlocking() {
+  try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', API_BASE + '/api/funds/data', false);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.send(JSON.stringify({
+      stores: stores, categories: categories, records: records,
+      alert_rules: alertRules, warn_store_on: warnStoreOn, profit_store_on: profitStoreOn
+    }));
+    return xhr.status === 200;
+  } catch(e) { console.log('push block err:', e); return false; }
+}
+
 function pushToAPI() {
   try {
     var xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/funds/data', true);
+    xhr.open('POST', API_BASE + '/api/funds/data', true);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.send(JSON.stringify({
       stores: stores,
@@ -586,6 +694,9 @@ function loadData() {
       if (d.alertRules && d.alertRules.length) alertRules = d.alertRules;
       if (d.warnStoreOn) warnStoreOn = d.warnStoreOn;
       if (d.profitStoreOn) profitStoreOn = d.profitStoreOn;
+      dataSource = 'local';
+      lastSyncTime = localStorage.getItem('funds_v2_ts') || '';
+      updateSyncBar();
     } catch(e) { console.log('load err:', e); }
   }
   var cr = null;
@@ -594,6 +705,7 @@ function loadData() {
 }
 function saveData() {
   localStorage.setItem('funds_v2', JSON.stringify({categories:categories, stores:stores, records:records, alertRules:alertRules, warnStoreOn:warnStoreOn, profitStoreOn:profitStoreOn}));
+  localStorage.setItem('funds_v2_ts', new Date().toLocaleString('zh-CN'));
   pushToAPI();
 }
 
@@ -606,7 +718,7 @@ function doLogin() {
     // 尝试 API 登录获取 token
     try {
       var xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/funds/auth/login', false);
+      xhr.open('POST', API_BASE + '/api/funds/auth/login', false);
       xhr.setRequestHeader('Content-Type', 'application/json');
       xhr.send(JSON.stringify({username:'', password:pwd}));
       if (xhr.status === 200) {
@@ -633,10 +745,10 @@ function doLogout() {
 function initApp() {
   // 优先从 API 同步数据
   var fromAPI = syncFromAPI();
-  if (!fromAPI) {
-    // API 不可用 → 回退 localStorage
+  if (!fromAPI || !records.length) {
+    // API 不可用或无记录 → 回退 localStorage
     loadData();
-    if (!records.length) seedMockData();
+    // 不再自动播种假数据
   }
   cmpStoresSel = stores.slice();
   refreshAll();
@@ -709,6 +821,37 @@ function openEntryPopup() {
 
 function closeEntryPopup() {
   document.getElementById('entry-popup').classList.add('hide');
+}
+
+function openStoreWheel() {
+  var list = document.getElementById('store-wheel-list');
+  var html = '';
+  stores.forEach(function(s, i){
+    var sel = document.getElementById('ef-store').value === s ? ' sel' : '';
+    html += '<div class="wheel-item'+sel+'" onclick="selectStore(\''+s+'\')">'+s+'</div>';
+  });
+  list.innerHTML = html;
+  var mask = document.getElementById('store-wheel-mask');
+  mask.classList.remove('hide');
+  // 定位到门店 pill 附近
+  var pill = document.getElementById('ef-store-pill');
+  var rect = pill.getBoundingClientRect();
+  var anchor = document.getElementById('store-wheel-anchor');
+  anchor.style.top = (rect.bottom + 4) + 'px';
+  anchor.style.left = (rect.left) + 'px';
+  // 滚动到已选门店
+  var selItem = list.querySelector('.sel');
+  if (selItem) selItem.scrollIntoView({block:'center'});
+}
+
+function selectStore(name) {
+  document.getElementById('ef-store').value = name;
+  document.getElementById('ef-store-pill').innerHTML = '🏪 '+name+'<span class="arr">▾</span>';
+  closeStoreWheel();
+}
+
+function closeStoreWheel() {
+  document.getElementById('store-wheel-mask').classList.add('hide');
 }
 
 function clearEntry() {
