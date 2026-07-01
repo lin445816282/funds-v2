@@ -340,13 +340,6 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
       <div class="compare-stores" id="cmp-stores"></div>
       <div class="cmp-gran" id="cmp-gran-bar"></div>
       <div class="cmp-chart"><canvas id="cmp-canvas"></canvas></div>
-      <div style="display:flex;align-items:center;justify-content:center;gap:4px;padding:4px 0 8px">
-        <button onclick="cmpPanLeft()" style="width:32px;height:28px;border-radius:14px;border:1px solid #cdd7e5;background:#f8fafc;font-size:14px;cursor:pointer;color:#5a6b85">◀</button>
-        <button onclick="cmpZoomOut()" style="width:28px;height:28px;border-radius:14px;border:1px solid #cdd7e5;background:#f8fafc;font-size:13px;cursor:pointer;color:#5a6b85">🔍−</button>
-        <button onclick="cmpZoomReset()" style="padding:4px 10px;height:28px;border-radius:14px;border:1px solid #cdd7e5;background:#f8fafc;font-size:11px;cursor:pointer;color:#5a6b85">↺</button>
-        <button onclick="cmpZoomIn()" style="width:28px;height:28px;border-radius:14px;border:1px solid #cdd7e5;background:#f8fafc;font-size:13px;cursor:pointer;color:#5a6b85">🔍+</button>
-        <button onclick="cmpPanRight()" style="width:32px;height:28px;border-radius:14px;border:1px solid #cdd7e5;background:#f8fafc;font-size:14px;cursor:pointer;color:#5a6b85">▶</button>
-      </div>
     </div>
   </div>
 
@@ -563,8 +556,6 @@ function findCat(id) {
 // 对比状态
 var cmpCat = 'total';
 var cmpGran = 'day';
-var cmpZoom = 1.0;     // 缩放 0.3~4.0
-var cmpOffsetX = 0;    // 平移偏移（像素）
 var cmpStoresSel = []; // 选中的门店
 var cmpColors = {'一店':'#ef4444','二店':'#3b82f6','三店':'#22c55e','四店':'#f59e0b'};
 var cmpMoreColors = ['#ef4444','#3b82f6','#22c55e','#f59e0b','#8b5cf6','#ec4899','#f97316','#14b8a6','#6366f1','#eab308'];
@@ -1160,14 +1151,12 @@ function renderDataModal(v) {
 
   // ── 日 ──
   else if (v === 'day') {
-    title = '📊 近30天净额';
+    title = '📊 所有日期净额';
     var dayMap={}, dayList=[], daySet={};
     records.forEach(function(r){
       if (!daySet[r.date]) { daySet[r.date]=true; dayList.push(r.date); }
     });
     dayList.sort();
-    // 只取最近30天
-    if (dayList.length > 30) dayList = dayList.slice(-30);
     // 序号=年内第几天(DOY)，2020年基准偏移-11（数据从1/12起算）
     var seqIdx={};
     dayList.forEach(function(d){
@@ -1228,57 +1217,69 @@ function renderDataModal(v) {
     });
     body += '</div>';
 
-    // 合并选中门店每日净额（五店累计）
-    var combined={};
-    records.forEach(function(r){
-      if (!modalStoreSel[r.store]) return;
-      combined[r.date]=(combined[r.date]||0)+r.amount;
+    // 按门店按日汇总净额
+    var storeDays={};
+    selStores.forEach(function(s){
+      var dm={};
+      records.forEach(function(r){
+        if (r.store!==s) return;
+        dm[r.date]=(dm[r.date]||0)+r.amount;
+      });
+      var dates=Object.keys(dm).sort();
+      storeDays[s]=dates.map(function(d){ return {date:d, net:dm[d]}; });
     });
-    var comboStore=selStores.join('+');
-    var dates=Object.keys(combined).sort();
-    var days=dates.map(function(d){ return {date:d, net:combined[d]}; });
 
-    // 扫描连续亏损/赚钱/震荡（在合并净额上）
+    // 扫描连续亏损/赚钱/震荡
     var allLoss=[], allProfit=[], allOsc=[];
 
-    // 亏损
-    var curLoss=0, curLossStart='', curLossEnd='';
-    for (var i=0; i<days.length; i++) {
-      if (days[i].net < 0) {
-        if (curLoss===0) curLossStart=days[i].date;
-        curLoss++;
-        curLossEnd=days[i].date;
-      } else {
-        if (curLoss>=2) allLoss.push({store:comboStore, days:curLoss, start:curLossStart, end:curLossEnd});
-        curLoss=0;
-      }
-    }
-    if (curLoss>=2) allLoss.push({store:comboStore, days:curLoss, start:curLossStart, end:curLossEnd});
+    selStores.forEach(function(s){
+      var days=storeDays[s];
+      if (days.length===0) return;
 
-    // 赚钱
-    var curProfit=0, curProfitStart='', curProfitEnd='';
-    for (var i=0; i<days.length; i++) {
-      if (days[i].net > 0) {
-        if (curProfit===0) curProfitStart=days[i].date;
-        curProfit++;
-        curProfitEnd=days[i].date;
-      } else {
-        if (curProfit>=2) allProfit.push({store:comboStore, days:curProfit, start:curProfitStart, end:curProfitEnd});
-        curProfit=0;
+      // 亏损
+      var curLoss=0, curLossStart='', curLossEnd='';
+      var bestLoss=0, bestLossSeg={};
+      for (var i=0; i<days.length; i++) {
+        if (days[i].net < 0) {
+          if (curLoss===0) curLossStart=days[i].date;
+          curLoss++;
+          curLossEnd=days[i].date;
+          if (curLoss > bestLoss) {
+            bestLoss=curLoss;
+            bestLossSeg={store:s, days:curLoss, start:curLossStart, end:curLossEnd};
+          }
+        } else {
+          if (curLoss>=2) allLoss.push({store:s, days:curLoss, start:curLossStart, end:curLossEnd});
+          curLoss=0;
+        }
       }
-    }
-    if (curProfit>=2) allProfit.push({store:comboStore, days:curProfit, start:curProfitStart, end:curProfitEnd});
+      if (curLoss>=2) allLoss.push({store:s, days:curLoss, start:curLossStart, end:curLossEnd});
 
-    // 震荡（正负交替）
-    var curOsc=0, curOscStart='', curOscEnd='', lastSign=0;
-    for (var i=0; i<days.length; i++) {
-      var sign=days[i].net>0?1:(days[i].net<0?-1:0);
-      if (sign===0) { if (curOsc>=3) allOsc.push({store:comboStore, days:curOsc, start:curOscStart, end:curOscEnd}); curOsc=0; continue; }
-      if (curOsc===0) { curOsc=1; curOscStart=days[i].date; lastSign=sign; }
-      else if (sign!==lastSign) { curOsc++; curOscEnd=days[i].date; lastSign=sign; }
-      else { if (curOsc>=3) allOsc.push({store:comboStore, days:curOsc, start:curOscStart, end:curOscEnd}); curOsc=1; curOscStart=days[i].date; lastSign=sign; }
-    }
-    if (curOsc>=3) allOsc.push({store:comboStore, days:curOsc, start:curOscStart, end:curOscEnd});
+      // 赚钱
+      var curProfit=0, curProfitStart='', curProfitEnd='';
+      for (var i=0; i<days.length; i++) {
+        if (days[i].net > 0) {
+          if (curProfit===0) curProfitStart=days[i].date;
+          curProfit++;
+          curProfitEnd=days[i].date;
+        } else {
+          if (curProfit>=2) allProfit.push({store:s, days:curProfit, start:curProfitStart, end:curProfitEnd});
+          curProfit=0;
+        }
+      }
+      if (curProfit>=2) allProfit.push({store:s, days:curProfit, start:curProfitStart, end:curProfitEnd});
+
+      // 震荡（正负交替）
+      var curOsc=0, curOscStart='', curOscEnd='', lastSign=0;
+      for (var i=0; i<days.length; i++) {
+        var sign=days[i].net>0?1:(days[i].net<0?-1:0);
+        if (sign===0) { if (curOsc>=3) allOsc.push({store:s, days:curOsc, start:curOscStart, end:curOscEnd}); curOsc=0; continue; }
+        if (curOsc===0) { curOsc=1; curOscStart=days[i].date; lastSign=sign; }
+        else if (sign!==lastSign) { curOsc++; curOscEnd=days[i].date; lastSign=sign; }
+        else { if (curOsc>=3) allOsc.push({store:s, days:curOsc, start:curOscStart, end:curOscEnd}); curOsc=1; curOscStart=days[i].date; lastSign=sign; }
+      }
+      if (curOsc>=3) allOsc.push({store:s, days:curOsc, start:curOscStart, end:curOscEnd});
+    });
 
     // 排序取 top5
     allLoss.sort(function(a,b){ return b.days-a.days; });
@@ -1296,7 +1297,6 @@ function renderDataModal(v) {
           +'<span style="width:36px;color:#5a6d80">🏪'+t.store+'</span>'
           +'<span style="font-weight:700;color:'+color+';width:40px;text-align:right">'+t.days+'天</span>'
           +'<span style="flex:1;text-align:right;font-size:10px;color:#8899b0">'+t.start.substring(5)+' ~ '+t.end.substring(5)+'</span>'
-          +'<span onclick="event.stopPropagation();showStreakDetail(\''+t.store+'\',\''+t.start+'\',\''+t.end+'\',\''+label+'\')" style="cursor:pointer;color:#3b82f6;font-size:10px;margin-left:6px;padding:2px 6px;border:1px solid #3b82f6;border-radius:8px">查看</span>'
           +'</div>';
       });
       return h;
@@ -1315,57 +1315,6 @@ function renderDataModal(v) {
 
   if (singleStoreMode) title += ' · 🏪 '+singleStoreMode;
   document.getElementById('dm-title').innerHTML = title;
-  document.getElementById('dm-body').innerHTML = body;
-}
-
-// 📋 查看分析详情 — 展示每日净额明细
-function showStreakDetail(store, start, end, label) {
-  var dayMap={}, dayList=[];
-  // 支持组合门店（如"一店+二店+三店"）
-  var storeList = store.indexOf('+')>=0 ? store.split('+') : [store];
-  var storeSet = {};
-  storeList.forEach(function(s){ storeSet[s]=true; });
-  records.forEach(function(r){
-    if (!storeSet[r.store] || r.date<start || r.date>end) return;
-    if (!dayMap[r.date]) { dayMap[r.date]=0; dayList.push(r.date); }
-    dayMap[r.date] += r.amount;
-  });
-  dayList.sort();
-
-  var title = '🏪 '+store+' · '+label+' · '+start+' ~ '+end;
-  var body = '';
-  var total = 0;
-
-  body += '<div style="display:flex;font-size:11px;color:#8899b0;padding:4px 0;border-bottom:1px solid #e8ecf1">'
-    +'<span style="width:80px">日期</span>'
-    +'<span style="width:60px;text-align:right">净额</span>'
-    +'<span style="flex:1;text-align:right">累计</span>'
-    +'</div>';
-
-  var cum = 0;
-  dayList.forEach(function(d){
-    var v = dayMap[d] || 0;
-    total += v;
-    cum += v;
-    var clr = v >= 0 ? '#22c55e' : '#ef4444';
-    var sign = v >= 0 ? '+' : '';
-    body += '<div style="display:flex;align-items:center;font-size:11px;padding:3px 0;border-bottom:1px solid #f5f7fa">'
-      +'<span style="width:80px">'+d.substring(5)+'</span>'
-      +'<span style="width:60px;text-align:right;color:'+clr+';font-weight:600">'+sign+v.toLocaleString()+'</span>'
-      +'<span style="flex:1;text-align:right;font-size:10px;color:#8899b0">'+(cum>=0?'+':'')+cum.toLocaleString()+'</span>'
-      +'</div>';
-  });
-
-  // 合计行
-  var tClr = total >= 0 ? '#22c55e' : '#ef4444';
-  var tSign = total >= 0 ? '+' : '';
-  body += '<div style="display:flex;align-items:center;font-size:12px;font-weight:700;padding:6px 0;margin-top:4px;border-top:2px solid #cdd7e5">'
-    +'<span style="width:80px">合计</span>'
-    +'<span style="width:60px;text-align:right;color:'+tClr+'">'+tSign+total.toLocaleString()+'</span>'
-    +'<span style="flex:1;text-align:right">'+dayList.length+'天</span>'
-    +'</div>';
-
-  document.getElementById('dm-title').innerHTML = '<span onclick="renderDataModal(\'analysis\')" style="cursor:pointer;color:#3b82f6;margin-right:8px">←</span>'+title;
   document.getElementById('dm-body').innerHTML = body;
 }
 
@@ -1730,9 +1679,8 @@ function renderCompare() {
 
   // 粒度
   var grans = [
-    {v:'year', label:'年K'},
-    {v:'month', label:'月K'},
-    {v:'week', label:'周K'},
+    {v:'year', label:'月K'},
+    {v:'month', label:'周K'},
     {v:'day', label:'日K'},
   ];
   var granHtml = '';
@@ -1761,7 +1709,6 @@ function toggleCmpStore(name) {
 
 function setCmpGran(btn, g) {
   cmpGran = g;
-  cmpZoom = 1; cmpOffsetX = 0;
   var btns = document.querySelectorAll('#cmp-gran-bar button');
   for (var i=0; i<btns.length; i++) btns[i].className = '';
   btn.className = 'on';
@@ -1847,24 +1794,8 @@ function drawCompare() {
   var plotW = W - padL - padR;
   var plotH = H - padT - padB;
   var totalPts = labels.length;
-  // 日K/月K/周K默认显示15个点（定位到最新，仅在面板可见时触发）
-  if ((cmpGran === 'day' || cmpGran === 'month' || cmpGran === 'week') && cmpZoom === 1.0 && totalPts > 15 && plotW > 0) {
-    cmpZoom = totalPts / 15;
-    cmpOffsetX = 999999; // clamp 到末尾
-  }
-  // 缩放：可见数据点数
-  var visiblePts = Math.max(3, Math.ceil(totalPts / cmpZoom));
-  var stepX = plotW / visiblePts; // 每点宽度
-  // 平移范围
-  var maxOffset = Math.max(0, (totalPts - visiblePts) * stepX);
-  cmpOffsetX = Math.max(0, Math.min(cmpOffsetX, maxOffset));
-  if (maxOffset === 0) cmpOffsetX = 0;
-  var firstVis = Math.floor(cmpOffsetX / stepX);
-  var lastVis = Math.min(totalPts, firstVis + visiblePts);
-  // 实际点数可能小于 visiblePts
-  var actualVis = lastVis - firstVis;
 
-  function cx(i) { return padL + (i-firstVis+0.5)*stepX; }
+  function cx(i) { return padL + (i+0.5)*plotW/totalPts; }
   function cy(v) { return padT + plotH/2 - v/(max*2)*plotH; }
 
   // 网格
@@ -1890,209 +1821,91 @@ function drawCompare() {
     ctx.fillText((gv/1000).toFixed(1)+'k', padL-4, padT + i*plotH/4 + 4);
   }
 
-  // X轴（仅可见范围）
+  // X轴
   ctx.textAlign = 'center';
-  var xStep = Math.max(1, Math.floor(actualVis/6));
-  for (var i=firstVis; i<lastVis; i+=xStep) {
-    if (cx(i) >= padL && cx(i) <= W-padR) {
-      ctx.fillText(labels[i], cx(i), H-padB+14);
-    }
+  var step = Math.max(1, Math.floor(totalPts/6));
+  for (var i=0; i<totalPts; i+=step) {
+    ctx.fillText(labels[i], cx(i), H-padB+14);
   }
 
-  // 折线（仅可见范围）
+  // 折线
   allSeries.forEach(function(ser){
     if (ser.pts.length === 0) return;
     ctx.strokeStyle = ser.color;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    var firstPt = true;
-    for (var i=firstVis; i<lastVis; i++) {
-      var p = ser.pts[i];
-      if (!p) continue;
+    ser.pts.forEach(function(p, i){
       var x = cx(i), y = cy(p.v);
-      if (x >= padL && x <= W-padR) {
-        if (firstPt) { ctx.moveTo(x, y); firstPt = false; }
-        else ctx.lineTo(x, y);
-      }
-    }
+      if (i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
     ctx.stroke();
 
-    // 端点（仅可见）
-    for (var i=firstVis; i<lastVis; i++) {
-      var p = ser.pts[i];
-      if (!p) continue;
-      var x = cx(i);
-      if (x >= padL && x <= W-padR) {
-        ctx.fillStyle = ser.color;
-        ctx.beginPath();
-        ctx.arc(x, cy(p.v), 3, 0, Math.PI*2);
-        ctx.fill();
-      }
-    }
+    // 端点
+    ser.pts.forEach(function(p, i){
+      ctx.fillStyle = ser.color;
+      ctx.beginPath();
+      ctx.arc(cx(i), cy(p.v), 3, 0, Math.PI*2);
+      ctx.fill();
+    });
 
-    // 最新值标签（图中最后可见点）
-    var lastIdx = Math.min(ser.pts.length-1, lastVis-1);
-    if (lastIdx >= firstVis) {
-      var last = ser.pts[lastIdx];
-      var lx = cx(lastIdx);
-      if (lx >= padL && lx <= W-padR + 60) {
-        ctx.fillStyle = ser.color;
-        ctx.font = 'bold 11px -apple-system,sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(ser.name+' ¥'+(last.v>=0?'+':'')+last.v.toLocaleString(), lx+6, cy(last.v)+4);
-      }
-    }
+    // 最新值标签
+    var last = ser.pts[ser.pts.length-1];
+    ctx.fillStyle = ser.color;
+    ctx.font = 'bold 11px -apple-system,sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(ser.name+' ¥'+(last.v>=0?'+':'')+last.v.toLocaleString(), cx(ser.pts.length-1)+6, cy(last.v)+4);
   });
-
-  // 缩放指示器
-  if (cmpZoom !== 1.0) {
-    ctx.fillStyle = '#8899b0';
-    ctx.font = '10px -apple-system,sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText(cmpZoom.toFixed(1)+'×', W-padR, padT+10);
-  }
-
-  // 可见范围指示
-  if (totalPts > visiblePts) {
-    ctx.fillStyle = '#b0bed0';
-    ctx.font = '9px -apple-system,sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText((firstVis+1)+'-'+lastVis+' / '+totalPts, W/2, H-4);
-  }
 }
-
-// ═══════ 触摸/鼠标缩放平移 ═══════
-var cmpDragActive = false, cmpDragStartX = 0, cmpDragStartOff = 0;
-var cmpPinchStartDist = 0, cmpPinchStartZoom = 1;
-
-function initCmpCanvas() {
-  var c = document.getElementById('cmp-canvas');
-  if (!c) return;
-  // Mouse events
-  c.onmousedown = function(e) { cmpDragActive = true; cmpDragStartX = e.clientX; cmpDragStartOff = cmpOffsetX; };
-  c.onmousemove = function(e) { if (cmpDragActive) { cmpOffsetX = cmpDragStartOff - (e.clientX - cmpDragStartX); renderCompare(); }};
-  c.onmouseup = function() { cmpDragActive = false; };
-  c.onmouseleave = function() { cmpDragActive = false; };
-  c.onwheel = function(e) { e.preventDefault(); if (e.deltaY < 0) cmpZoomIn(); else cmpZoomOut(); };
-  // Touch events
-  c.ontouchstart = function(e) {
-    if (e.touches.length === 1) { cmpDragActive = true; cmpDragStartX = e.touches[0].clientX; cmpDragStartOff = cmpOffsetX; }
-    if (e.touches.length === 2) { e.preventDefault(); cmpDragActive = false; var dx=e.touches[0].clientX-e.touches[1].clientX; var dy=e.touches[0].clientY-e.touches[1].clientY; cmpPinchStartDist = Math.sqrt(dx*dx+dy*dy); cmpPinchStartZoom = cmpZoom; }
-  };
-  c.ontouchmove = function(e) {
-    e.preventDefault();
-    if (e.touches.length === 1 && cmpDragActive) { cmpOffsetX = cmpDragStartOff - (e.touches[0].clientX - cmpDragStartX); renderCompare(); }
-    if (e.touches.length === 2) { var dx=e.touches[0].clientX-e.touches[1].clientX; var dy=e.touches[0].clientY-e.touches[1].clientY; var dist=Math.sqrt(dx*dx+dy*dy); if(cmpPinchStartDist>0){ cmpZoom = Math.max(0.3, Math.min(4, cmpPinchStartZoom * dist/cmpPinchStartDist)); cmpOffsetX = 0; renderCompare(); }}
-  };
-  c.ontouchend = function() { cmpDragActive = false; };
-}
-
-function cmpZoomIn() { cmpZoom = Math.min(4, cmpZoom + 0.3); cmpOffsetX = 0; renderCompare(); }
-function cmpZoomOut() { cmpZoom = Math.max(0.3, cmpZoom - 0.3); if (cmpZoom <= 1) cmpOffsetX = 0; renderCompare(); }
-function cmpZoomReset() { cmpZoom = 1; cmpOffsetX = 0; renderCompare(); }
-function cmpPanLeft() { cmpOffsetX = Math.max(0, cmpOffsetX - 200); renderCompare(); }
-function cmpPanRight() { cmpOffsetX += 200; renderCompare(); }
 
 function genCmpSeries(storeName, y, m) {
   var pts = [];
   if (cmpGran === 'year') {
-    // 年K: 所有年份，按年聚合
-    var now = new Date();
-    var thisY = now.getFullYear();
-    var minY = 2020;
-    // 从数据中找最早年份
-    for (var ri=0; ri<records.length; ri++) {
-      var ry = parseInt(records[ri].date.substring(0,4));
-      if (ry < minY) minY = ry;
-    }
-    for (var yi=minY; yi<=thisY; yi++) {
-      var ys = yi+'';
+    // 月K: 每个月一条
+    var maxM = (y===(new Date().getFullYear())) ? (new Date().getMonth()+1) : 12;
+    for (var mi=1; mi<=maxM; mi++) {
+      var ym = y+'-'+String(mi).padStart(2,'0');
       var sum = 0;
-      for (var ri=0; ri<records.length; ri++) {
-        var r = records[ri];
-        if (r.store === storeName && r.date.startsWith(ys)) {
-          if (cmpCat === 'total') sum += r.amount;
-          else if (r.category === cmpCat) sum += r.amount;
-        }
-      }
-      if (sum !== 0 || pts.length > 0) pts.push({label:yi+'年', v:sum});
-    }
-  } else if (cmpGran === 'month') {
-    // 月K: 近3年，按YYYY-MM聚合
-    var now = new Date();
-    var endY = now.getFullYear();
-    var endM = now.getMonth() + 1;
-    var startYm = (endY-3)+'-01'; // 3年前1月
-    // 生成近36个月
-    var cy = endY-3, cm = 1;
-    var total = 36;
-    if (endY===now.getFullYear()) total = 36 + endM;
-    for (var mi=0; mi<total; mi++) {
-      var ym = cy+'-'+String(cm).padStart(2,'0');
-      var sum = 0;
-      for (var ri=0; ri<records.length; ri++) {
-        var r = records[ri];
+      records.forEach(function(r){
         if (r.store === storeName && r.date.startsWith(ym)) {
           if (cmpCat === 'total') sum += r.amount;
           else if (r.category === cmpCat) sum += r.amount;
         }
-      }
-      if (sum !== 0 || pts.length > 0) pts.push({label:ym.substring(2), v:sum});
-      cm++;
-      if (cm > 12) { cm = 1; cy++; }
+      });
+      if (sum !== 0 || pts.length > 0) pts.push({label:mi+'月', v:sum});
     }
-  } else if (cmpGran === 'week') {
-    // 周K: 近1年，按ISO周聚合
-    var now = new Date();
-    // 从1年前今天开始
-    var oneYearAgo = new Date(now);
-    oneYearAgo.setFullYear(oneYearAgo.getFullYear()-1);
-    var s = oneYearAgo.toISOString().substring(0,10);
-    var e = now.toISOString().substring(0,10);
-    var cur = new Date(s);
-    var weekMap = {};
-    var weekOrder = [];
-    while (cur.toISOString().substring(0,10) <= e) {
-      var ds = cur.toISOString().substring(0,10);
-      // ISO week: get ISO year + week number
-      var d = new Date(ds);
-      d.setHours(0,0,0,0);
-      d.setDate(d.getDate()+3-(d.getDay()+6)%7); // Thursday
-      var wk = d.getFullYear()+'-W'+String(Math.ceil((d.getTime()-new Date(d.getFullYear(),0,1).getTime())/604800000)).padStart(2,'0');
-      if (!weekMap[wk]) { weekMap[wk]=0; weekOrder.push(wk); }
-      for (var ri=0; ri<records.length; ri++) {
-        var r = records[ri];
-        if (r.store === storeName && r.date === ds) {
-          if (cmpCat === 'total') weekMap[wk] += r.amount;
-          else if (r.category === cmpCat) weekMap[wk] += r.amount;
-        }
+  } else if (cmpGran === 'month') {
+    // 周K: 每周一条
+    var daysInMonth = new Date(y, m, 0).getDate();
+    var firstDow = new Date(y, m-1, 1).getDay();
+    var firstWeekDays = firstDow===0 ? 1 : 8-firstDow;
+    var wim = firstWeekDays >= daysInMonth ? 1 : 1 + Math.ceil((daysInMonth-firstWeekDays)/7);
+    for (var wi=0; wi<wim; wi++) {
+      var startDay = wi===0 ? 1 : firstWeekDays + (wi-1)*7 + 1;
+      var endDay = Math.min(startDay+6, daysInMonth);
+      var sum = 0;
+      for (var d=startDay; d<=endDay; d++) {
+        var ds = y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+        records.forEach(function(r){
+          if (r.store === storeName && r.date === ds) {
+            if (cmpCat === 'total') sum += r.amount;
+            else if (r.category === cmpCat) sum += r.amount;
+          }
+        });
       }
-      cur.setDate(cur.getDate()+1);
-    }
-    for (var wi=0; wi<weekOrder.length; wi++) {
-      var wv = weekMap[weekOrder[wi]];
-      if (wv !== 0 || pts.length > 0) pts.push({label:weekOrder[wi], v:wv});
+      if (sum !== 0 || pts.length > 0) pts.push({label:'W'+(wi+1), v:sum});
     }
   } else if (cmpGran === 'day') {
-    // 日K: 近90天，按天聚合
-    var now = new Date();
-    var ago90 = new Date(now);
-    ago90.setDate(ago90.getDate()-90);
-    var s = ago90.toISOString().substring(0,10);
-    var e = now.toISOString().substring(0,10);
-    var cur = new Date(s);
-    while (cur.toISOString().substring(0,10) <= e) {
-      var ds = cur.toISOString().substring(0,10);
+    var daysInMonth = new Date(y, m, 0).getDate();
+    for (var d=1; d<=daysInMonth; d++) {
+      var ds = y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
       var sum = 0;
-      for (var ri=0; ri<records.length; ri++) {
-        var r = records[ri];
+      records.forEach(function(r){
         if (r.store === storeName && r.date === ds) {
           if (cmpCat === 'total') sum += r.amount;
           else if (r.category === cmpCat) sum += r.amount;
         }
-      }
-      if (sum !== 0 || pts.length > 0) pts.push({label:ds.substring(5), v:sum});
-      cur.setDate(cur.getDate()+1);
+      });
+      if (sum !== 0 || pts.length > 0) pts.push({label:d+'日', v:sum});
     }
   }
   return pts;
@@ -2503,7 +2316,7 @@ function switchTab(tab) {
   });
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('on'); });
   document.getElementById('panel-'+tab).classList.add('on');
-  if (tab === 'compare') { initCmpCanvas(); drawCompare(); }
+  if (tab === 'compare') drawCompare();
 }
 
 // 自动登录

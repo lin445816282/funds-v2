@@ -1228,57 +1228,69 @@ function renderDataModal(v) {
     });
     body += '</div>';
 
-    // 合并选中门店每日净额（五店累计）
-    var combined={};
-    records.forEach(function(r){
-      if (!modalStoreSel[r.store]) return;
-      combined[r.date]=(combined[r.date]||0)+r.amount;
+    // 按门店按日汇总净额
+    var storeDays={};
+    selStores.forEach(function(s){
+      var dm={};
+      records.forEach(function(r){
+        if (r.store!==s) return;
+        dm[r.date]=(dm[r.date]||0)+r.amount;
+      });
+      var dates=Object.keys(dm).sort();
+      storeDays[s]=dates.map(function(d){ return {date:d, net:dm[d]}; });
     });
-    var comboStore=selStores.join('+');
-    var dates=Object.keys(combined).sort();
-    var days=dates.map(function(d){ return {date:d, net:combined[d]}; });
 
-    // 扫描连续亏损/赚钱/震荡（在合并净额上）
+    // 扫描连续亏损/赚钱/震荡
     var allLoss=[], allProfit=[], allOsc=[];
 
-    // 亏损
-    var curLoss=0, curLossStart='', curLossEnd='';
-    for (var i=0; i<days.length; i++) {
-      if (days[i].net < 0) {
-        if (curLoss===0) curLossStart=days[i].date;
-        curLoss++;
-        curLossEnd=days[i].date;
-      } else {
-        if (curLoss>=2) allLoss.push({store:comboStore, days:curLoss, start:curLossStart, end:curLossEnd});
-        curLoss=0;
-      }
-    }
-    if (curLoss>=2) allLoss.push({store:comboStore, days:curLoss, start:curLossStart, end:curLossEnd});
+    selStores.forEach(function(s){
+      var days=storeDays[s];
+      if (days.length===0) return;
 
-    // 赚钱
-    var curProfit=0, curProfitStart='', curProfitEnd='';
-    for (var i=0; i<days.length; i++) {
-      if (days[i].net > 0) {
-        if (curProfit===0) curProfitStart=days[i].date;
-        curProfit++;
-        curProfitEnd=days[i].date;
-      } else {
-        if (curProfit>=2) allProfit.push({store:comboStore, days:curProfit, start:curProfitStart, end:curProfitEnd});
-        curProfit=0;
+      // 亏损
+      var curLoss=0, curLossStart='', curLossEnd='';
+      var bestLoss=0, bestLossSeg={};
+      for (var i=0; i<days.length; i++) {
+        if (days[i].net < 0) {
+          if (curLoss===0) curLossStart=days[i].date;
+          curLoss++;
+          curLossEnd=days[i].date;
+          if (curLoss > bestLoss) {
+            bestLoss=curLoss;
+            bestLossSeg={store:s, days:curLoss, start:curLossStart, end:curLossEnd};
+          }
+        } else {
+          if (curLoss>=2) allLoss.push({store:s, days:curLoss, start:curLossStart, end:curLossEnd});
+          curLoss=0;
+        }
       }
-    }
-    if (curProfit>=2) allProfit.push({store:comboStore, days:curProfit, start:curProfitStart, end:curProfitEnd});
+      if (curLoss>=2) allLoss.push({store:s, days:curLoss, start:curLossStart, end:curLossEnd});
 
-    // 震荡（正负交替）
-    var curOsc=0, curOscStart='', curOscEnd='', lastSign=0;
-    for (var i=0; i<days.length; i++) {
-      var sign=days[i].net>0?1:(days[i].net<0?-1:0);
-      if (sign===0) { if (curOsc>=3) allOsc.push({store:comboStore, days:curOsc, start:curOscStart, end:curOscEnd}); curOsc=0; continue; }
-      if (curOsc===0) { curOsc=1; curOscStart=days[i].date; lastSign=sign; }
-      else if (sign!==lastSign) { curOsc++; curOscEnd=days[i].date; lastSign=sign; }
-      else { if (curOsc>=3) allOsc.push({store:comboStore, days:curOsc, start:curOscStart, end:curOscEnd}); curOsc=1; curOscStart=days[i].date; lastSign=sign; }
-    }
-    if (curOsc>=3) allOsc.push({store:comboStore, days:curOsc, start:curOscStart, end:curOscEnd});
+      // 赚钱
+      var curProfit=0, curProfitStart='', curProfitEnd='';
+      for (var i=0; i<days.length; i++) {
+        if (days[i].net > 0) {
+          if (curProfit===0) curProfitStart=days[i].date;
+          curProfit++;
+          curProfitEnd=days[i].date;
+        } else {
+          if (curProfit>=2) allProfit.push({store:s, days:curProfit, start:curProfitStart, end:curProfitEnd});
+          curProfit=0;
+        }
+      }
+      if (curProfit>=2) allProfit.push({store:s, days:curProfit, start:curProfitStart, end:curProfitEnd});
+
+      // 震荡（正负交替）
+      var curOsc=0, curOscStart='', curOscEnd='', lastSign=0;
+      for (var i=0; i<days.length; i++) {
+        var sign=days[i].net>0?1:(days[i].net<0?-1:0);
+        if (sign===0) { if (curOsc>=3) allOsc.push({store:s, days:curOsc, start:curOscStart, end:curOscEnd}); curOsc=0; continue; }
+        if (curOsc===0) { curOsc=1; curOscStart=days[i].date; lastSign=sign; }
+        else if (sign!==lastSign) { curOsc++; curOscEnd=days[i].date; lastSign=sign; }
+        else { if (curOsc>=3) allOsc.push({store:s, days:curOsc, start:curOscStart, end:curOscEnd}); curOsc=1; curOscStart=days[i].date; lastSign=sign; }
+      }
+      if (curOsc>=3) allOsc.push({store:s, days:curOsc, start:curOscStart, end:curOscEnd});
+    });
 
     // 排序取 top5
     allLoss.sort(function(a,b){ return b.days-a.days; });
@@ -1321,12 +1333,8 @@ function renderDataModal(v) {
 // 📋 查看分析详情 — 展示每日净额明细
 function showStreakDetail(store, start, end, label) {
   var dayMap={}, dayList=[];
-  // 支持组合门店（如"一店+二店+三店"）
-  var storeList = store.indexOf('+')>=0 ? store.split('+') : [store];
-  var storeSet = {};
-  storeList.forEach(function(s){ storeSet[s]=true; });
   records.forEach(function(r){
-    if (!storeSet[r.store] || r.date<start || r.date>end) return;
+    if (r.store!==store || r.date<start || r.date>end) return;
     if (!dayMap[r.date]) { dayMap[r.date]=0; dayList.push(r.date); }
     dayMap[r.date] += r.amount;
   });
@@ -1847,11 +1855,6 @@ function drawCompare() {
   var plotW = W - padL - padR;
   var plotH = H - padT - padB;
   var totalPts = labels.length;
-  // 日K/月K/周K默认显示15个点（定位到最新，仅在面板可见时触发）
-  if ((cmpGran === 'day' || cmpGran === 'month' || cmpGran === 'week') && cmpZoom === 1.0 && totalPts > 15 && plotW > 0) {
-    cmpZoom = totalPts / 15;
-    cmpOffsetX = 999999; // clamp 到末尾
-  }
   // 缩放：可见数据点数
   var visiblePts = Math.max(3, Math.ceil(totalPts / cmpZoom));
   var stepX = plotW / visiblePts; // 每点宽度
@@ -2074,11 +2077,11 @@ function genCmpSeries(storeName, y, m) {
       if (wv !== 0 || pts.length > 0) pts.push({label:weekOrder[wi], v:wv});
     }
   } else if (cmpGran === 'day') {
-    // 日K: 近90天，按天聚合
+    // 日K: 近1个月，按天聚合
     var now = new Date();
-    var ago90 = new Date(now);
-    ago90.setDate(ago90.getDate()-90);
-    var s = ago90.toISOString().substring(0,10);
+    var oneMoAgo = new Date(now);
+    oneMoAgo.setMonth(oneMoAgo.getMonth()-1);
+    var s = oneMoAgo.toISOString().substring(0,10);
     var e = now.toISOString().substring(0,10);
     var cur = new Date(s);
     while (cur.toISOString().substring(0,10) <= e) {
