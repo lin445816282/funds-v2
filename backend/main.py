@@ -137,13 +137,22 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 if os.path.isdir(STATIC_DIR):
     @app.get("/")
     async def index():
-        return FileResponse(os.path.join(STATIC_DIR, "funds-v2.html"))
+        fp = os.path.join(STATIC_DIR, "funds-v2.html")
+        mtime = os.path.getmtime(fp)
+        return FileResponse(fp, headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache", "Expires": "0",
+            "ETag": '"funds-v2-' + str(int(mtime)) + '"'
+        })
 
     @app.get("/{path:path}")
     async def serve_static(path: str):
         fp = os.path.join(STATIC_DIR, path)
         if os.path.isfile(fp):
-            return FileResponse(fp)
+            return FileResponse(fp, headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+                "ETag": '"' + path + '-' + str(int(os.path.getmtime(fp))) + '"'
+            })
         return FileResponse(os.path.join(STATIC_DIR, "funds-v2.html"))
 
 

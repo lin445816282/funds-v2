@@ -634,9 +634,6 @@ function syncFromAPI() {
       if (data.profit_store_on) profitStoreOn = data.profit_store_on;
       if (data.l2p_store_on) l2pStoreOn = data.l2p_store_on;
       if (data.p2n_store_on) p2nStoreOn = data.p2n_store_on;
-      if (data.warn_combo_stores) warnComboStores = data.warn_combo_stores;
-      // 新门店补回 warnComboStores
-      stores.forEach(function(s){ if (!(s in warnComboStores)) warnComboStores[s] = true; });
       dataSource = 'api';
       lastSyncTime = new Date().toLocaleString('zh-CN');
       // 补回特殊规则（API可能缺少新类型）
@@ -708,8 +705,7 @@ function pushToAPIBlocking() {
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.send(JSON.stringify({
       stores: stores, categories: categories, records: records,
-      alert_rules: alertRules, warn_store_on: warnStoreOn, profit_store_on: profitStoreOn, l2p_store_on: l2pStoreOn, p2n_store_on: p2nStoreOn,
-      warn_combo_stores: warnComboStores
+      alert_rules: alertRules, warn_store_on: warnStoreOn, profit_store_on: profitStoreOn, l2p_store_on: l2pStoreOn, p2n_store_on: p2nStoreOn
     }));
     return xhr.status === 200;
   } catch(e) { console.log('push block err:', e); return false; }
@@ -728,8 +724,7 @@ function pushToAPI() {
       warn_store_on: warnStoreOn,
       profit_store_on: profitStoreOn,
       l2p_store_on: l2pStoreOn,
-      p2n_store_on: p2nStoreOn,
-      warn_combo_stores: warnComboStores
+      p2n_store_on: p2nStoreOn
     }));
   } catch(e) { console.log('API push err:', e); }
 }
@@ -748,7 +743,6 @@ function loadData() {
       if (d.profitStoreOn) profitStoreOn = d.profitStoreOn;
       if (d.l2pStoreOn) l2pStoreOn = d.l2pStoreOn;
       if (d.p2nStoreOn) p2nStoreOn = d.p2nStoreOn;
-      if (d.warnComboStores) warnComboStores = d.warnComboStores;
       dataSource = 'local';
       lastSyncTime = localStorage.getItem('funds_v2_ts') || '';
       ensureSpecialRules();
@@ -761,7 +755,7 @@ function loadData() {
   if (cr) warnComboOn = cr.on;
 }
 function saveData() {
-  localStorage.setItem('funds_v2', JSON.stringify({categories:categories, stores:stores, records:records, alertRules:alertRules, warnStoreOn:warnStoreOn, profitStoreOn:profitStoreOn, l2pStoreOn:l2pStoreOn, p2nStoreOn:p2nStoreOn, warnComboStores:warnComboStores}));
+  localStorage.setItem('funds_v2', JSON.stringify({categories:categories, stores:stores, records:records, alertRules:alertRules, warnStoreOn:warnStoreOn, profitStoreOn:profitStoreOn, l2pStoreOn:l2pStoreOn, p2nStoreOn:p2nStoreOn}));
   localStorage.setItem('funds_v2_ts', new Date().toLocaleString('zh-CN'));
   pushToAPI();
 }
@@ -1118,14 +1112,14 @@ function getOscToWarn(store, streakDays, accumCount, direction) {
     }
   }
   
+  if (!triggerDate) return null;
+  
   // 计算gap：最近一次触发 到现在过了多少天
-  var gap = -1;
-  if (triggerDate) {
-    gap = 0;
-    for (var j = dates.length-1; j >= 0; j--) {
-      if (dates[j] === triggerDate) break;
-      gap++;
-    }
+  var latestDate = dates[dates.length-1];
+  var gap = 0;
+  for (var j = dates.length-1; j >= 0; j--) {
+    if (dates[j] === triggerDate) break;
+    gap++;
   }
   
   return {
@@ -1133,12 +1127,9 @@ function getOscToWarn(store, streakDays, accumCount, direction) {
     triggerDate: triggerDate,
     streakEndDate: streakEndDate,
     streakDays: streakDays,
-    accumCount: accumCount,
+    accumCount: accum,
     direction: direction,
-    gap: gap,
-    state: state,
-    streakRun: streakRun,
-    accum: accum
+    gap: gap
   };
 }
 
@@ -1187,16 +1178,14 @@ function getComboOscToWarn(streakDays, accumCount, direction) {
     }
   }
   
-  var gap = -1;
-  if (triggerDate) {
-    gap = 0;
-    for (var j = dates.length-1; j >= 0; j--) {
-      if (dates[j] === triggerDate) break;
-      gap++;
-    }
+  if (!triggerDate) return null;
+  var gap = 0;
+  for (var j = dates.length-1; j >= 0; j--) {
+    if (dates[j] === triggerDate) break;
+    gap++;
   }
   
-  return { stores: sel.join('+'), triggerDate: triggerDate, streakDays: streakDays, accumCount: accumCount, direction: direction, gap: gap, state: state, streakRun: streakRun, accum: accum };
+  return { stores: sel.join('+'), triggerDate: triggerDate, streakDays: streakDays, accumCount: accumCount, direction: direction, gap: gap };
 }
 
 function toggleYearStore(s) {
@@ -2325,12 +2314,12 @@ function renderAlerts() {
     }
     if (rule.type === 'combo_l2p') {
       var cl2p = getComboOscToWarn(rule.pct||3, 2, 'l2p');
-      if (cl2p && cl2p.state === 'triggered' && cl2p.gap === 0) alerts.push({level:'green', title:'组合('+cl2p.stores+') 震荡转正', detail:'连续亏损'+cl2p.streakDays+'天后累计'+cl2p.accumCount+'正日，今日触发'});
+      if (cl2p) alerts.push({level:'green', title:'组合('+cl2p.stores+') 震荡转正', detail:'连续亏损后累计2正日，触发于'+cl2p.triggerDate});
       return;
     }
     if (rule.type === 'combo_p2n') {
       var cp2n = getComboOscToWarn(rule.pct||3, 2, 'p2n');
-      if (cp2n && cp2n.state === 'triggered' && cp2n.gap === 0) alerts.push({level:'red', title:'组合('+cp2n.stores+') 震荡转负', detail:'连续盈利'+cp2n.streakDays+'天后累计'+cp2n.accumCount+'负日，今日触发'});
+      if (cp2n) alerts.push({level:'red', title:'组合('+cp2n.stores+') 震荡转负', detail:'连续盈利后累计2负日，触发于'+cp2n.triggerDate});
       return;
     }
     if (rule.type === 'store_loss' || rule.type === 'store_profit' || rule.type === 'store_l2p' || rule.type === 'store_p2n') return;
@@ -2365,7 +2354,7 @@ function renderAlerts() {
     stores.forEach(function(s){
       if (!l2pStoreOn[s]) return;
       var w = getOscToWarn(s, sl2pRule.pct||3, 2, 'l2p');
-      if (w && w.state === 'triggered' && w.gap === 0) alerts.push({level:'green', title:s+' 震荡转正', detail:'连续亏损'+w.streakDays+'天后累计'+w.accumCount+'正日，今日触发'});
+      if (w) alerts.push({level:'green', title:s+' 震荡转正', detail:'连续亏损后累计2正日，触发于'+w.triggerDate+'（已过'+w.gap+'天）'});
     });
   }
 
@@ -2376,7 +2365,7 @@ function renderAlerts() {
     stores.forEach(function(s){
       if (!p2nStoreOn[s]) return;
       var w = getOscToWarn(s, sp2nRule.pct||3, 2, 'p2n');
-      if (w && w.state === 'triggered' && w.gap === 0) alerts.push({level:'red', title:s+' 震荡转负', detail:'连续盈利'+w.streakDays+'天后累计'+w.accumCount+'负日，今日触发'});
+      if (w) alerts.push({level:'red', title:s+' 震荡转负', detail:'连续盈利后累计2负日，触发于'+w.triggerDate+'（已过'+w.gap+'天）'});
     });
   }
 
@@ -2461,15 +2450,11 @@ function renderAlerts() {
     rhtml += '<div style="margin-top:10px;margin-bottom:6px;font-size:12px;color:#8899b0"><span>🔄 门店震荡转正状态(亏后累计正)</span></div>';
     stores.forEach(function(s){
       var on = l2pStoreOn[s] !== false;
-      var w = getOscToWarn(s, sl2pRule.pct||3, 2, 'l2p');
+      var w = getOscToWarn(s, 3, 2, 'l2p');
       var icon = '⚪', cl = '#8899b0', status = '无信号';
       if (!on) { icon = '⏸'; cl = '#c0c9d4'; status = '已关闭'; }
-      else if (w) {
-        if (w.state === 'triggered') { icon = '💡'; cl = '#22c55e'; status = '已触发('+w.triggerDate+')'; }
-        else if (w.state === 'after_streak') { icon = '⏳'; cl = '#f59e0b'; status = '连续亏损'+w.streakDays+'天 累'+w.accum+'/'+w.accumCount+'正'; }
-        else if (w.state === 'normal' && w.streakRun > 0) { icon = '●'; cl = '#94a3b8'; status = '连续亏损'+w.streakRun+'/'+w.streakDays+'天'; }
-        else { icon = '⚪'; cl = '#8899b0'; status = '监测中'; }
-      } else { icon = '⚪'; cl = '#8899b0'; status = '数据不足'; }
+      else if (w) { icon = '💡'; cl = '#22c55e'; status = '触发于'+w.triggerDate+'(已过'+w.gap+'天)'; }
+      else status = '监测中 · 无转正信号';
       rhtml += '<div class="rule-row" style="opacity:'+(on?'1':'.5')+'"><span class="r-name">'+icon+' '+s+'</span><span style="font-size:11px;color:'+cl+';flex:1">'+status+'</span><select onchange="l2pStoreOn[\''+s+'\']=this.value===\'1\';saveData();renderAlerts()" style="font-size:11px;padding:2px 4px;border-radius:6px;border:1px solid #cdd7e5"><option value="1"'+(on?' selected':'')+'>开</option><option value="0"'+(on?'':' selected')+'>关</option></select></div>';
     });
   }
@@ -2480,15 +2465,11 @@ function renderAlerts() {
     rhtml += '<div style="margin-top:10px;margin-bottom:6px;font-size:12px;color:#8899b0"><span>🔄 门店震荡转负状态(盈后累计负)</span></div>';
     stores.forEach(function(s){
       var on = p2nStoreOn[s] !== false;
-      var w = getOscToWarn(s, sp2nRule.pct||3, 2, 'p2n');
+      var w = getOscToWarn(s, 3, 2, 'p2n');
       var icon = '⚪', cl = '#8899b0', status = '无信号';
       if (!on) { icon = '⏸'; cl = '#c0c9d4'; status = '已关闭'; }
-      else if (w) {
-        if (w.state === 'triggered') { icon = '⚠️'; cl = '#ef4444'; status = '已触发('+w.triggerDate+')'; }
-        else if (w.state === 'after_streak') { icon = '⏳'; cl = '#f59e0b'; status = '连续盈利'+w.streakDays+'天 累'+w.accum+'/'+w.accumCount+'负'; }
-        else if (w.state === 'normal' && w.streakRun > 0) { icon = '●'; cl = '#94a3b8'; status = '连续盈利'+w.streakRun+'/'+w.streakDays+'天'; }
-        else { icon = '⚪'; cl = '#8899b0'; status = '监测中'; }
-      } else { icon = '⚪'; cl = '#8899b0'; status = '数据不足'; }
+      else if (w) { icon = '⚠️'; cl = '#ef4444'; status = '触发于'+w.triggerDate+'(已过'+w.gap+'天)'; }
+      else status = '监测中 · 无转负信号';
       rhtml += '<div class="rule-row" style="opacity:'+(on?'1':'.5')+'"><span class="r-name">'+icon+' '+s+'</span><span style="font-size:11px;color:'+cl+';flex:1">'+status+'</span><select onchange="p2nStoreOn[\''+s+'\']=this.value===\'1\';saveData();renderAlerts()" style="font-size:11px;padding:2px 4px;border-radius:6px;border:1px solid #cdd7e5"><option value="1"'+(on?' selected':'')+'>开</option><option value="0"'+(on?'':' selected')+'>关</option></select></div>';
     });
   }
@@ -2496,7 +2477,7 @@ function renderAlerts() {
   rhtml += '<h3>⚙️ 预警规则 <button class="mgmt-pill" style="font-size:12px;padding:4px 10px;margin-left:8px" onclick="showRuleSheet()">＋ 添加</button></h3>';
   alertRules.forEach(function(rule, i){
     var cat = catMap[rule.cat] || {name:rule.cat};
-    if (rule.type === 'combo_loss' || rule.type === 'combo_profit') {
+    if (rule.type === 'combo_loss' || rule.type === 'combo_profit' || rule.type === 'combo_l2p' || rule.type === 'combo_p2n') {
       rhtml += '<div class="rule-row" style="flex-wrap:wrap"><span class="r-name">'+rule.desc+'</span><div class="r-val" style="flex-basis:100%;margin-top:4px;display:flex;align-items:center;gap:4px;flex-wrap:wrap"><select onchange="var r=null;for(var k=0;k<alertRules.length;k++)if(alertRules[k].type===\''+rule.type+'\')r=alertRules[k];if(r)r.on=this.value===\'1\';'+(rule.type==='combo_loss'?'warnComboOn=this.value===\'1\';':'')+'saveData();renderAlerts();renderOverview()"><option value="1"'+(rule.on?' selected':'')+'>开</option><option value="0"'+(rule.on?'':' selected')+'>关</option></select>';
       stores.forEach(function(s){
         var bg = warnComboStores[s] ? '#eef3ff' : '#f8fafc';
@@ -2506,24 +2487,8 @@ function renderAlerts() {
       rhtml += '</div></div>';
       return;
     }
-    if (rule.type === 'combo_l2p' || rule.type === 'combo_p2n') {
-      var suf2 = rule.type==='combo_l2p' ? '亏损' : '盈利';
-      rhtml += '<div class="rule-row" style="flex-wrap:wrap"><span class="r-name">'+rule.desc+'</span><div class="r-val" style="flex-basis:100%;margin-top:4px;display:flex;align-items:center;gap:4px;flex-wrap:wrap"><span style="font-size:11px;color:#8899b0">连续'+suf2+'</span><input type="number" value="'+(rule.pct||3)+'" min="1" max="30" onchange="var r2=null;for(var k2=0;k2<alertRules.length;k2++)if(alertRules[k2].type===\''+rule.type+'\')r2=alertRules[k2];if(r2){r2.pct=parseInt(this.value)||3;this.value=r2.pct}saveData();renderAlerts();renderOverview()" style="width:42px;padding:2px 4px;border:1px solid #cdd7e5;border-radius:6px;font-size:11px;text-align:center"><span style="font-size:11px;color:#8899b0">天</span><select onchange="var r3=null;for(var k3=0;k3<alertRules.length;k3++)if(alertRules[k3].type===\''+rule.type+'\')r3=alertRules[k3];if(r3)r3.on=this.value===\'1\';saveData();renderAlerts();renderOverview()"><option value="1"'+(rule.on?' selected':'')+'>开</option><option value="0"'+(rule.on?'':' selected')+'>关</option></select>';
-      stores.forEach(function(s){
-        var bg = warnComboStores[s] ? '#eef3ff' : '#f8fafc';
-        var cl2 = warnComboStores[s] ? '#1e3a5f' : '#8899b0';
-        rhtml += '<span class="card-pill" onclick="warnComboStores[\''+s+'\']=!warnComboStores[\''+s+'\'];renderAlerts();renderOverview()" style="cursor:pointer;background:'+bg+';color:'+cl2+'">'+s+'</span>';
-      });
-      rhtml += '</div></div>';
-      return;
-    }
-    if (rule.type === 'store_loss' || rule.type === 'store_profit') {
+    if (rule.type === 'store_loss' || rule.type === 'store_profit' || rule.type === 'store_l2p' || rule.type === 'store_p2n') {
       rhtml += '<div class="rule-row"><span class="r-name">'+rule.desc+'</span><div class="r-val"><select onchange="alertRules['+i+'].on=this.value===\'1\';saveData();renderAlerts();renderOverview()"><option value="1"'+(rule.on?' selected':'')+'>开</option><option value="0"'+(rule.on?'':' selected')+'>关</option></select></div></div>';
-      return;
-    }
-    if (rule.type === 'store_l2p' || rule.type === 'store_p2n') {
-      var suf = rule.type==='store_l2p' ? '亏损' : '盈利';
-      rhtml += '<div class="rule-row"><span class="r-name">'+rule.desc+'</span><div class="r-val" style="display:flex;align-items:center;gap:6px"><span style="font-size:11px;color:#8899b0">连续'+suf+'</span><input type="number" value="'+(rule.pct||3)+'" min="1" max="30" onchange="var r=null;for(var k=0;k<alertRules.length;k++)if(alertRules[k].type===\''+rule.type+'\')r=alertRules[k];if(r){r.pct=parseInt(this.value)||3;this.value=r.pct}saveData();renderAlerts();renderOverview()" style="width:42px;padding:2px 4px;border:1px solid #cdd7e5;border-radius:6px;font-size:11px;text-align:center"><span style="font-size:11px;color:#8899b0">天</span><select onchange="var r=null;for(var k=0;k<alertRules.length;k++)if(alertRules[k].type===\''+rule.type+'\')r=alertRules[k];if(r)r.on=this.value===\'1\';saveData();renderAlerts();renderOverview()"><option value="1"'+(rule.on?' selected':'')+'>开</option><option value="0"'+(rule.on?'':' selected')+'>关</option></select></div></div>';
       return;
     }
     rhtml += '<div class="rule-row"><span class="r-name">'+rule.desc+'</span><div class="r-val">'
