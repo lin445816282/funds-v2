@@ -864,8 +864,29 @@ function saveEntry() {
   var amount = parseFloat(document.getElementById('ef-amount').value);
   var note = document.getElementById('ef-note').value;
   if (!store || !date || isNaN(amount)) return alert('请填完整');
-  records.unshift({id:Date.now()+Math.random(), store:store, date:date, category:catId, amount:amount, note:note});
+  var newId = Date.now()+Math.random();
+  records.unshift({id:newId, store:store, date:date, category:catId, amount:amount, note:note});
   saveData();
+  // 独立 POST 单条记录，不等全量覆盖
+  try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', API_BASE + '/api/funds/records', true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    var payload = JSON.stringify({id:newId, store:store, date:date, category:catId, amount:amount, note:note});
+    xhr.onload = function() {
+      if (xhr.status === 200) {
+        var resp = JSON.parse(xhr.responseText);
+        if (resp.id && resp.id !== newId) {
+          // 后端分配了新ID，更新本地
+          for (var i=0; i<records.length; i++) {
+            if (records[i].id === newId) { records[i].id = resp.id; break; }
+          }
+          saveData();
+        }
+      }
+    };
+    xhr.send(payload);
+  } catch(e) {}
   clearEntry();
   closeEntryPopup();
   refreshAll();

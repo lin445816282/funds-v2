@@ -51,6 +51,41 @@ async def get_funds_data():
         conn.close()
 
 
+# ── API: 单条记录写入（去重）─────────────
+@app.post("/api/funds/records")
+async def post_funds_record(request: Request):
+    data = await request.json()
+    conn = get_db()
+    try:
+        store = data.get("store","")
+        date = data.get("date","")
+        category = data.get("category","")
+        amount = data.get("amount",0)
+        note = data.get("note","")
+        if not store or not date:
+            return {"ok": False, "error": "store and date required"}
+        # 去重
+        existing = conn.execute(
+            "SELECT id FROM records WHERE store=? AND date=? AND category=? AND amount=? AND note=?",
+            (store, date, category, amount, note)
+        ).fetchone()
+        if existing:
+            return {"ok": True, "id": existing["id"], "skipped": True}
+        new_id = int(data.get("id", 0)) if data.get("id") else None
+        if new_id:
+            conn.execute(
+                "INSERT INTO records (id, store, date, category, amount, note) VALUES (?,?,?,?,?,?)",
+                (new_id, store, date, category, amount, note))
+        else:
+            conn.execute(
+                "INSERT INTO records (store, date, category, amount, note) VALUES (?,?,?,?,?)",
+                (store, date, category, amount, note))
+            new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+        return {"ok": True, "id": new_id}
+    finally:
+        conn.close()
+
 # ── API: 资金数据 POST（全量保存）─────────
 @app.post("/api/funds/data")
 async def post_funds_data(request: Request):
