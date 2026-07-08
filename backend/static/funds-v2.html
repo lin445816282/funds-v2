@@ -145,7 +145,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
 .record-item .info{flex:1;min-width:0}
 .record-item .info .top{font-size:14px;font-weight:600;display:flex;justify-content:space-between}
 .record-item .info .bot{font-size:11px;color:#8899b0;margin-top:2px}
-.record-item .del{font-size:12px;color:#c0c9d4;cursor:pointer;padding:4px 8px}
+.record-item .del{font-size:14px;color:#c0c9d4;cursor:pointer;padding:8px 12px;min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center}
 .record-item .del:active{color:#ef4444}
 
 /* ===== 总览 ===== */
@@ -251,6 +251,30 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
 .modal-box input,.modal-box select{width:100%;padding:10px;border:1px solid #cdd7e5;border-radius:10px;font-size:14px;margin-bottom:8px;background:#f8fafc}
 .modal-btns{display:flex;gap:8px}
 .modal-btns button{flex:1;padding:10px;border-radius:10px;border:none;font-size:14px;font-weight:600;cursor:pointer}
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:300;
+  background:#1e3a5f;color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;
+  font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.2);opacity:0;transition:opacity .25s;
+  pointer-events:none;max-width:90vw;text-align:center}
+.toast.show{opacity:1}
+.toast.error{background:#dc2626}
+.toast.ok{background:#16a34a}
+/* 操作日志 */
+.log-list{max-height:360px;overflow-y:auto}
+.log-item{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #f0f3f8;font-size:12px}
+.log-item:last-child{border-bottom:none}
+.log-badge{padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;flex-shrink:0;width:36px;text-align:center}
+.log-badge.add{background:#dcfce7;color:#16a34a}
+.log-badge.edit{background:#fef3c7;color:#d97706}
+.log-badge.del{background:#fce4ec;color:#dc2626}
+.log-detail{flex:1;min-width:0;line-height:1.5}
+.log-detail .log-action{font-weight:600;color:#1a2438}
+.log-detail .log-meta{color:#8899b0;font-size:11px}
+.log-detail .log-ts{font-size:10px;color:#b0bed0}
+/* 外部对接 */
+.api-field{display:flex;align-items:center;gap:6px}
+.api-label{font-size:11px;color:#8899b0;width:32px;flex-shrink:0}
+.copy-btn{padding:3px 8px;border-radius:6px;border:1px solid #cdd7e5;background:#fff;font-size:12px;cursor:pointer}
+.copy-btn:active{background:#eef3ff}
 </style>
 </head>
 <body>
@@ -301,7 +325,37 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   <!-- ====== 录入面板 ====== -->
   <div class="panel on" id="panel-entry">
     <button class="mgmt-pill" style="width:100%;justify-content:center;margin-top:8px" onclick="openEntryPopup()">＋ 记一笔</button>
+    <input class="search-input" id="search-records" placeholder="🔍 搜索 门店/日期/备注..." oninput="renderRecords()" style="width:100%;padding:10px 14px;border:1px solid #cdd7e5;border-radius:10px;font-size:14px;margin-top:8px;background:#f8fafc">
     <div class="record-list" id="record-list"></div>
+  </div>
+
+  <!-- ====== 编辑弹窗 ====== -->
+  <div class="mgmt-sheet-mask hide" id="edit-mask" onclick="closeEditPopup()">
+    <div class="mgmt-sheet" onclick="event.stopPropagation()" style="width:300px">
+      <div class="ms-title">✏️ 修改记录</div>
+      <div id="edit-body">
+        <input id="edit-store" placeholder="门店" style="margin-bottom:6px" class="ef-input" readonly>
+        <input id="edit-date" type="date" value="" class="ef-input" style="margin-bottom:6px">
+        <input id="edit-amount" type="number" placeholder="金额" class="ef-input" style="margin-bottom:6px">
+        <input id="edit-note" placeholder="备注" class="ef-input" style="margin-bottom:12px">
+      </div>
+      <div class="ms-btns">
+        <button onclick="closeEditPopup()">取消</button>
+        <button style="background:#3b82f6;color:#fff" onclick="saveEdit()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 确认弹窗 ====== -->
+  <div class="mgmt-sheet-mask hide" id="confirm-mask" onclick="closeConfirmPopup()">
+    <div class="mgmt-sheet" onclick="event.stopPropagation()" style="width:260px">
+      <div class="ms-title">⚠️ 确认删除</div>
+      <div style="text-align:center;padding:12px 0;font-size:14px;color:#8899b0">删除后不可恢复</div>
+      <div class="ms-btns">
+        <button onclick="closeConfirmPopup()">取消</button>
+        <button style="background:#ef4444;color:#fff" id="confirm-delete-btn">确认删除</button>
+      </div>
+    </div>
   </div>
 
   <!-- ====== 总览面板 ====== -->
@@ -384,6 +438,30 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   <!-- ====== 管理面板 ====== -->
   <div class="panel" id="panel-mgmt">
     <div class="mgmt-section">
+      <h3>🔗 外部对接</h3>
+      <div style="font-size:12px;color:#5a6b85;margin-bottom:6px">其他系统通过此接口推送数据</div>
+      <div class="api-field">
+        <span class="api-label">地址</span>
+        <code id="ext-url" style="flex:1;padding:4px 8px;background:#f0f3f8;border-radius:6px;font-size:11px;word-break:break-all"></code>
+        <button class="copy-btn" onclick="copyExt('url')">📋</button>
+      </div>
+      <div class="api-field" style="margin-top:6px">
+        <span class="api-label">密钥</span>
+        <code id="ext-key" style="flex:1;padding:4px 8px;background:#fef3c7;border-radius:6px;font-size:11px"></code>
+        <button class="copy-btn" onclick="copyExt('key')">📋</button>
+      </div>
+      <div class="api-field" style="margin-top:6px">
+        <span class="api-label">数据格式</span>
+        <code id="ext-body" style="flex:1;padding:4px 8px;background:#eff6ff;border-radius:6px;font-size:10px;word-break:break-all;white-space:pre-wrap"></code>
+        <button class="copy-btn" onclick="copyExt('body')">📋</button>
+      </div>
+      <div class="api-field" style="margin-top:6px">
+        <span class="api-label">curl</span>
+        <code id="ext-curl" style="flex:1;padding:4px 8px;background:#1a2438;color:#e2e8f0;border-radius:6px;font-size:10px;word-break:break-all;white-space:pre-wrap"></code>
+        <button class="copy-btn" onclick="copyExt('curl')">📋</button>
+      </div>
+    </div>
+    <div class="mgmt-section">
       <h3>🏪 门店管理</h3>
       <div id="mgmt-stores"></div>
       <div class="mgmt-pill-row">
@@ -396,6 +474,10 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
       <div class="mgmt-pill-row">
         <button class="mgmt-pill" onclick="showMgmtSheet('cat')">＋ 添加分类 <span class="arr">▾</span></button>
       </div>
+    </div>
+    <div class="mgmt-section">
+      <h3>📋 操作日志</h3>
+      <div id="op-log"></div>
     </div>
   </div>
 
@@ -486,6 +568,8 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     </div>
   </div>
 </div>
+
+<div class="toast" id="toast"></div>
 
 <script>
 // ═══════════ 数据层 ═══════════
@@ -588,8 +672,51 @@ var lastSyncSuccess = 0;  // 上次同步成功时间戳，0=未同步
 // 路径前缀：代理下为 /funds-v2，直连为空
 var API_BASE = window.location.pathname.startsWith('/funds-v2') ? '/funds-v2' : '';
 
-// API 数据同步
+// Token 管理
 var apiToken = localStorage.getItem('funds_token') || '';
+
+// 统一请求方法：自动带 token + 401跳登录
+function authXHR(method, url, body, onOk, onErr, sync) {
+  var xhr = new XMLHttpRequest();
+  xhr.open(method, API_BASE + url, !sync);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  if (apiToken) xhr.setRequestHeader('Authorization', 'Bearer ' + apiToken);
+  xhr.onload = function() {
+    if (xhr.status === 401) { logout(false); return; }
+    if (onOk) onOk(xhr);
+  };
+  if (onErr) xhr.onerror = onErr;
+  if (body !== undefined) xhr.send(JSON.stringify(body));
+  else xhr.send();
+  return xhr;
+}
+// 同步请求（仅登录和初始加载用）
+function authSync(url, body) {
+  var xhr = new XMLHttpRequest();
+  xhr.open(body ? 'POST' : 'GET', API_BASE + url, false);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  if (apiToken) xhr.setRequestHeader('Authorization', 'Bearer ' + apiToken);
+  try { xhr.send(body ? JSON.stringify(body) : undefined); } catch(e) {}
+  return xhr;
+}
+
+function logout(showGate) {
+  try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', API_BASE + '/api/auth/logout', false);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    if (apiToken) xhr.setRequestHeader('Authorization', 'Bearer ' + apiToken);
+    xhr.send();
+  } catch(e) {}
+  apiToken = '';
+  localStorage.removeItem('funds_token');
+  if (showGate !== false) showLogin();
+}
+
+function showLogin() {
+  document.getElementById('login-gate').classList.remove('hide');
+  document.getElementById('app').style.display = 'none';
+}
 
 // 补回特殊规则（API/lcocalStorage 可能缺新类型）
 function ensureSpecialRules() {
@@ -616,20 +743,15 @@ function ensureSpecialRules() {
 }
 
 function syncFromAPI() {
-  // 无 token 也尝试拉取（公开 API）
-  try {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', API_BASE + '/api/funds/data', false);
-    xhr.send();
-    if (xhr.status === 200) {
-      var data = JSON.parse(xhr.responseText);
-      // 数据为空则不算成功，回退本地
-      if (!data.stores || !data.stores.length) return false;
-      if (data.stores) stores = data.stores;
-      if (data.categories) categories = data.categories;
-      // 仅当 API 有记录时才覆盖，避免空数据清空本地
-      if (data.records && data.records.length) records = data.records;
-      if (data.alert_rules && data.alert_rules.length) alertRules = data.alert_rules;
+  if (!apiToken) return false;
+  var xhr = authSync('/api/funds/data');
+  if (xhr.status === 200) {
+    var data = JSON.parse(xhr.responseText);
+    if (!data.stores || !data.stores.length) return false;
+    if (data.stores) stores = data.stores;
+    if (data.categories) categories = data.categories;
+    if (data.records && data.records.length) records = data.records;
+    if (data.alert_rules && data.alert_rules.length) alertRules = data.alert_rules;
       if (data.warn_store_on) warnStoreOn = data.warn_store_on;
       if (data.profit_store_on) profitStoreOn = data.profit_store_on;
       if (data.l2p_store_on) l2pStoreOn = data.l2p_store_on;
@@ -644,7 +766,6 @@ function syncFromAPI() {
       updateSyncBar();
       return true;
     }
-  } catch(e) { console.log('API sync err:', e); }
   return false;
 }
 
@@ -702,36 +823,28 @@ function doSync() {
 }
 
 function pushToAPIBlocking() {
-  try {
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', API_BASE + '/api/funds/data', false);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.send(JSON.stringify({
-      stores: stores, categories: categories, records: records,
-      alert_rules: alertRules, warn_store_on: warnStoreOn, profit_store_on: profitStoreOn, l2p_store_on: l2pStoreOn, p2n_store_on: p2nStoreOn,
-      warn_combo_stores: warnComboStores
-    }));
-    return xhr.status === 200;
-  } catch(e) { console.log('push block err:', e); return false; }
+  if (!apiToken) return false;
+  var xhr = authSync('/api/funds/data', {
+    stores: stores, categories: categories, records: records,
+    alert_rules: alertRules, warn_store_on: warnStoreOn, profit_store_on: profitStoreOn, l2p_store_on: l2pStoreOn, p2n_store_on: p2nStoreOn,
+    warn_combo_stores: warnComboStores
+  });
+  return xhr.status === 200;
 }
 
 function pushToAPI() {
-  try {
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', API_BASE + '/api/funds/data', true);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.send(JSON.stringify({
-      stores: stores,
-      categories: categories,
-      records: records,
-      alert_rules: alertRules,
-      warn_store_on: warnStoreOn,
-      profit_store_on: profitStoreOn,
-      l2p_store_on: l2pStoreOn,
-      p2n_store_on: p2nStoreOn,
-      warn_combo_stores: warnComboStores
-    }));
-  } catch(e) { console.log('API push err:', e); }
+  if (!apiToken) return;
+  authXHR('POST', '/api/funds/data', {
+    stores: stores,
+    categories: categories,
+    records: records,
+    alert_rules: alertRules,
+    warn_store_on: warnStoreOn,
+    profit_store_on: profitStoreOn,
+    l2p_store_on: l2pStoreOn,
+    p2n_store_on: p2nStoreOn,
+    warn_combo_stores: warnComboStores
+  }, null, function() { console.warn('API push network error'); });
 }
 
 // 持久化
@@ -769,43 +882,33 @@ function saveData() {
 // ═══════════ 登录 ═══════════
 function doLogin() {
   var pwd = document.getElementById('login-pwd').value;
-  if (pwd === PWD) {
+  var xhr = authSync('/api/auth/login', {password: pwd});
+  if (xhr.status === 200) {
+    var resp = JSON.parse(xhr.responseText);
+    apiToken = resp.token;
+    localStorage.setItem('funds_token', apiToken);
     document.getElementById('login-gate').classList.add('hide');
     document.getElementById('app').style.display = '';
-    // 尝试 API 登录获取 token
-    try {
-      var xhr = new XMLHttpRequest();
-      xhr.open('POST', API_BASE + '/api/funds/auth/login', false);
-      xhr.setRequestHeader('Content-Type', 'application/json');
-      xhr.send(JSON.stringify({username:'', password:pwd}));
-      if (xhr.status === 200) {
-        var resp = JSON.parse(xhr.responseText);
-        apiToken = resp.token || resp.access_token || '';
-        if (apiToken) localStorage.setItem('funds_token', apiToken);
-      }
-    } catch(e) { console.log('login API err:', e); }
     initApp();
-  } else {
+  } else if (xhr.status === 403) {
     document.getElementById('login-pwd').style.borderColor = '#ef4444';
     setTimeout(function(){ document.getElementById('login-pwd').style.borderColor = '#cdd7e5'; }, 1000);
+  } else {
+    alert('连接失败，请检查网络');
   }
 }
-function doLogout() {
-  apiToken = '';
-  localStorage.removeItem('funds_token');
-  document.getElementById('login-gate').classList.remove('hide');
-  document.getElementById('app').style.display = 'none';
-  document.getElementById('login-pwd').value = '';
-}
+function doLogout() { logout(); }
 
 // ═══════════ 初始化 ═══════════
 function initApp() {
-  // 优先从 API 同步数据
+  // 检查登录
+  if (!apiToken) { showLogin(); return; }
+  // 有 token，尝试加载数据
+  document.getElementById('login-gate').classList.add('hide');
+  document.getElementById('app').style.display = '';
   var fromAPI = syncFromAPI();
   if (!fromAPI || !records.length) {
-    // API 不可用或无记录 → 回退 localStorage
     loadData();
-    // 不再自动播种假数据
   }
   cmpStoresSel = stores.slice();
   refreshAll();
@@ -857,6 +960,15 @@ function renderEntryForm() {
   }
 }
 
+var toastTimer;
+function showToast(msg, ms, cls) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (cls ? ' ' + cls : '');
+  clearTimeout(toastTimer);
+  if (ms) toastTimer = setTimeout(function(){ el.classList.remove('show'); }, ms);
+}
+
 function saveEntry() {
   var store = document.getElementById('ef-store').value;
   var date = document.getElementById('ef-date').value;
@@ -867,7 +979,8 @@ function saveEntry() {
   var newId = Date.now()+Math.random();
   records.unshift({id:newId, store:store, date:date, category:catId, amount:amount, note:note});
   saveData();
-  // 独立 POST 单条记录，不等全量覆盖
+  showToast('⏳ 正在保存...', 0);
+  // 独立 POST 单条记录
   try {
     var xhr = new XMLHttpRequest();
     xhr.open('POST', API_BASE + '/api/funds/records', true);
@@ -876,17 +989,28 @@ function saveEntry() {
     xhr.onload = function() {
       if (xhr.status === 200) {
         var resp = JSON.parse(xhr.responseText);
-        if (resp.id && resp.id !== newId) {
-          // 后端分配了新ID，更新本地
-          for (var i=0; i<records.length; i++) {
-            if (records[i].id === newId) { records[i].id = resp.id; break; }
+        if (resp.skipped) {
+          showToast('⚠️ 已存在相同记录，跳过', 2500, 'error');
+        } else {
+          showToast('✅ 已入库 · ' + store + ' ' + date, 2000, 'ok');
+          if (resp.id && resp.id !== newId) {
+            for (var i=0; i<records.length; i++) {
+              if (records[i].id === newId) { records[i].id = resp.id; break; }
+            }
+            saveData();
           }
-          saveData();
         }
+      } else {
+        showToast('❌ 入库失败 (' + xhr.status + ')', 3000, 'error');
       }
     };
+    xhr.onerror = function() {
+      showToast('⚠️ 网络异常，已存本地', 3000, 'error');
+    };
     xhr.send(payload);
-  } catch(e) {}
+  } catch(e) {
+    showToast('⚠️ 已存本地', 2000, 'error');
+  }
   clearEntry();
   closeEntryPopup();
   refreshAll();
@@ -937,15 +1061,48 @@ function clearEntry() {
   document.getElementById('ef-note').value = '';
 }
 
-function deleteRecord(id) {
-  if (!confirm('删除这条记录？')) return;
+var pendingDeleteId = null;
+function openConfirmPopup(id) {
+  pendingDeleteId = id;
+  document.getElementById('confirm-mask').classList.remove('hide');
+  document.getElementById('confirm-delete-btn').onclick = function(){ doDelete(pendingDeleteId); };
+}
+function closeConfirmPopup() {
+  document.getElementById('confirm-mask').classList.add('hide');
+  pendingDeleteId = null;
+}
+function doDelete(id) {
   records = records.filter(function(r){ return r.id !== id; });
   saveData();
+  closeConfirmPopup();
+  // 后端删除
+  try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('DELETE', API_BASE + '/api/funds/records/' + id, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.onload = function() {
+      if (xhr.status === 200) showToast('🗑 已删除', 2000);
+      else showToast('⚠️ 删除失败 (' + xhr.status + ')', 2000, 'error');
+    };
+    xhr.send();
+  } catch(e) {}
   refreshAll();
 }
 
+function deleteRecord(id) {
+  openConfirmPopup(id);
+}
+
 function renderRecords() {
-  var recent = records.slice(0, 30);
+  var q = (document.getElementById('search-records')||{}).value || '';
+  q = q.toLowerCase();
+  var filtered = q ? records.filter(function(r){
+    return (r.store||'').toLowerCase().indexOf(q)>=0
+        || (r.date||'').indexOf(q)>=0
+        || (r.note||'').toLowerCase().indexOf(q)>=0;
+  }) : records;
+  // 最新在前
+  var recent = filtered.slice().reverse().slice(0, 30);
   var catMap = {};
   categories.forEach(function(c){ catMap[c.id] = c; });
   var html = '';
@@ -953,16 +1110,58 @@ function renderRecords() {
     var cat = catMap[r.category] || {name:r.category, dir:r.amount>=0?'+':'-', color:'#8899b0'};
     var cls = cat.dir === '+' ? 'in' : 'out';
     var sign = r.amount >= 0 ? '+' : '';
-    html += '<div class="record-item">'
+    html += '<div class="record-item" onclick="openEditPopup('+r.id+')">'
       + '<span class="cat-dot '+cls+'"></span>'
       + '<div class="info">'
       + '<div class="top"><span>'+cat.name+'</span><span class="'+(r.amount>=0?'up':'down')+'">'+sign+r.amount.toLocaleString()+'</span></div>'
       + '<div class="bot">'+r.store+' · '+r.date+(r.note?' · '+r.note:'')+'</div>'
       + '</div>'
-      + '<span class="del" onclick="deleteRecord('+r.id+')">✕</span>'
+      + '<span class="del" onclick="event.stopPropagation();deleteRecord('+r.id+')">✕</span>'
       + '</div>';
   });
-  document.getElementById('record-list').innerHTML = html || '<div class="empty">暂无记录，记一笔吧</div>';
+  var info = q ? '找到 '+filtered.length+' 条' : '最近 30 条';
+  document.getElementById('record-list').innerHTML = (html || '<div class="empty">暂无记录，记一笔吧</div>') + '<div style="text-align:center;font-size:11px;color:#8899b0;margin-top:8px">'+info+'</div>';
+}
+
+var editId = null;
+function openEditPopup(id) {
+  var r = null;
+  for (var i=0; i<records.length; i++) { if (records[i].id === id) { r = records[i]; break; } }
+  if (!r) return;
+  editId = id;
+  document.getElementById('edit-store').value = r.store;
+  document.getElementById('edit-date').value = r.date;
+  document.getElementById('edit-amount').value = r.amount;
+  document.getElementById('edit-note').value = r.note || '';
+  document.getElementById('edit-mask').classList.remove('hide');
+}
+function closeEditPopup() {
+  document.getElementById('edit-mask').classList.add('hide');
+  editId = null;
+}
+function saveEdit() {
+  if (!editId) return;
+  var r = null;
+  for (var i=0; i<records.length; i++) { if (records[i].id === editId) { r = records[i]; break; } }
+  if (!r) return;
+  r.date = document.getElementById('edit-date').value;
+  r.amount = parseFloat(document.getElementById('edit-amount').value) || 0;
+  r.note = document.getElementById('edit-note').value || '';
+  saveData();
+  showToast('⏳ 正在保存...', 0);
+  // 后端更新
+  try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('PUT', API_BASE + '/api/funds/records/' + editId, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.onload = function() {
+      if (xhr.status === 200) showToast('✅ 已修改', 1500, 'ok');
+      else showToast('⚠️ 修改失败 (' + xhr.status + ')', 2000, 'error');
+    };
+    xhr.send(JSON.stringify({date: r.date, amount: r.amount, note: r.note}));
+  } catch(e) { showToast('⚠️ 已存本地', 1500, 'error'); }
+  closeEditPopup();
+  refreshAll();
 }
 
 // ═══════════ 连亏/连盈计算 ═══════════
@@ -2799,6 +2998,60 @@ function switchTab(tab) {
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('on'); });
   document.getElementById('panel-'+tab).classList.add('on');
   if (tab === 'compare') { initCmpCanvas(); drawCompare(); }
+  if (tab === 'mgmt') { fetchLogs(); fillExtInfo(); }
+}
+
+// ═══════════ 外部对接信息 ═══════════
+function fillExtInfo() {
+  var base = window.location.origin + API_BASE;
+  document.getElementById('ext-url').textContent = base + '/api/external/push';
+  document.getElementById('ext-key').textContent = 'funds-v2-ext-2026';
+  document.getElementById('ext-curl').textContent =
+    'curl -X POST ' + base + '/api/external/push \\n' +
+    '  -H "X-API-Key: funds-v2-ext-2026" \\n' +
+    '  -H "Content-Type: application/json" \\n' +
+    '  -d @data.json';
+  document.getElementById('ext-body').textContent =
+    '{\\n' +
+    '  "store": "一店",\\n' +
+    '  "date": "2026-07-08",\\n' +
+    '  "amount": 5800\\n' +
+    '}';
+}
+function copyExt(type) {
+  var text = '';
+  if (type === 'url') text = document.getElementById('ext-url').textContent;
+  else if (type === 'key') text = document.getElementById('ext-key').textContent;
+  else if (type === 'curl') text = document.getElementById('ext-curl').textContent;
+  else if (type === 'body') text = document.getElementById('ext-body').textContent;
+  navigator.clipboard.writeText(text).then(function(){
+    showToast('已复制 ✅');
+  });
+}
+
+// ═══════════ 操作日志 ═══════════
+function fetchLogs() {
+  authXHR('GET', '/api/funds/logs?limit=100', undefined, renderLogs, function(){});
+}
+function renderLogs(xhr) {
+  var data = JSON.parse(xhr.responseText);
+  var logs = data.logs || [];
+  var html = logs.length ? '<div class="log-list">' : '<div class="empty">暂无操作记录</div>';
+  for (var i=0; i<logs.length; i++) {
+    var l = logs[i];
+    var cls = l.action === '新增' ? 'add' : l.action === '删除' ? 'del' : 'edit';
+    html += '<div class="log-item">' +
+      '<span class="log-badge '+cls+'">' + l.action + '</span>' +
+      '<div class="log-detail">' +
+        '<span class="log-action">' + l.action + '</span> ' +
+        '<span class="log-meta">' + (l.detail || '') + '</span><br>' +
+        '<span class="log-ts">' + (l.ts || '') + '</span>' +
+      '</div>' +
+    '</div>';
+  }
+  if (logs.length) html += '</div>';
+  var el = document.getElementById('op-log');
+  if (el) el.innerHTML = html;
 }
 
 // 自动登录

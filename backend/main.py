@@ -1,24 +1,135 @@
 """funds-v2 独立服务 — 多门店资金看板 + 预测数据 API"""
-import os, json
-from fastapi import FastAPI, Request, HTTPException
+import os, json, uuid, secrets
+from datetime import datetime, timedelta
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "funds-v2.db")
+PASSWORD = "123456"
+EXTERNAL_API_KEY = "funds-v2-ext-2026"  # 给外部系统的对接密钥
 
 app = FastAPI(title="funds-v2", docs_url=None, redoc_url=None)
 
+# ── CORS ───────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+# ── DB ─────────────────────────────────────
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
+# ═══════════════ 初始化 ═══════════════════
+def init_db():
+    conn = get_db()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            created TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS operation_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            action TEXT NOT NULL,
+            store TEXT,
+            detail TEXT,
+            data TEXT
+        );
+    """)
+    conn.commit()
+    conn.close()
 
-# ── API: 资金数据 GET ──────────────────────
+def log_op(action, store, detail, data=None):
+    try:
+        conn = get_db()
+        conn.execute(
+            "INSERT INTO operation_logs (action, store, detail, data) VALUES (?,?,?,?)",
+            (action, store, detail, json.dumps(data, ensure_ascii=False) if data else None)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[log_op err] {e}")
+
+init_db()
+
+# ═══════════════ 认证 ═══════════════════
+# 公开路由白名单
+PUBLIC_PATHS = {"/", "/api/auth/login", "/favicon.ico"}
+
+def is_public(path: str) -> bool:
+    # 静态文件也放行
+    if path.startswith("/static") or path.startswith("/assets"):
+        return True
+    return path in PUBLIC_PATHS
+
+async def require_auth(request: Request):
+    """中间件：非公开路由需要有效 token"""
+    if is_public(request.url.path):
+        return
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录")
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT token FROM sessions WHERE token=?", (token,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="登录过期")
+    finally:
+        conn.close()
+
+# ═══════════════ 纯净化 ═══════════════════
+ALLOWED_COLS = {'store', 'date', 'category', 'amount', 'note'}
+
+def sanitize_cols(updates):
+    """确保 SQL 字段名在白名单内"""
+    safe = []
+    for col in updates:
+        if col in ALLOWED_COLS:
+            safe.append(col)
+    return safe
+
+# ═══════════════ API: 登录 ═══════════════
+@app.post("/api/auth/login")
+async def auth_login(request: Request):
+    data = await request.json()
+    pwd = data.get("password", "")
+    if pwd != PASSWORD:
+        raise HTTPException(status_code=403, detail="密码错误")
+    token = secrets.token_hex(32)
+    conn = get_db()
+    try:
+        conn.execute("INSERT INTO sessions (token, created) VALUES (?,?)",
+                     (token, datetime.now().isoformat()))
+        conn.commit()
+        return {"ok": True, "token": token}
+    finally:
+        conn.close()
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request):
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if token:
+        conn = get_db()
+        try:
+            conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+            conn.commit()
+        finally:
+            conn.close()
+    return {"ok": True}
+
+# ═══════════════ API: 数据 ═══════════════
 @app.get("/api/funds/data")
-async def get_funds_data():
+async def get_funds_data(request: Request):
+    await require_auth(request)
     conn = get_db()
     try:
         stores = [r["name"] for r in conn.execute("SELECT name FROM stores ORDER BY id").fetchall()]
@@ -50,10 +161,9 @@ async def get_funds_data():
     finally:
         conn.close()
 
-
-# ── API: 单条记录写入（去重）─────────────
 @app.post("/api/funds/records")
 async def post_funds_record(request: Request):
+    await require_auth(request)
     data = await request.json()
     conn = get_db()
     try:
@@ -64,7 +174,6 @@ async def post_funds_record(request: Request):
         note = data.get("note","")
         if not store or not date:
             return {"ok": False, "error": "store and date required"}
-        # 去重
         existing = conn.execute(
             "SELECT id FROM records WHERE store=? AND date=? AND category=? AND amount=? AND note=?",
             (store, date, category, amount, note)
@@ -82,22 +191,61 @@ async def post_funds_record(request: Request):
                 (store, date, category, amount, note))
             new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
+        log_op("新增", store, f"{store} {date} {category} {amount}", {"amount": amount, "date": date, "category": category})
         return {"ok": True, "id": new_id}
     finally:
         conn.close()
 
-# ── API: 资金数据 POST（全量保存）─────────
-@app.post("/api/funds/data")
-async def post_funds_data(request: Request):
+@app.delete("/api/funds/records/{rid}")
+async def delete_funds_record(rid: str, request: Request):
+    await require_auth(request)
+    conn = get_db()
+    try:
+        rid_num = float(rid) if '.' in str(rid) else int(rid)
+        row = conn.execute("SELECT store, date, amount FROM records WHERE id=?", (rid_num,)).fetchone()
+        conn.execute("DELETE FROM records WHERE id=?", (rid_num,))
+        conn.commit()
+        if row:
+            log_op("删除", row["store"], f"{row['store']} {row['date']} {row['amount']}", {"rid": rid})
+        return {"ok": True}
+    finally:
+        conn.close()
+
+@app.put("/api/funds/records/{rid}")
+async def update_funds_record(rid: str, request: Request):
+    await require_auth(request)
     data = await request.json()
     conn = get_db()
     try:
-        # Stores
+        rid_num = float(rid) if '.' in str(rid) else int(rid)
+        row = conn.execute("SELECT store, date FROM records WHERE id=?", (rid_num,)).fetchone()
+        updates = []
+        params = []
+        for f in ALLOWED_COLS:
+            if f in data and data[f] is not None:
+                updates.append(f"{f}=?")
+                params.append(data[f])
+        if updates:
+            params.append(rid_num)
+            conn.execute("UPDATE records SET " + ",".join(updates) + " WHERE id=?", params)
+            conn.commit()
+            if row:
+                log_op("修改", row["store"], f"{row['store']} {row['date']}", {"fields": list(data.keys())})
+            return {"ok": True}
+        return {"ok": False, "error": "no fields to update"}
+    finally:
+        conn.close()
+
+@app.post("/api/funds/data")
+async def post_funds_data(request: Request):
+    await require_auth(request)
+    data = await request.json()
+    conn = get_db()
+    try:
         if "stores" in data:
             conn.execute("DELETE FROM stores")
             for i, name in enumerate(data["stores"]):
                 conn.execute("INSERT INTO stores (id, name) VALUES (?,?)", (i+1, name))
-        # Categories
         if "categories" in data:
             conn.execute("DELETE FROM categories")
             for c in data["categories"]:
@@ -106,7 +254,6 @@ async def post_funds_data(request: Request):
                     (c["id"], c["name"], c.get("dir","-"), c.get("color",""),
                      c.get("budget",0), int(c.get("show",1)))
                 )
-        # Records
         if "records" in data:
             conn.execute("DELETE FROM records")
             for r in data["records"]:
@@ -115,7 +262,6 @@ async def post_funds_data(request: Request):
                     (r["id"], r["store"], r["date"], r["category"],
                      r.get("amount",0), r.get("note",""))
                 )
-        # Alert rules
         if "alert_rules" in data:
             conn.execute("DELETE FROM alert_rules")
             for a in data["alert_rules"]:
@@ -124,7 +270,6 @@ async def post_funds_data(request: Request):
                     (a["id"], a.get("cat",""), a["type"], a.get("desc",""),
                      a.get("pct",0), int(a.get("on",1)))
                 )
-        # Store settings
         if "warn_store_on" in data:
             for s, v in data["warn_store_on"].items():
                 conn.execute(
@@ -138,12 +283,98 @@ async def post_funds_data(request: Request):
                     (s, "profit", int(v))
                 )
         conn.commit()
+        store_counts = {}
+        for r in data.get("records", []):
+            s = r.get("store","?")
+            store_counts[s] = store_counts.get(s, 0) + 1
+        print(f"[push] {len(data.get('records',[]))}条, stores={store_counts}")
         return {"ok": True}
     finally:
         conn.close()
 
+# ═══════════════ API: 操作日志 ═══════════════
+@app.get("/api/funds/logs")
+async def get_op_logs(request: Request, limit: int = 50):
+    await require_auth(request)
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM operation_logs ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return {"logs": [dict(r) for r in rows]}
+    finally:
+        conn.close()
 
-# ── API: 板块预测 ──────────────────────────
+# ═══════════════ 外部系统对接 API ═══════════════
+# 安全：API Key 校验 + 操作日志 + 参数化查询
+
+def check_external_key(request: Request):
+    """验证外部系统 API Key"""
+    key = request.headers.get("X-API-Key", "")
+    if not key or key != EXTERNAL_API_KEY:
+        raise HTTPException(status_code=403, detail="无效的 API Key")
+
+@app.post("/api/external/push")
+async def external_push(request: Request):
+    """外部系统推送数据 — 全量覆盖 stores/categories/records"""
+    check_external_key(request)
+    data = await request.json()
+    conn = get_db()
+    try:
+        store_count = cat_count = rec_count = 0
+        if "stores" in data:
+            conn.execute("DELETE FROM stores")
+            for i, name in enumerate(data["stores"]):
+                conn.execute("INSERT INTO stores (id, name) VALUES (?,?)", (i+1, str(name)))
+            store_count = len(data["stores"])
+        if "categories" in data:
+            conn.execute("DELETE FROM categories")
+            for c in data["categories"]:
+                conn.execute(
+                    "INSERT INTO categories (id, name, dir, color, budget, show) VALUES (?,?,?,?,?,?)",
+                    (str(c["id"]), str(c["name"]), c.get("dir","-"), c.get("color",""),
+                     float(c.get("budget",0)), int(c.get("show",1)))
+                )
+            cat_count = len(data["categories"])
+        if "records" in data:
+            conn.execute("DELETE FROM records")
+            for r in data["records"]:
+                conn.execute(
+                    "INSERT INTO records (id, store, date, category, amount, note) VALUES (?,?,?,?,?,?)",
+                    (r["id"], str(r["store"]), str(r["date"]), str(r["category"]),
+                     float(r.get("amount",0)), str(r.get("note","")))
+                )
+            rec_count = len(data["records"])
+        conn.commit()
+        log_op("外部推送", "-", f"stores={store_count} cats={cat_count} recs={rec_count}")
+        return {"ok": True, "stores": store_count, "categories": cat_count, "records": rec_count}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=f"数据格式错误: {str(e)}")
+    finally:
+        conn.close()
+
+@app.get("/api/external/template")
+async def external_template():
+    """返回对接数据格式模板（无需认证，仅供参考）"""
+    return {
+        "api": "POST /api/external/push",
+        "auth": "Header: X-API-Key: <你的密钥>",
+        "content_type": "application/json",
+        "body": {
+            "stores": ["一店", "二店", "三店", "四店"],
+            "categories": [
+                {"id": "income", "name": "收入", "dir": "+", "color": "#22c55e", "budget": 0, "show": 1},
+                {"id": "purchase", "name": "采购", "dir": "-", "color": "#ef4444", "budget": 0, "show": 1}
+            ],
+            "records": [
+                {"id": 1, "store": "一店", "date": "2026-01-01", "category": "income", "amount": 5000, "note": "日结"}
+            ]
+        },
+        "note": "每次推送会全量覆盖三类数据（stores/categories/records），请确保传入完整数据。可选字段：categories.budget、categories.show、records.note"
+    }
+
+# ═══════════════ 预测 API ═══════════════
 @app.get("/api/sector-predictions")
 async def sector_predictions(days: int = 30):
     conn = get_db()
@@ -154,8 +385,6 @@ async def sector_predictions(days: int = 30):
     conn.close()
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
-
-# ── API: 大盘预测 ──────────────────────────
 @app.get("/api/index-predictions")
 async def index_predictions(days: int = 30):
     conn = get_db()
@@ -166,8 +395,7 @@ async def index_predictions(days: int = 30):
     conn.close()
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
-
-# ── Static + SPA ───────────────────────────
+# ═══════════════ Static + SPA ═══════════════
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 if os.path.isdir(STATIC_DIR):
     @app.get("/")
@@ -189,7 +417,6 @@ if os.path.isdir(STATIC_DIR):
                 "ETag": '"' + path + '-' + str(int(os.path.getmtime(fp))) + '"'
             })
         return FileResponse(os.path.join(STATIC_DIR, "funds-v2.html"))
-
 
 if __name__ == "__main__":
     import uvicorn
