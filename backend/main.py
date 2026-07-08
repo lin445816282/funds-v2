@@ -63,7 +63,7 @@ init_db()
 
 # ═══════════════ 认证 ═══════════════════
 # 公开路由白名单
-PUBLIC_PATHS = {"/", "/api/auth/login", "/favicon.ico"}
+PUBLIC_PATHS = {"/", "/api/auth/login", "/favicon.ico", "/api/external/push", "/api/external/template"}
 
 def is_public(path: str) -> bool:
     # 静态文件也放行
@@ -180,8 +180,8 @@ async def post_funds_record(request: Request):
         ).fetchone()
         if existing:
             return {"ok": True, "id": existing["id"], "skipped": True}
-        new_id = int(data.get("id", 0)) if data.get("id") else None
-        if new_id:
+        new_id = str(data.get("id")) if data.get("id") is not None else None
+        if new_id is not None:
             conn.execute(
                 "INSERT INTO records (id, store, date, category, amount, note) VALUES (?,?,?,?,?,?)",
                 (new_id, store, date, category, amount, note))
@@ -201,13 +201,23 @@ async def delete_funds_record(rid: str, request: Request):
     await require_auth(request)
     conn = get_db()
     try:
-        rid_num = float(rid) if '.' in str(rid) else int(rid)
-        row = conn.execute("SELECT store, date, amount FROM records WHERE id=?", (rid_num,)).fetchone()
-        conn.execute("DELETE FROM records WHERE id=?", (rid_num,))
+        # 1) TEXT match (new records stored as TEXT)
+        cur = conn.execute("DELETE FROM records WHERE CAST(id AS TEXT)=?", (rid,))
+        deleted = cur.rowcount
+        # 2) Fallback: float match for old REAL-typed records
+        if deleted == 0:
+            try:
+                rid_float = float(rid)
+                cur = conn.execute("DELETE FROM records WHERE ABS(id - ?) < 1e-6", (rid_float,))
+                deleted = cur.rowcount
+            except (ValueError, TypeError):
+                pass
         conn.commit()
-        if row:
-            log_op("删除", row["store"], f"{row['store']} {row['date']} {row['amount']}", {"rid": rid})
-        return {"ok": True}
+        if deleted:
+            log_op("删除", str(rid), f"删除记录 {rid}", {"rid": rid})
+        return {"ok": True, "deleted": deleted}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
     finally:
         conn.close()
 
@@ -242,31 +252,22 @@ async def post_funds_data(request: Request):
     data = await request.json()
     conn = get_db()
     try:
-        if "stores" in data:
-            conn.execute("DELETE FROM stores")
-            for i, name in enumerate(data["stores"]):
-                conn.execute("INSERT INTO stores (id, name) VALUES (?,?)", (i+1, name))
-        if "categories" in data:
-            conn.execute("DELETE FROM categories")
-            for c in data["categories"]:
-                conn.execute(
-                    "INSERT INTO categories (id, name, dir, color, budget, show) VALUES (?,?,?,?,?,?)",
-                    (c["id"], c["name"], c.get("dir","-"), c.get("color",""),
-                     c.get("budget",0), int(c.get("show",1)))
-                )
+        # ⚠️ stores/categories 不再从客户端全量覆写
+        # 门店和分类只能通过管理面板 API 操作，防止前端脏数据污染
         if "records" in data:
-            conn.execute("DELETE FROM records")
             for r in data["records"]:
-                conn.execute(
-                    "INSERT INTO records (id, store, date, category, amount, note) VALUES (?,?,?,?,?,?)",
-                    (r["id"], r["store"], r["date"], r["category"],
-                     r.get("amount",0), r.get("note",""))
-                )
+                # 只插入不存在的，不覆盖已有数据
+                existing = conn.execute("SELECT id FROM records WHERE id=?", (r["id"],)).fetchone()
+                if not existing:
+                    conn.execute(
+                        "INSERT INTO records (id, store, date, category, amount, note) VALUES (?,?,?,?,?,?)",
+                        (r["id"], r["store"], r["date"], r["category"],
+                         r.get("amount",0), r.get("note",""))
+                    )
         if "alert_rules" in data:
-            conn.execute("DELETE FROM alert_rules")
             for a in data["alert_rules"]:
                 conn.execute(
-                    "INSERT INTO alert_rules (id, cat, type, description, pct, on_state) VALUES (?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO alert_rules (id, cat, type, description, pct, on_state) VALUES (?,?,?,?,?,?)",
                     (a["id"], a.get("cat",""), a["type"], a.get("desc",""),
                      a.get("pct",0), int(a.get("on",1)))
                 )
@@ -288,6 +289,73 @@ async def post_funds_data(request: Request):
             s = r.get("store","?")
             store_counts[s] = store_counts.get(s, 0) + 1
         print(f"[push] {len(data.get('records',[]))}条, stores={store_counts}")
+        return {"ok": True}
+    finally:
+        conn.close()
+
+# ═══════════════ API: 分类增删改 ═══════════════
+@app.post("/api/funds/categories")
+async def create_category(request: Request):
+    await require_auth(request)
+    data = await request.json()
+    cat_id = data.get("id", "")
+    name = (data.get("name", "") or "").strip()
+    if not name:
+        return {"ok": False, "error": "name required"}
+    if not cat_id:
+        import time
+        cat_id = "cat_" + str(int(time.time() * 1000))
+    dir_ = data.get("dir", "-")
+    color = data.get("color", "#3b82f6")
+    budget = data.get("budget", 0)
+    show = data.get("show", True)
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO categories (id, name, dir, color, budget, show) VALUES (?,?,?,?,?,?)",
+            (cat_id, name, dir_, color, budget, int(show))
+        )
+        conn.commit()
+        log_op("新增分类", "", f"{name} ({dir_})", {"id": cat_id})
+        return {"ok": True, "id": cat_id}
+    finally:
+        conn.close()
+
+@app.put("/api/funds/categories/{cat_id}")
+async def update_category(request: Request, cat_id: str):
+    await require_auth(request)
+    data = await request.json()
+    conn = get_db()
+    try:
+        existing = conn.execute("SELECT * FROM categories WHERE id=?", (cat_id,)).fetchone()
+        if not existing:
+            return {"ok": False, "error": "category not found"}
+        allowed = {"name", "dir", "color", "budget", "show"}
+        updates = {k: (int(data[k]) if k == "show" else data[k]) for k in allowed & data.keys()}
+        if not updates:
+            return {"ok": False, "error": "no valid fields"}
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        vals = list(updates.values()) + [cat_id]
+        conn.execute(f"UPDATE categories SET {set_clause} WHERE id=?", vals)
+        conn.commit()
+        log_op("修改分类", "", cat_id, updates)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+@app.delete("/api/funds/categories/{cat_id}")
+async def delete_category(request: Request, cat_id: str):
+    await require_auth(request)
+    conn = get_db()
+    try:
+        existing = conn.execute("SELECT * FROM categories WHERE id=?", (cat_id,)).fetchone()
+        if not existing:
+            return {"ok": False, "error": "category not found"}
+        conn.execute("DELETE FROM categories WHERE id=?", (cat_id,))
+        conn.execute("DELETE FROM records WHERE category=?", (cat_id,))
+        conn.execute("DELETE FROM alert_rules WHERE cat=?", (cat_id,))
+        conn.commit()
+        log_op("删除分类", "", f"{existing['name']} ({existing['dir']})", {"id": cat_id})
         return {"ok": True}
     finally:
         conn.close()
@@ -316,38 +384,25 @@ def check_external_key(request: Request):
 
 @app.post("/api/external/push")
 async def external_push(request: Request):
-    """外部系统推送数据 — 全量覆盖 stores/categories/records"""
+    """外部系统推送流水记录 — 仅 records upsert（分类/门店由前端管理）"""
     check_external_key(request)
     data = await request.json()
     conn = get_db()
     try:
-        store_count = cat_count = rec_count = 0
-        if "stores" in data:
-            conn.execute("DELETE FROM stores")
-            for i, name in enumerate(data["stores"]):
-                conn.execute("INSERT INTO stores (id, name) VALUES (?,?)", (i+1, str(name)))
-            store_count = len(data["stores"])
-        if "categories" in data:
-            conn.execute("DELETE FROM categories")
-            for c in data["categories"]:
-                conn.execute(
-                    "INSERT INTO categories (id, name, dir, color, budget, show) VALUES (?,?,?,?,?,?)",
-                    (str(c["id"]), str(c["name"]), c.get("dir","-"), c.get("color",""),
-                     float(c.get("budget",0)), int(c.get("show",1)))
-                )
-            cat_count = len(data["categories"])
+        rec_count = 0
         if "records" in data:
-            conn.execute("DELETE FROM records")
             for r in data["records"]:
-                conn.execute(
-                    "INSERT INTO records (id, store, date, category, amount, note) VALUES (?,?,?,?,?,?)",
-                    (r["id"], str(r["store"]), str(r["date"]), str(r["category"]),
-                     float(r.get("amount",0)), str(r.get("note","")))
-                )
-            rec_count = len(data["records"])
+                existing = conn.execute("SELECT id FROM records WHERE id=?", (r["id"],)).fetchone()
+                if not existing:
+                    conn.execute(
+                        "INSERT INTO records (id, store, date, category, amount, note) VALUES (?,?,?,?,?,?)",
+                        (r["id"], str(r["store"]), str(r["date"]), str(r["category"]),
+                         float(r.get("amount",0)), str(r.get("note","")))
+                    )
+                    rec_count += 1
         conn.commit()
-        log_op("外部推送", "-", f"stores={store_count} cats={cat_count} recs={rec_count}")
-        return {"ok": True, "stores": store_count, "categories": cat_count, "records": rec_count}
+        log_op("外部推送", "-", f"recs={rec_count}")
+        return {"ok": True, "records": rec_count}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=400, detail=f"数据格式错误: {str(e)}")
@@ -371,7 +426,7 @@ async def external_template():
                 {"id": 1, "store": "一店", "date": "2026-01-01", "category": "income", "amount": 5000, "note": "日结"}
             ]
         },
-        "note": "每次推送会全量覆盖三类数据（stores/categories/records），请确保传入完整数据。可选字段：categories.budget、categories.show、records.note"
+        "note": "仅 upsert records（id 已存在则跳过）。stores/categories 需通过管理面板添加。可选字段：records.note。Header 认证：X-API-Key: funds-v2-ext-2026"
     }
 
 # ═══════════════ 预测 API ═══════════════

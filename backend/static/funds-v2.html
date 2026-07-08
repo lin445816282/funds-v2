@@ -275,6 +275,8 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
 .api-label{font-size:11px;color:#8899b0;width:32px;flex-shrink:0}
 .copy-btn{padding:3px 8px;border-radius:6px;border:1px solid #cdd7e5;background:#fff;font-size:12px;cursor:pointer}
 .copy-btn:active{background:#eef3ff}
+.copy-all-btn{width:100%;padding:8px;border-color:#3b82f6;background:#eff6ff;color:#1d4ed8;font-weight:600;font-size:13px}
+.copy-all-btn:active{background:#dbeafe}
 </style>
 </head>
 <body>
@@ -320,6 +322,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     <button onclick="switchTab('compare')">📈 对比</button>
     <button onclick="switchTab('alerts')">⚠️ 预警</button>
     <button onclick="switchTab('mgmt')">⚙️ 管理</button>
+    <button onclick="switchTab('ext')">🔗 对接</button>
   </div>
 
   <!-- ====== 录入面板 ====== -->
@@ -438,30 +441,6 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   <!-- ====== 管理面板 ====== -->
   <div class="panel" id="panel-mgmt">
     <div class="mgmt-section">
-      <h3>🔗 外部对接</h3>
-      <div style="font-size:12px;color:#5a6b85;margin-bottom:6px">其他系统通过此接口推送数据</div>
-      <div class="api-field">
-        <span class="api-label">地址</span>
-        <code id="ext-url" style="flex:1;padding:4px 8px;background:#f0f3f8;border-radius:6px;font-size:11px;word-break:break-all"></code>
-        <button class="copy-btn" onclick="copyExt('url')">📋</button>
-      </div>
-      <div class="api-field" style="margin-top:6px">
-        <span class="api-label">密钥</span>
-        <code id="ext-key" style="flex:1;padding:4px 8px;background:#fef3c7;border-radius:6px;font-size:11px"></code>
-        <button class="copy-btn" onclick="copyExt('key')">📋</button>
-      </div>
-      <div class="api-field" style="margin-top:6px">
-        <span class="api-label">数据格式</span>
-        <code id="ext-body" style="flex:1;padding:4px 8px;background:#eff6ff;border-radius:6px;font-size:10px;word-break:break-all;white-space:pre-wrap"></code>
-        <button class="copy-btn" onclick="copyExt('body')">📋</button>
-      </div>
-      <div class="api-field" style="margin-top:6px">
-        <span class="api-label">curl</span>
-        <code id="ext-curl" style="flex:1;padding:4px 8px;background:#1a2438;color:#e2e8f0;border-radius:6px;font-size:10px;word-break:break-all;white-space:pre-wrap"></code>
-        <button class="copy-btn" onclick="copyExt('curl')">📋</button>
-      </div>
-    </div>
-    <div class="mgmt-section">
       <h3>🏪 门店管理</h3>
       <div id="mgmt-stores"></div>
       <div class="mgmt-pill-row">
@@ -478,6 +457,61 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     <div class="mgmt-section">
       <h3>📋 操作日志</h3>
       <div id="op-log"></div>
+    </div>
+  </div>
+
+  <!-- ====== 外部对接面板 ====== -->
+  <div class="panel" id="panel-ext">
+    <div class="mgmt-section">
+      <h3>🔗 外部对接</h3>
+      <div style="font-size:12px;color:#5a6b85;margin-bottom:10px;line-height:1.6">
+        外部系统可通过此接口推送流水记录。<b>仅接受流水数据</b>，门店和分类需在管理面板维护。
+      </div>
+      <button class="copy-btn copy-all-btn" onclick="copyAllDoc()" style="margin-bottom:12px">📋 一键复制接口文档</button>
+
+      <div class="api-field">
+        <span class="api-label">方法</span>
+        <code style="flex:1;padding:4px 8px;background:#e8f5e9;border-radius:6px;font-size:11px;font-weight:600">POST</code>
+      </div>
+      <div class="api-field" style="margin-top:6px">
+        <span class="api-label">地址</span>
+        <code id="ext-url" style="flex:1;padding:4px 8px;background:#f0f3f8;border-radius:6px;font-size:11px;word-break:break-all"></code>
+        <button class="copy-btn" onclick="copyExt('url')">📋</button>
+      </div>
+      <div class="api-field" style="margin-top:6px">
+        <span class="api-label">密钥</span>
+        <code id="ext-key" style="flex:1;padding:4px 8px;background:#fef3c7;border-radius:6px;font-size:11px"></code>
+        <button class="copy-btn" onclick="copyExt('key')">📋</button>
+      </div>
+
+      <div style="margin-top:10px;font-size:12px;color:#5a6b85;font-weight:600">📥 请求体 (JSON)</div>
+      <table class="api-table" style="width:100%;margin-top:6px;font-size:11px;border-collapse:collapse">
+        <tr style="background:#f8fafc"><th style="text-align:left;padding:4px 8px;border:1px solid #e2e8f0">字段</th><th style="text-align:left;padding:4px 8px;border:1px solid #e2e8f0">类型</th><th style="text-align:left;padding:4px 8px;border:1px solid #e2e8f0">必填</th><th style="text-align:left;padding:4px 8px;border:1px solid #e2e8f0">说明</th></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #e2e8f0"><code>records</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">数组</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">流水记录数组，一次可推多条</td></tr>
+        <tr style="background:#f8fafc"><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>id</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">字符串</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">唯一标识，用于去重（同ID重复推送自动忽略）</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>store</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">字符串</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">门店名称</td></tr>
+        <tr style="background:#f8fafc"><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>date</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">字符串</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">日期 YYYY-MM-DD</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>category</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">字符串</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">分类ID</td></tr>
+        <tr style="background:#f8fafc"><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>amount</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">数字</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">金额（收入+ / 支出-，由分类方向决定符号）</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>note</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">字符串</td><td style="padding:4px 8px;border:1px solid #e2e8f0"></td><td style="padding:4px 8px;border:1px solid #e2e8f0">备注（可为空）</td></tr>
+      </table>
+
+      <div style="margin-top:8px;font-size:11px;color:#8899b0">
+        <span style="font-weight:600">可用门店：</span><span id="ext-stores">加载中…</span>
+        <span style="margin-left:12px;font-weight:600">分类ID：</span><span id="ext-cats">加载中…</span>
+      </div>
+
+      <div style="margin-top:10px;font-size:12px;color:#5a6b85;font-weight:600">📤 响应</div>
+      <code style="display:block;padding:6px 8px;background:#f0f3f8;border-radius:6px;font-size:10px;margin-top:4px;white-space:pre-wrap">{"ok": true, "records": 1}</code>
+      <div style="font-size:10px;color:#8899b0;margin-top:2px"><code>records</code> 为成功入库的条数（已存在的ID不重复计入）</div>
+
+      <div style="margin-top:8px;font-size:12px;color:#5a6b85;font-weight:600">📋 示例</div>
+      <code id="ext-body" style="display:block;padding:6px 8px;background:#eff6ff;border-radius:6px;font-size:10px;margin-top:4px;white-space:pre-wrap"></code>
+      <button class="copy-btn" onclick="copyExt('body')" style="margin-top:4px">📋 复制 body</button>
+
+      <div style="margin-top:6px;font-size:12px;color:#5a6b85;font-weight:600">curl 命令</div>
+      <code id="ext-curl" style="display:block;padding:6px 8px;background:#1a2438;color:#e2e8f0;border-radius:6px;font-size:10px;margin-top:4px;white-space:pre-wrap"></code>
+      <button class="copy-btn" onclick="copyExt('curl')" style="margin-top:4px">📋 复制 curl</button>
     </div>
   </div>
 
@@ -769,6 +803,15 @@ function syncFromAPI() {
   return false;
 }
 
+function reloadFromAPI() {
+  if (syncFromAPI()) {
+    saveData();  // localStorage 备份
+    refreshAll();
+  } else {
+    toast('API 加载失败，请刷新页面');
+  }
+}
+
 function updateSyncBar() {
   var tag = document.getElementById('sync-src');
   var time = document.getElementById('sync-time');
@@ -985,6 +1028,7 @@ function saveEntry() {
     var xhr = new XMLHttpRequest();
     xhr.open('POST', API_BASE + '/api/funds/records', true);
     xhr.setRequestHeader('Content-Type', 'application/json');
+    if (apiToken) xhr.setRequestHeader('Authorization', 'Bearer ' + apiToken);
     var payload = JSON.stringify({id:newId, store:store, date:date, category:catId, amount:amount, note:note});
     xhr.onload = function() {
       if (xhr.status === 200) {
@@ -1080,10 +1124,20 @@ function doDelete(id) {
     var xhr = new XMLHttpRequest();
     xhr.open('DELETE', API_BASE + '/api/funds/records/' + id, true);
     xhr.setRequestHeader('Content-Type', 'application/json');
+    if (apiToken) xhr.setRequestHeader('Authorization', 'Bearer ' + apiToken);
     xhr.onload = function() {
-      if (xhr.status === 200) showToast('🗑 已删除', 2000);
-      else showToast('⚠️ 删除失败 (' + xhr.status + ')', 2000, 'error');
+      if (xhr.status === 200) {
+        var resp = JSON.parse(xhr.responseText);
+        if (resp.deleted) {
+          showToast('🗑 已删除', 2000);
+        } else {
+          showToast('⚠️ 未找到记录，已从本地移除', 2000, 'error');
+        }
+      } else {
+        showToast('⚠️ 删除失败 (' + xhr.status + ')', 2000, 'error');
+      }
     };
+    xhr.onerror = function() { showToast('⚠️ 网络异常', 2000, 'error'); };
     xhr.send();
   } catch(e) {}
   refreshAll();
@@ -1110,13 +1164,13 @@ function renderRecords() {
     var cat = catMap[r.category] || {name:r.category, dir:r.amount>=0?'+':'-', color:'#8899b0'};
     var cls = cat.dir === '+' ? 'in' : 'out';
     var sign = r.amount >= 0 ? '+' : '';
-    html += '<div class="record-item" onclick="openEditPopup('+r.id+')">'
+    html += '<div class="record-item" onclick="openEditPopup(\''+r.id+'\')">'
       + '<span class="cat-dot '+cls+'"></span>'
       + '<div class="info">'
       + '<div class="top"><span>'+cat.name+'</span><span class="'+(r.amount>=0?'up':'down')+'">'+sign+r.amount.toLocaleString()+'</span></div>'
       + '<div class="bot">'+r.store+' · '+r.date+(r.note?' · '+r.note:'')+'</div>'
       + '</div>'
-      + '<span class="del" onclick="event.stopPropagation();deleteRecord('+r.id+')">✕</span>'
+      + '<span class="del" onclick="event.stopPropagation();deleteRecord(\''+r.id+'\')">✕</span>'
       + '</div>';
   });
   var info = q ? '找到 '+filtered.length+' 条' : '最近 30 条';
@@ -1154,6 +1208,7 @@ function saveEdit() {
     var xhr = new XMLHttpRequest();
     xhr.open('PUT', API_BASE + '/api/funds/records/' + editId, true);
     xhr.setRequestHeader('Content-Type', 'application/json');
+    if (apiToken) xhr.setRequestHeader('Authorization', 'Bearer ' + apiToken);
     xhr.onload = function() {
       if (xhr.status === 200) showToast('✅ 已修改', 1500, 'ok');
       else showToast('⚠️ 修改失败 (' + xhr.status + ')', 2000, 'error');
@@ -2836,8 +2891,10 @@ function deleteRule(i) {
 }
 
 function updateCatBudget(catId, val) {
-  var cat = findCat(catId);
-  if (cat) { cat.budget = parseInt(val)||0; saveData(); }
+  authXHR('PUT', '/api/funds/categories/'+catId, {budget: parseInt(val)||0}, function(xhr) {
+    var r = JSON.parse(xhr.responseText);
+    if (r.ok) { reloadFromAPI(); }
+  });
 }
 
 // ═══════════ 管理 ═══════════
@@ -2912,17 +2969,23 @@ function confirmMgmtSheet() {
     if (stores.indexOf(name) >= 0) return alert('已存在');
     stores.push(name);
     if (cmpStoresSel.indexOf(name) < 0) cmpStoresSel.push(name);
+    closeMgmtSheet();
+    saveData();
+    refreshAll();
+    return;
   } else if (mgmtMode === 'cat') {
     var dir = (document.getElementById('ms-dir')||{}).value || '-';
     var budget = parseInt((document.getElementById('ms-budget')||{}).value) || 0;
     var id = 'cat_'+Date.now();
-    var colors = ['#ef4444','#f59e0b','#8b5cf6','#3b82f6','#ec4899','#f97316','#14b8a6','#6366f1','#22c55e','#eab308'];
-    categories.push({id:id, name:name, dir:dir, color:colors[Math.floor(Math.random()*colors.length)], budget:budget, show:true});
+    closeMgmtSheet();
+    // 后端新建
+    authXHR('POST', '/api/funds/categories', {id:id, name:name, dir:dir, budget:budget, show:true}, function(xhr) {
+      var r = JSON.parse(xhr.responseText);
+      if (r.ok) { reloadFromAPI(); }
+      else { toast(r.error||'失败'); }
+    });
+    return;
   }
-
-  closeMgmtSheet();
-  saveData();
-  refreshAll();
 }
 
 function closeMgmtSheet() {
@@ -2931,7 +2994,13 @@ function closeMgmtSheet() {
 
 function toggleCatShow(id) {
   var cat = findCat(id);
-  if (cat) { cat.show = !cat.show; saveData(); refreshAll(); }
+  if (!cat) return;
+  var newShow = !cat.show;
+  authXHR('PUT', '/api/funds/categories/'+id, {show: newShow}, function(xhr) {
+    var r = JSON.parse(xhr.responseText);
+    if (r.ok) { reloadFromAPI(); }
+    else { toast('切换失败'); }
+  });
 }
 
 function delStore(name) {
@@ -2948,11 +3017,11 @@ function delCategory(id) {
   if (!cat) return;
   var cnt = records.filter(function(r){ return r.category === id; }).length;
   if (!confirm('删除分类「'+cat.name+'」？\n\n将同时删除该分类下 '+cnt+' 条流水记录及相关预警规则，不可恢复。')) return;
-  categories = categories.filter(function(c){ return c.id !== id; });
-  records = records.filter(function(r){ return r.category !== id; });
-  alertRules = alertRules.filter(function(r){ return r.cat !== id; });
-  saveData();
-  refreshAll();
+  authXHR('DELETE', '/api/funds/categories/'+id, undefined, function(xhr) {
+    var r = JSON.parse(xhr.responseText);
+    if (r.ok) { reloadFromAPI(); }
+    else { toast(r.error||'删除失败'); }
+  });
 }
 
 // ═══════════ 导入导出 ═══════════
@@ -2993,30 +3062,67 @@ function switchTab(tab) {
   currentTab = tab;
   var btns = document.querySelectorAll('.tab-bar button');
   btns.forEach(function(b,i){
-    b.className = ['entry','overview','compare','alerts','mgmt'][i]===tab ? 'on' : '';
+    b.className = ['entry','overview','compare','alerts','mgmt','ext'][i]===tab ? 'on' : '';
   });
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('on'); });
   document.getElementById('panel-'+tab).classList.add('on');
   if (tab === 'compare') { initCmpCanvas(); drawCompare(); }
-  if (tab === 'mgmt') { fetchLogs(); fillExtInfo(); }
+  if (tab === 'mgmt') { fetchLogs(); }
+  if (tab === 'ext') { fillExtInfo(); }
 }
 
 // ═══════════ 外部对接信息 ═══════════
 function fillExtInfo() {
   var base = window.location.origin + API_BASE;
-  document.getElementById('ext-url').textContent = base + '/api/external/push';
-  document.getElementById('ext-key').textContent = 'funds-v2-ext-2026';
-  document.getElementById('ext-curl').textContent =
-    'curl -X POST ' + base + '/api/external/push \\n' +
-    '  -H "X-API-Key: funds-v2-ext-2026" \\n' +
-    '  -H "Content-Type: application/json" \\n' +
+  var url = base + '/api/external/push';
+  var key = 'funds-v2-ext-2026';
+  
+  document.getElementById('ext-url').textContent = url;
+  document.getElementById('ext-key').textContent = key;
+  
+  // 动态生成示例 body（每分类一条示例）
+  var storeName = stores[0] || '一店';
+  var dateStr = new Date().toISOString().slice(0,10);
+  var examples = [];
+  var cats = categories.filter(function(c){ return c.show !== 0; });
+  if (!cats.length) cats = [{id:'income',name:'收入',dir:'+'}];
+  
+  for (var ci = 0; ci < Math.min(cats.length, 3); ci++) {
+    var c = cats[ci];
+    var amt = c.dir === '+' ? 5800 : -3200;
+    examples.push(
+      '    {\n' +
+      '      "id": "' + dateStr.replace(/-/g,'') + '-' + String(ci+1).padStart(2,'0') + '",\n' +
+      '      "store": "' + storeName + '",\n' +
+      '      "date": "' + dateStr + '",\n' +
+      '      "category": "' + c.id + '",\n' +
+      '      "amount": ' + amt + ',\n' +
+      '      "note": "' + c.name + '"\n' +
+      '    }'
+    );
+  }
+  var body = '{\n  "records": [\n' + examples.join(',\n') + '\n  ]\n}';
+  document.getElementById('ext-body').textContent = body;
+
+  var curl = 'curl -X POST ' + url + ' \\\n' +
+    '  -H "X-API-Key: ' + key + '" \\\n' +
+    '  -H "Content-Type: application/json" \\\n' +
     '  -d @data.json';
-  document.getElementById('ext-body').textContent =
-    '{\\n' +
-    '  "store": "一店",\\n' +
-    '  "date": "2026-07-08",\\n' +
-    '  "amount": 5800\\n' +
-    '}';
+  document.getElementById('ext-curl').textContent = curl;
+  
+  // 动态填入可用门店和分类
+  var elS = document.getElementById('ext-stores');
+  var elC = document.getElementById('ext-cats');
+  if (elS && stores.length) elS.textContent = stores.join('、');
+  if (elC && categories.length) {
+    var catParts = [];
+    for (var i=0;i<categories.length;i++) {
+      var c = categories[i];
+      if (c.show === 0) continue;
+      catParts.push(c.id + '(' + c.name + ')');
+    }
+    elC.textContent = catParts.join('  ');
+  }
 }
 function copyExt(type) {
   var text = '';
@@ -3024,9 +3130,59 @@ function copyExt(type) {
   else if (type === 'key') text = document.getElementById('ext-key').textContent;
   else if (type === 'curl') text = document.getElementById('ext-curl').textContent;
   else if (type === 'body') text = document.getElementById('ext-body').textContent;
-  navigator.clipboard.writeText(text).then(function(){
-    showToast('已复制 ✅');
-  });
+  navigator.clipboard.writeText(text).then(function(){ showToast('已复制 ✅'); });
+}
+
+function copyAllDoc() {
+  var base = window.location.origin + API_BASE;
+  var url = base + '/api/external/push';
+  var key = 'funds-v2-ext-2026';
+  
+  var cats = categories.filter(function(c){ return c.show !== 0; });
+  var catList = [];
+  for (var i=0; i<cats.length; i++) {
+    catList.push('  ' + cats[i].id + ' — ' + cats[i].name + ' (' + (cats[i].dir==='+'?'收入':'支出') + ')');
+  }
+  
+  var doc = [
+    '# 门店资金 V2 — 外部对接接口文档',
+    '',
+    '## 基本信息',
+    '方法：POST',
+    '地址：' + url,
+    '密钥：' + key + '（Header: X-API-Key）',
+    '',
+    '## 可用门店',
+    stores.join('、'),
+    '',
+    '## 分类编码',
+    catList.join('\n'),
+    '',
+    '## 请求体 (JSON)',
+    '| 字段 | 类型 | 必填 | 说明 |',
+    '|------|------|------|------|',
+    '| records | array | ✓ | 流水记录数组，一次可推送多条 |',
+    '| records[].id | string | ✓ | 唯一标识，同ID重复推送自动去重 |',
+    '| records[].store | string | ✓ | 门店名称（见上） |',
+    '| records[].date | string | ✓ | 日期 YYYY-MM-DD |',
+    '| records[].category | string | ✓ | 分类编码（见上） |',
+    '| records[].amount | number | ✓ | 金额（收入+ / 支出-） |',
+    '| records[].note | string |   | 备注 |',
+    '',
+    '## 请求示例',
+    document.getElementById('ext-body').textContent,
+    '',
+    '## curl 示例',
+    document.getElementById('ext-curl').textContent,
+    '',
+    '## 响应',
+    '{"ok": true, "records": 1}',
+    '',
+    'records=成功入库条数，已存在的ID不计入。',
+    '推送超100条自动截断。'
+  ].join('\n');
+  
+  navigator.clipboard.writeText(doc).then(function(){ showToast('📋 接口文档已复制 ✅'); });
 }
 
 // ═══════════ 操作日志 ═══════════
