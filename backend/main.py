@@ -72,8 +72,11 @@ def is_public(path: str) -> bool:
     return path in PUBLIC_PATHS
 
 async def require_auth(request: Request):
-    """中间件：非公开路由需要有效 token"""
+    """中间件：非公开路由需要有效 token 或 X-API-Key"""
     if is_public(request.url.path):
+        return
+    # 允许外部 API Key
+    if request.headers.get("X-API-Key") == EXTERNAL_API_KEY:
         return
     token = request.headers.get("Authorization", "").replace("Bearer ", "")
     if not token:
@@ -356,6 +359,42 @@ async def delete_category(request: Request, cat_id: str):
         conn.execute("DELETE FROM alert_rules WHERE cat=?", (cat_id,))
         conn.commit()
         log_op("删除分类", "", f"{existing['name']} ({existing['dir']})", {"id": cat_id})
+        return {"ok": True}
+    finally:
+        conn.close()
+
+# ═══════════════ API: 门店增删 ═══════════════
+@app.post("/api/funds/stores")
+async def create_store(request: Request):
+    await require_auth(request)
+    data = await request.json()
+    name = (data.get("name", "") or "").strip()
+    if not name:
+        return {"ok": False, "error": "name required"}
+    conn = get_db()
+    try:
+        existing = conn.execute("SELECT id FROM stores WHERE name=?", (name,)).fetchone()
+        if existing:
+            return {"ok": False, "error": "已存在"}
+        conn.execute("INSERT INTO stores (name) VALUES (?)", (name,))
+        conn.commit()
+        log_op("新增门店", "-", name)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+@app.delete("/api/funds/stores/{name}")
+async def delete_store(request: Request, name: str):
+    await require_auth(request)
+    conn = get_db()
+    try:
+        existing = conn.execute("SELECT id FROM stores WHERE name=?", (name,)).fetchone()
+        if not existing:
+            return {"ok": False, "error": "store not found"}
+        conn.execute("DELETE FROM records WHERE store=?", (name,))
+        conn.execute("DELETE FROM stores WHERE name=?", (name,))
+        conn.commit()
+        log_op("删除门店", "-", name)
         return {"ok": True}
     finally:
         conn.close()

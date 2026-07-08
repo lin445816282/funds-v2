@@ -257,6 +257,27 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   pointer-events:none;max-width:90vw;text-align:center}
 .toast.show{opacity:1}
 .toast.error{background:#dc2626}
+
+/* ===== 排位 ===== */
+.rank-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:6px}
+.rank-wrap table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+.rank-wrap th,.rank-wrap td{padding:5px 2px;text-align:center;border-bottom:1px solid #eef2f7;word-break:break-all}
+.rank-wrap th{background:#f8fafc;font-weight:600;color:#5a6b85;font-size:10px}
+.rank-wrap td:first-child{color:#8899b0;font-size:10px}
+.rank-wrap td.rr{color:#ef4444;font-weight:700}
+.rank-wrap td.rg{color:#22c55e}
+.rank-wrap tbody tr:nth-child(even){background:#fafbfc}
+.rank-wrap tbody tr:last-child td{border-bottom:2px solid #cdd7e5}
+.rank-toggles{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0}
+.rank-toggle{padding:4px 10px;border-radius:12px;border:1px solid #cdd7e5;background:#f8fafc;font-size:11px;font-weight:600;color:#5a6b85;cursor:pointer;user-select:none}
+.rank-toggle.on{background:#1e3a5f;color:#fff;border-color:#1e3a5f}
+.rank-toggle:active{opacity:.85}
+.rank-page-info{text-align:center;font-size:11px;color:#8899b0;margin:6px 0}
+.rank-pager{display:flex;justify-content:center;gap:4px;margin:8px 0}
+.rank-pager button{min-width:28px;height:28px;border-radius:6px;border:1px solid #cdd7e5;background:#f8fafc;font-size:12px;font-weight:600;color:#5a6b85;cursor:pointer}
+.rank-pager button.on{background:#1e3a5f;color:#fff;border-color:#1e3a5f}
+.rank-pager button:disabled{opacity:.35;cursor:default}
+.rank-pager button:active:not(:disabled){opacity:.85}
 .toast.ok{background:#16a34a}
 /* 操作日志 */
 .log-list{max-height:360px;overflow-y:auto}
@@ -319,6 +340,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   <div class="tab-bar">
     <button class="on" onclick="switchTab('entry')">📝 录入</button>
     <button onclick="switchTab('overview')">📊 总览</button>
+    <button onclick="switchTab('ranking')">🏆 排位</button>
     <button onclick="switchTab('compare')">📈 对比</button>
     <button onclick="switchTab('alerts')">⚠️ 预警</button>
     <button onclick="switchTab('mgmt')">⚙️ 管理</button>
@@ -330,6 +352,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     <button class="mgmt-pill" style="width:100%;justify-content:center;margin-top:8px" onclick="openEntryPopup()">＋ 记一笔</button>
     <input class="search-input" id="search-records" placeholder="🔍 搜索 门店/日期/备注..." oninput="renderRecords()" style="width:100%;padding:10px 14px;border:1px solid #cdd7e5;border-radius:10px;font-size:14px;margin-top:8px;background:#f8fafc">
     <div class="record-list" id="record-list"></div>
+    <div class="rank-wrap" id="entry-rank"><div class="empty" style="padding:12px">加载排位...</div></div>
   </div>
 
   <!-- ====== 编辑弹窗 ====== -->
@@ -388,6 +411,11 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     </div>
     <!-- 门店卡片 -->
     <div class="ov-cards" id="ov-cards"></div>
+  </div>
+
+  <!-- ====== 排位面板 ====== -->
+  <div class="panel" id="panel-ranking">
+    <div class="rank-wrap" id="rank-content"><div class="empty">加载中...</div></div>
   </div>
 
   <!-- ====== 对比面板 ====== -->
@@ -976,6 +1004,7 @@ function seedMockData() {
 function refreshAll() {
   renderEntryForm();
   renderRecords();
+  loadRankingTo('entry-rank');
   renderOverview();
   renderCompare();
   renderAlerts();
@@ -1011,6 +1040,7 @@ function showToast(msg, ms, cls) {
   clearTimeout(toastTimer);
   if (ms) toastTimer = setTimeout(function(){ el.classList.remove('show'); }, ms);
 }
+function toast(msg, cls) { showToast(msg, 2000, cls||'error'); }
 
 function saveEntry() {
   var store = document.getElementById('ef-store').value;
@@ -2966,12 +2996,12 @@ function confirmMgmtSheet() {
   name = name.trim();
 
   if (mgmtMode === 'store') {
-    if (stores.indexOf(name) >= 0) return alert('已存在');
-    stores.push(name);
-    if (cmpStoresSel.indexOf(name) < 0) cmpStoresSel.push(name);
     closeMgmtSheet();
-    saveData();
-    refreshAll();
+    authXHR('POST', '/api/funds/stores', {name: name}, function(xhr) {
+      var r = JSON.parse(xhr.responseText);
+      if (r.ok) { toast('门店「'+name+'」已添加','ok'); reloadFromAPI(); }
+      else { toast(r.error||'失败'); }
+    });
     return;
   } else if (mgmtMode === 'cat') {
     var dir = (document.getElementById('ms-dir')||{}).value || '-';
@@ -3005,11 +3035,11 @@ function toggleCatShow(id) {
 
 function delStore(name) {
   if (!confirm('删除「'+name+'」及其所有记录？')) return;
-  stores = stores.filter(function(s){ return s !== name; });
-  records = records.filter(function(r){ return r.store !== name; });
-  cmpStoresSel = cmpStoresSel.filter(function(s){ return s !== name; });
-  saveData();
-  refreshAll();
+  authXHR('DELETE', '/api/funds/stores/'+encodeURIComponent(name), undefined, function(xhr) {
+    var r = JSON.parse(xhr.responseText);
+    if (r.ok) { reloadFromAPI(); }
+    else { toast(r.error||'删除失败'); }
+  });
 }
 
 function delCategory(id) {
@@ -3062,13 +3092,113 @@ function switchTab(tab) {
   currentTab = tab;
   var btns = document.querySelectorAll('.tab-bar button');
   btns.forEach(function(b,i){
-    b.className = ['entry','overview','compare','alerts','mgmt','ext'][i]===tab ? 'on' : '';
+    b.className = ['entry','overview','compare','alerts','mgmt','ext','ranking'][i]===tab ? 'on' : '';
   });
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('on'); });
   document.getElementById('panel-'+tab).classList.add('on');
+  if (tab === 'entry') { loadRankingTo('entry-rank'); }
   if (tab === 'compare') { initCmpCanvas(); drawCompare(); }
   if (tab === 'mgmt') { fetchLogs(); }
   if (tab === 'ext') { fillExtInfo(); }
+  if (tab === 'ranking') { loadRankingTo('rank-content'); }
+}
+
+// ═══════════ 排位 ═══════════
+var STORE_ORDER = ['一店','二店','三店','四店','五店','六店'];
+var RED_THRESHOLD = 25;
+var RANK_PAGE_SIZE = 60;
+var rankSelected = {};
+var rankPage = {};
+
+function fmtRank(v) {
+  var abs = Math.abs(v);
+  if (abs >= 10000) return (v/10000).toFixed(1) + '万';
+  if (abs >= 1000) return Number(v).toLocaleString();
+  return v;
+}
+
+function fmtDate(d) {
+  var p = d.split('-');
+  return p[0].slice(2) + '/' + parseInt(p[1]) + '/' + parseInt(p[2]);
+}
+
+function toggleRankStore(store, targetId) {
+  rankSelected[store] = !rankSelected[store];
+  var anyOn = false;
+  for (var k in rankSelected) { if (rankSelected[k]) anyOn = true; }
+  if (!anyOn) { rankSelected[store] = true; return; }
+  loadRankingTo(targetId);
+}
+
+function loadRankingTo(targetId, page) {
+  if (page === undefined) page = rankPage[targetId] || 0;
+  rankPage[targetId] = page;
+
+  var el = document.getElementById(targetId);
+  var storeOrder = STORE_ORDER;
+  if (stores && stores.length) storeOrder = stores.slice(0,6);
+
+  storeOrder.forEach(function(s){
+    if (!(s in rankSelected)) rankSelected[s] = true;
+  });
+
+  var activeStores = storeOrder.filter(function(s){ return rankSelected[s]; });
+
+  var byDate = {};
+  records.forEach(function(r){
+    if (r.category !== 'cat_1783487972049') return;
+    if (!byDate[r.date]) byDate[r.date] = {};
+    byDate[r.date][r.store] = r.amount;
+  });
+  var dates = Object.keys(byDate).sort().reverse();
+  if (!dates.length) { el.innerHTML = '<div class="empty">暂无排位数据</div>'; return; }
+
+  var totalPages = Math.ceil(dates.length / RANK_PAGE_SIZE);
+  var start = page * RANK_PAGE_SIZE;
+  var pageDates = dates.slice(start, start + RANK_PAGE_SIZE);
+
+  // 切换按钮
+  var h = '<div class="rank-toggles">';
+  storeOrder.forEach(function(s){
+    var on = rankSelected[s];
+    h += '<span class="rank-toggle'+(on?' on':'')+'" onclick="toggleRankStore(\''+s+'\',\''+targetId+'\')">'+s+'</span>';
+  });
+  h += '</div>';
+
+  // 分页信息
+  h += '<div class="rank-page-info">共 '+dates.length+' 天 · 第 '+(page+1)+'/'+totalPages+' 页</div>';
+
+  // 表格
+  h += '<div class="rank-wrap"><table>';
+  h += '<thead><tr><th>日期</th>';
+  activeStores.forEach(function(s){ h += '<th>'+s+'</th>'; });
+  h += '</tr></thead><tbody>';
+  pageDates.forEach(function(d){
+    h += '<tr><td>'+fmtDate(d)+'</td>';
+    activeStores.forEach(function(s){
+      var v = byDate[d][s];
+      if (v===undefined){ h += '<td>-</td>'; return; }
+      h += '<td class="'+(v>RED_THRESHOLD?'rr':'rg')+'">'+fmtRank(v)+'</td>';
+    });
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+
+  // 分页按钮
+  if (totalPages > 1) {
+    h += '<div class="rank-pager">';
+    h += '<button '+(page===0?'disabled':'')+' onclick="loadRankingTo(\''+targetId+'\','+(page-1)+')">◀</button>';
+    // 页码按钮（最多显示7个）
+    var pStart = Math.max(0, Math.min(page-3, totalPages-7));
+    var pEnd = Math.min(totalPages, pStart+7);
+    for (var i = pStart; i < pEnd; i++) {
+      h += '<button class="'+(i===page?'on':'')+'" onclick="loadRankingTo(\''+targetId+'\','+i+')">'+(i+1)+'</button>';
+    }
+    h += '<button '+(page>=totalPages-1?'disabled':'')+' onclick="loadRankingTo(\''+targetId+'\','+(page+1)+')">▶</button>';
+    h += '</div>';
+  }
+
+  el.innerHTML = h;
 }
 
 // ═══════════ 外部对接信息 ═══════════

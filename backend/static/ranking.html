@@ -3,113 +3,102 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>B级汇总排位</title>
+<title>排位</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;padding:12px}
-h2{text-align:center;font-size:18px;margin-bottom:12px;color:#f8fafc}
-.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{width:100%;border-collapse:collapse;font-size:13px;min-width:600px}
-th,td{padding:8px 6px;text-align:center;white-space:nowrap;border-bottom:1px solid #1e293b}
-th{background:#1e293b;position:sticky;top:0;z-index:2;font-weight:600;color:#94a3b8}
-th:first-child,td:first-child{position:sticky;left:0;background:#0f172a;z-index:1;text-align:left;padding-left:10px}
-th:first-child{z-index:3;background:#1e293b}
-td:first-child{color:#94a3b8;font-size:12px}
-td.red{color:#ef4444;font-weight:700}
-td.green{color:#22c55e}
-.loading{text-align:center;padding:40px;color:#64748b}
-.error{text-align:center;padding:40px;color:#ef4444}
-.summary-row td{background:#1e293b;font-weight:600;border-top:2px solid #334155}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#e4edf7;color:#1a2438;max-width:420px;margin:0 auto;min-height:100vh;padding:12px}
+h2{font-size:16px;margin-bottom:8px}
+.rank-toggles{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0}
+.rank-toggle{padding:4px 10px;border-radius:12px;border:1px solid #cdd7e5;background:#f8fafc;font-size:11px;font-weight:600;color:#5a6b85;cursor:pointer;user-select:none}
+.rank-toggle.on{background:#1e3a5f;color:#fff;border-color:#1e3a5f}
+.rank-toggle:active{opacity:.85}
+.rank-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:4px}
+.rank-wrap table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+.rank-wrap th,.rank-wrap td{padding:5px 2px;text-align:center;border-bottom:1px solid #eef2f7;word-break:break-all}
+.rank-wrap th{background:#f8fafc;font-weight:600;color:#5a6b85;font-size:10px}
+.rank-wrap td:first-child{color:#8899b0;font-size:10px}
+.rank-wrap td.rr{color:#ef4444;font-weight:700}
+.rank-wrap td.rg{color:#22c55e}
+.rank-wrap tbody tr:nth-child(even){background:#fafbfc}
+.rank-wrap tbody tr:last-child td{border-bottom:2px solid #cdd7e5}
+.loading,.empty{text-align:center;padding:24px;color:#8899b0;font-size:13px}
 </style>
 </head>
 <body>
-<h2>B级汇总 · 每日排位</h2>
+<h2>🏆 排位</h2>
 <div id="app"><div class="loading">加载中...</div></div>
 
 <script>
 const API = '/funds-v2/api/funds/data';
 const RED_THRESHOLD = 25;
 const STORE_ORDER = ['一店','二店','三店','四店','五店','六店'];
+let rankSelected = {};
+
+function fmtRank(v) {
+  var abs = Math.abs(v);
+  if (abs >= 10000) return (v/10000).toFixed(1) + '万';
+  if (abs >= 1000) return Number(v).toLocaleString();
+  return v;
+}
+
+function toggle(store) {
+  rankSelected[store] = !rankSelected[store];
+  var anyOn = false;
+  for (var k in rankSelected) { if (rankSelected[k]) anyOn = true; }
+  if (!anyOn) { rankSelected[store] = true; return; }
+  renderTable();
+}
+
+var allData = null;
 
 async function load() {
   try {
-    // 尝试用已登录session（当前页面在funds-v2域下）
     let token = localStorage.getItem('funds_token');
-    let headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+    let headers = { 'X-API-Key': 'funds-v2-ext-2026' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
     let resp = await fetch(API, { headers });
-    if (resp.status === 401) {
-      // 未登录，用外部API key
-      resp = await fetch('/funds-v2/api/external/push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': 'funds-v2-ext-2026' },
-        body: '{}'
-      });
-      // 如果external push可用，说明API key有效，尝试拿数据
-      let dataResp = await fetch('/funds-v2/api/funds/data');
-      if (dataResp.status === 200) {
-        render(await dataResp.json());
-        return;
-      }
-      document.getElementById('app').innerHTML = '<div class="error">请先登录 funds-v2</div>';
-      return;
-    }
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    render(await resp.json());
+    allData = await resp.json();
+    renderTable();
   } catch(e) {
-    document.getElementById('app').innerHTML = '<div class="error">加载失败: ' + e.message + '</div>';
+    document.getElementById('app').innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
   }
 }
 
-function render(data) {
-  const records = (data.records || []).filter(r => r.id && r.id.includes('B级汇总'));
+function renderTable() {
+  const storeOrder = (allData.stores && allData.stores.length) ? allData.stores.slice(0,6) : STORE_ORDER;
+  storeOrder.forEach(function(s){ if (!(s in rankSelected)) rankSelected[s] = true; });
+  const activeStores = storeOrder.filter(function(s){ return rankSelected[s]; });
 
-  // 按日期分组
+  const records = (allData.records || []).filter(r => r.category === 'cat_1783487972049');
   const byDate = {};
-  for (const r of records) {
+  records.forEach(r => {
     if (!byDate[r.date]) byDate[r.date] = {};
     byDate[r.date][r.store] = r.amount;
-  }
-
+  });
   const dates = Object.keys(byDate).sort().reverse();
   if (!dates.length) {
-    document.getElementById('app').innerHTML = '<div class="error">暂无B级汇总数据</div>';
+    document.getElementById('app').innerHTML = '<div class="empty">暂无排位数据</div>';
     return;
   }
 
-  // 计算各门店合计
-  const totals = {};
-  for (const s of STORE_ORDER) totals[s] = 0;
-  for (const d of dates) {
-    for (const s of STORE_ORDER) {
-      totals[s] += (byDate[d][s] || 0);
-    }
-  }
-
-  let html = '<div class="table-wrap"><table>';
+  let html = '<div class="rank-toggles">';
+  storeOrder.forEach(s => {
+    html += '<span class="rank-toggle'+(rankSelected[s]?' on':'')+'" onclick="toggle(\''+s+'\')">'+s+'</span>';
+  });
+  html += '</div><div class="rank-wrap"><table>';
   html += '<thead><tr><th>日期</th>';
-  for (const s of STORE_ORDER) html += `<th>${s}</th>`;
+  activeStores.forEach(s => { html += '<th>'+s+'</th>'; });
   html += '</tr></thead><tbody>';
-
-  for (const d of dates) {
-    html += `<tr><td>${d.slice(5)}</td>`;
-    for (const s of STORE_ORDER) {
-      const v = byDate[d][s] !== undefined ? byDate[d][s] : '';
-      if (v === '') { html += '<td>-</td>'; continue; }
-      const cls = v > RED_THRESHOLD ? 'red' : 'green';
-      html += `<td class="${cls}">${Number(v).toLocaleString()}</td>`;
-    }
+  dates.forEach(d => {
+    html += '<tr><td>'+d.slice(5).replace(/-0?/g,'/')+'</td>';
+    activeStores.forEach(s => {
+      const v = byDate[d][s];
+      if (v === undefined) { html += '<td>-</td>'; return; }
+      html += '<td class="'+(v>RED_THRESHOLD?'rr':'rg')+'">'+fmtRank(v)+'</td>';
+    });
     html += '</tr>';
-  }
-
-  // 合计行
-  html += '<tr class="summary-row"><td>合计</td>';
-  for (const s of STORE_ORDER) {
-    const v = totals[s];
-    const cls = v > RED_THRESHOLD ? 'red' : 'green';
-    html += `<td class="${cls}">${Number(v).toLocaleString()}</td>`;
-  }
-  html += '</tr>';
-
+  });
   html += '</tbody></table></div>';
   document.getElementById('app').innerHTML = html;
 }
