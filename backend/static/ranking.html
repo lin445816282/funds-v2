@@ -31,7 +31,7 @@ h2{font-size:16px;margin-bottom:8px}
 <script>
 const API = '/funds-v2/api/funds/data';
 const RED_THRESHOLD = 25;
-const STORE_ORDER = ['一店','二店','三店','四店','五店','六店'];
+const STORE_ORDER = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
 let rankSelected = {};
 
 function fmtRank(v) {
@@ -66,7 +66,7 @@ async function load() {
 }
 
 function renderTable() {
-  const storeOrder = (allData.stores && allData.stores.length) ? allData.stores.slice(0,6) : STORE_ORDER;
+  const storeOrder = (allData.stores && allData.stores.length) ? allData.stores.slice(0,8) : STORE_ORDER;
   storeOrder.forEach(function(s){ if (!(s in rankSelected)) rankSelected[s] = true; });
   const activeStores = storeOrder.filter(function(s){ return rankSelected[s]; });
 
