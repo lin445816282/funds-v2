@@ -3105,7 +3105,6 @@ function switchTab(tab) {
 }
 
 // ═══════════ 排位 ═══════════
-var STORE_ORDER = ['一店','二店','三店','四店','五店','六店'];
 var RED_THRESHOLD = 25;
 var RANK_PAGE_SIZE = 60;
 var rankSelected = {};
@@ -3136,8 +3135,7 @@ function loadRankingTo(targetId, page) {
   rankPage[targetId] = page;
 
   var el = document.getElementById(targetId);
-  var storeOrder = STORE_ORDER;
-  if (stores && stores.length) storeOrder = stores.slice(0,6);
+  var storeOrder = stores && stores.length ? stores.slice(0) : [];
 
   storeOrder.forEach(function(s){
     if (!(s in rankSelected)) rankSelected[s] = true;
