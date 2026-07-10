@@ -1,8 +1,11 @@
 """funds-v2 独立服务 — 多门店资金看板 + 预测数据 API"""
-import os, json, uuid, secrets
+import os, json, uuid, secrets, asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import FileResponse, JSONResponse
+
+_executor = ThreadPoolExecutor(max_workers=2)
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 
@@ -488,6 +491,33 @@ async def index_predictions(days: int = 30):
     ).fetchall()
     conn.close()
     return {"data": [dict(r) for r in rows], "count": len(rows)}
+
+# ═══════════════ 总部出手模拟 ═══════════════
+from simulate import get_simulate_data, run_optimize, run_manual
+
+@app.get("/api/simulate/data")
+async def api_simulate_data(days: int = 90):
+    return get_simulate_data(days)
+
+@app.post("/api/simulate/optimize")
+async def api_simulate_optimize(request: Request):
+    data = await request.json()
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: run_optimize(
+        days=data.get("days", 90),
+        mode=data.get("mode", "positive"),
+        algorithm=data.get("algorithm", "coordinate")
+    ))
+
+@app.post("/api/simulate/manual")
+async def api_simulate_manual(request: Request):
+    data = await request.json()
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: run_manual(
+        stores_config=data.get("stores", []),
+        days=data.get("days", 90),
+        algorithm=data.get("algorithm")
+    ))
 
 # ═══════════════ Static + SPA ═══════════════
 STATIC_DIR = os.path.join(BASE_DIR, "static")

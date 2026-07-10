@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>总部出手模拟 · 设计文档</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;background:#f5f7fa;color:#333;padding:12px;line-height:1.7;font-size:14px}
+h1{font-size:18px;color:#1a1a2e;margin:8px 0;text-align:center}
+h2{font-size:15px;color:#1e3a5f;margin:20px 0 8px;padding:6px 10px;background:#e8f0fe;border-left:4px solid #3b82f6;border-radius:0 6px 6px 0}
+h3{font-size:13px;color:#555;margin:12px 0 6px}
+table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+th,td{padding:7px 8px;text-align:center;border-bottom:1px solid #eee}
+th{background:#3b82f6;color:#fff;font-weight:600;font-size:11px}
+td{color:#333}
+td.g{color:#16a34a;font-weight:700}
+td.r{color:#dc2626;font-weight:700}
+.card{background:#fff;border-radius:10px;padding:10px 12px;margin:6px 0;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+pre{background:#1a1a2e;color:#c9d1d9;padding:10px;border-radius:8px;font-size:11px;overflow-x:auto;line-height:1.5;margin:6px 0}
+code{background:#e8e8e8;padding:1px 5px;border-radius:4px;font-size:11px}
+.note{font-size:11px;color:#888;margin:4px 0}
+.highlight{padding:8px 10px;border-radius:6px;margin:6px 0;font-size:12px;line-height:1.6}
+.hl-y{background:#fef9c3;border:1px solid #fde047}
+.hl-g{background:#dcfce7;border:1px solid #86efac}
+.step{margin:4px 0;padding:4px 0;font-size:12px}
+.step b{color:#3b82f6}
+.store-tag{display:inline-block;background:#1e3a5f;color:#fff;padding:3px 10px;border-radius:12px;font-size:11px;margin:2px 3px;font-weight:600}
+.grid{overflow:hidden;border-radius:8px}
+.grid table td{background:#f9fafb;font-size:13px;padding:8px}
+.grid table td b{display:block;font-size:16px;color:#1e3a5f}
+.footer{text-align:center;color:#aaa;font-size:11px;margin-top:20px;padding:10px}
+</style>
+</head>
+<body>
+
+<p class="note" style="text-align:center">v1.0 · 2026-07-10 · 待开发</p>
+<h1>🎯 总部出手模拟系统</h1>
+
+<!-- ═══════════════ 一 ═══════════════ -->
+<h2>一、对赌协议</h2>
+<table>
+<tr><th>条件</th><th>结果</th><th>公式</th></tr>
+<tr><td class="g">draw ≤ 25</td><td class="g">命中·盈利</td><td>+ (配资 × 25 × 0.88)</td></tr>
+<tr><td class="r">draw > 25</td><td class="r">未中·亏损</td><td>− (配资 × 25)</td></tr>
+</table>
+
+<h3>收益/亏损矩阵</h3>
+<table>
+<tr><th>配资档</th><th>命中收益</th><th>未中亏损</th></tr>
+<tr><td>10 万</td><td class="g">+220 万</td><td class="r">−250 万</td></tr>
+<tr><td>20 万</td><td class="g">+440 万</td><td class="r">−500 万</td></tr>
+<tr><td>40 万</td><td class="g">+880 万</td><td class="r">−1000 万</td></tr>
+</table>
+
+<h3>期望值（10万为例）</h3>
+<div class="card">
+<pre>EV = 配资 × 25 × (P(≤25)×0.88 − P(>25))
+   = 250万 × (0.55×0.88 − 0.45)
+   = 250万 × 0.034
+   = +8.5万 / 次</pre>
+</div>
+
+<!-- ═══════════════ 二 ═══════════════ -->
+<h2>二、规则约束</h2>
+<table>
+<tr><th>约束</th><th>值</th><th>说明</th></tr>
+<tr><td>轮次</td><td>每天 1 轮</td><td>逐日独立计算</td></tr>
+<tr><td>每轮出手</td><td>≤ 3 次</td><td>选 ≤3 店，可重同店</td></tr>
+<tr><td>每店每天</td><td>≤ 3 次</td><td>同店可连续出手</td></tr>
+<tr><td>总轮数</td><td>90 轮</td><td>90 天全部参与</td></tr>
+<tr><td>资金</td><td>不限</td><td>总部资金管够</td></tr>
+</table>
+
+<h3>示例：7月9日出任</h3>
+<div class="card">
+<pre>draw = 16 ≤ 25 ✅ 全中
+  一店 × 40万 → +880万
+  一店 × 20万 → +440万
+  三店 × 10万 → +220万
+  ────────────────────
+  当日总收益：+1,540万</pre>
+</div>
+
+<!-- ═══════════════ 三 ═══════════════ -->
+<h2>三、数据源</h2>
+<table>
+<tr><th>来源</th><th>表·字段</th><th>内容</th></tr>
+<tr><td>funds-v2 (8009)</td><td><code>records</code> · 排位(汇总)</td><td>8店 × 90天排位值</td></tr>
+<tr><td>warehouse (8016)</td><td><code>analysis_daily</code> · draw_number</td><td>90天抽签号码</td></tr>
+</table>
+
+<h3>8 家门店</h3>
+<p>
+<span class="store-tag">一店</span><span class="store-tag">二店</span><span class="store-tag">三店</span><span class="store-tag">四店</span>
+<span class="store-tag">五店</span><span class="store-tag">六店</span><span class="store-tag">集合14</span><span class="store-tag">集合16</span>
+</p>
+
+<h3>实测画像（2026-04-11 ~ 07-09，90天）</h3>
+<div class="grid">
+<table>
+<tr><td><b>90/90</b>有效天数</td><td><b>93%</b>有达标店天</td></tr>
+<tr><td><b>4.0</b>日均达标店</td><td><b style="color:#16a34a">54.8%</b>命中率</td></tr>
+<tr><td><b>51.0%</b>理论命中率</td><td><b style="color:#16a34a">+7.4万</b>单次期望</td></tr>
+</table>
+</div>
+<div class="highlight hl-g">✅ 实际命中率 54.8% > 理论 51.0%，EV 为正，策略可行</div>
+
+<!-- ═══════════════ 四 ═══════════════ -->
+<h2>四、决策变量</h2>
+<table>
+<tr><th>参数</th><th>取值范围</th><th>含义</th></tr>
+<tr><td><code>threshold</code></td><td>1 ~ 49</td><td>排位触发门槛</td></tr>
+<tr><td><code>capital</code></td><td>10 / 20 / 40</td><td>出手配资金额（万）</td></tr>
+<tr><td><code>mode</code></td><td>正 / 反</td><td>正=排位≤阈值出手<br>反=排位>阈值出手</td></tr>
+</table>
+<p class="note">
+  单店搜参空间：<b>49 × 3 × 2 = 294</b> 种<br>
+  8店全组合：<b>294⁸</b> → 不可暴力 → 用坐标下降法
+</p>
+
+<!-- ═══════════════ 五 ═══════════════ -->
+<h2>五、优化算法</h2>
+
+<h3>5.1 双层架构</h3>
+<div class="highlight hl-y">
+  <b>外层：</b>优化每店参数 (threshold, capital, mode)<br>
+  <b>内层：</b>给定参数下，逐日模拟 90 天 → 输出总收益
+</div>
+
+<h3>5.2 内层模拟（逐日贪心）</h3>
+<p class="step"><b>①</b> 每日过滤：每店根据 (threshold, mode) 判断是否达标</p>
+<p class="step"><b>②</b> 排序：达标店按 capital 降序（资金越大优先）</p>
+<p class="step"><b>③</b> 选店：取前 3 名，分配各自 capital</p>
+<p class="step"><b>④</b> 结算：对照当日 draw，计算盈亏</p>
+<p class="step"><b>⑤</b> 累加：90 天后汇总总收益</p>
+
+<div class="highlight hl-g">
+  💡 <b>关键洞察：</b>所有门店的 EV 相同（只取决于 draw），选店按 capital 降序即可。优化本质是找出「哪些店的阈值能让它在更多命中日出任」。
+</div>
+
+<h3>5.3 外层优化（坐标下降法）</h3>
+<p class="step"><b>① 初始化：</b>每店随机 (threshold, capital, mode)</p>
+<p class="step"><b>② 迭代至收敛：</b>对每店 S → 固定其他 7 店 → 遍历 S 的 294 种组合 → 取总收益最大者 → 更新 S</p>
+<p class="step"><b>③ 输出：</b>最优参数 + 总收益 + 每店明细</p>
+
+<p class="note">⏱ 8×294×90 ≈ 21万次/轮 · 5~10轮 ≈ <b>1~2秒</b>（Python 纯计算）</p>
+
+<h3>5.4 防过拟合</h3>
+<p class="note">• 720 数据点（90天×8店），覆盖多种市场周期<br>• 可选 walk-forward 验证：前60天训练 → 后30天验证</p>
+
+<!-- ═══════════════ 六 ═══════════════ -->
+<h2>六、API 设计</h2>
+<table>
+<tr><th>方法</th><th>路径</th><th>说明</th></tr>
+<tr>
+  <td><b style="color:#3b82f6">GET</b></td>
+  <td><code>/api/simulate/data</code></td>
+  <td style="text-align:left;font-size:11px">取90天排位+抽签数据</td>
+</tr>
+<tr>
+  <td><b style="color:#16a34a">POST</b></td>
+  <td><code>/api/simulate/optimize</code></td>
+  <td style="text-align:left;font-size:11px">跑优化算法<br>入参：{days:90, mode:"positive"}<br>返回：最优参数+结果+明细</td>
+</tr>
+<tr>
+  <td><b style="color:#16a34a">POST</b></td>
+  <td><code>/api/simulate/manual</code></td>
+  <td style="text-align:left;font-size:11px">手动设参跑一次<br>入参：{stores:[{name,threshold,capital,mode}]}</td>
+</tr>
+</table>
+
+<!-- ═══════════════ 七 ═══════════════ -->
+<h2>七、前端设计</h2>
+<h3>模拟面板（新增 Tab：🎯 模拟）</h3>
+<div class="card">
+<pre>┌──────────────────────────────┐
+│ 🎯 总部出手模拟              │
+│ 2026-04-11 ~ 2026-07-09      │
+│ 模式: [正帮扶 ▾]             │
+│ ──────────────────────────── │
+│ 门店    阈值  配资   收益     │
+│ 一店 [15▼] [40万] +3,520万  │
+│ 二店 [28▼] [20万]   +440万  │
+│ 三店 [22▼] [10万]   -500万  │
+│ ──────────────────────────── │
+│ 📊 总: +5,280万  🎯 68%      │
+│ ⚡ 回撤: -2,000万            │
+│ [🚀一键优化] [▶手动模拟]     │
+└──────────────────────────────┘</pre>
+</div>
+
+<!-- ═══════════════ 八 ═══════════════ -->
+<h2>八、部署方案</h2>
+<table>
+<tr><th>层</th><th>位置</th></tr>
+<tr><td>后端</td><td style="text-align:left">funds-v2/backend/main.py（8009）<br>新增 /api/simulate/* 路由 + simulate.py</td></tr>
+<tr><td>前端</td><td style="text-align:left">funds-v2.html 新增「🎯 模拟」Tab</td></tr>
+<tr><td>数据</td><td style="text-align:left">跨库查询：funds-v2.db + warehouse.db</td></tr>
+<tr><td>线上</td><td style="text-align:left">https://www.ct256.cn/funds-v2</td></tr>
+</table>
+
+<!-- ═══════════════ 九 ═══════════════ -->
+<h2>九、变更记录</h2>
+<table>
+<tr><th>版本</th><th>日期</th><th>变更</th></tr>
+<tr><td>v1.0</td><td>2026-07-10</td><td>初始设计文档</td></tr>
+</table>
+
+<div class="footer">总部出手模拟 · 设计文档 v1.0</div>
+
+</body>
+</html>
