@@ -493,7 +493,7 @@ async def index_predictions(days: int = 30):
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
 # ═══════════════ 总部出手模拟 ═══════════════
-from simulate import get_simulate_data, run_optimize, run_manual
+from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history
 
 @app.get("/api/simulate/data")
 async def api_simulate_data(days: int = 90):
@@ -518,6 +518,16 @@ async def api_simulate_manual(request: Request):
         days=data.get("days", 90),
         algorithm=data.get("algorithm")
     ))
+
+@app.get("/api/simulate/daily-guide")
+async def api_daily_guide(days: int = 90, mode: str = "positive"):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: run_daily_guide(days, mode))
+
+@app.get("/api/simulate/guide-history")
+async def api_guide_history(limit: int = 30, mode: str = None, offset: int = 0):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: get_guide_history(limit, mode, offset))
 
 # ═══════════════ Static + SPA ═══════════════
 STATIC_DIR = os.path.join(BASE_DIR, "static")

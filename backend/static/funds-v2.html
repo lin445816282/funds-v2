@@ -602,13 +602,15 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     <!-- 算法选项 -->
     <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
       <span style="font-size:12px;color:#5a6b85;white-space:nowrap">算法：</span>
-      <select id="sim-algo" style="flex:1;padding:8px 10px;border:1px solid #cdd7e5;border-radius:10px;font-size:13px;background:#f8fafc;color:#1a2438">
-        <option value="coordinate">坐标下降（每店独立搜参）</option>
-        <option value="uniform">等权参数（8店相同阈值/配资）</option>
-        <option value="positive_only">仅正帮扶（不用反帮扶）</option>
-        <option value="stop_neg2">负负止损（连续2天亏即停）</option>
+      <select id="sim-algo" style="flex:1;padding:8px 10px;border:1px solid #cdd7e5;border-radius:10px;font-size:13px;background:#f8fafc;color:#1a2438" onchange="updateAlgoHint()">
+        <option value="coordinate">快速坐标下降（每家店独立调参）</option>
+        <option value="uniform">等权统一（所有店用相同参数）</option>
+        <option value="positive_only">仅正向出手（只在排位好时出手）</option>
+        <option value="stop_neg2">连亏止损（连续2天亏即停）</option>
       </select>
     </div>
+    <div id="algo-hint" style="margin-top:6px;padding:10px 14px;background:#f0f7ff;border-left:3px solid #3b82f6;border-radius:0 8px 8px 0;font-size:12px;color:#4a6a8a;line-height:1.7"></div>
+    <div style="text-align:right;font-size:9px;color:#bcc5d0;margin-top:2px">v2 · 精简版</div>
 
     <!-- 门店参数表 -->
     <div class="entry-form" style="margin-top:8px" id="sim-store-table"></div>
@@ -623,11 +625,48 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
       <div class="btn-row">
         <button class="btn-save" onclick="runSimOptimize()" id="sim-optimize-btn">🚀 一键优化</button>
         <button class="btn-clear" onclick="runSimManual()" id="sim-manual-btn">▶ 手动模拟</button>
+        <button class="btn-clear" onclick="runDailyGuide()" id="sim-guide-btn">📋 下单指南</button>
+        <button class="btn-clear" onclick="runDailyGuideNegative()" id="sim-guide-neg-btn" style="background:#fef2f2;color:#dc2626">📋 反帮扶</button>
+      </div>
+      <div class="btn-row" style="margin-top:4px">
+        <button class="btn-save" onclick="loadGuideCompare()" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;flex:1">⚖️ 正负帮扶对比</button>
       </div>
     </div>
 
     <!-- 每日明细（可折叠） -->
     <div id="sim-daily" style="margin-top:8px;display:none"></div>
+  </div>
+
+  <!-- 下单指南弹窗 -->
+  <div class="modal-mask hide" id="guide-modal" onclick="if(event.target===this)this.classList.add('hide')">
+    <div class="modal-box" style="width:95%;max-width:480px;max-height:85vh;overflow-y:auto;padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="margin:0">📋 下单指南</h3>
+        <span id="guide-freshness" style="font-size:10px;color:#94a3b8"></span>
+      </div>
+      <div id="guide-content" style="font-size:13px;line-height:1.7;color:#1e3a5f"></div>
+      <div id="guide-history" style="display:none;font-size:13px;line-height:1.7;color:#1e3a5f;margin-top:8px"></div>
+      <div class="modal-btns" style="margin-top:12px">
+        <button onclick="refreshGuide()" style="flex:1;background:#e8f5e9;color:#2e7d32;font-size:13px">🔄 刷新</button>
+        <button onclick="loadGuideHistory()" style="flex:1;background:#f8fafc;color:#3a5070;font-size:13px">📜 历史</button>
+        <button onclick="document.getElementById('guide-modal').classList.add('hide')" style="flex:1;background:#f1f5f9;color:#3a5070">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 正负帮扶对比弹窗 -->
+  <div class="modal-mask hide" id="compare-modal" onclick="if(event.target===this)this.classList.add('hide')">
+    <div class="modal-box" style="width:95%;max-width:520px;max-height:85vh;overflow-y:auto;padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="margin:0">⚖️ 正负帮扶对比</h3>
+        <span id="compare-freshness" style="font-size:10px;color:#94a3b8"></span>
+      </div>
+      <div id="compare-content" style="font-size:13px;line-height:1.7;color:#1e3a5f"></div>
+      <div class="modal-btns" style="margin-top:12px">
+        <button onclick="loadGuideCompare()" style="flex:1;background:#e8f5e9;color:#2e7d32;font-size:13px">🔄 刷新</button>
+        <button onclick="document.getElementById('compare-modal').classList.add('hide')" style="flex:1;background:#f1f5f9;color:#3a5070">关闭</button>
+      </div>
+    </div>
   </div>
 
   <!-- ====== 文档面板 ====== -->
@@ -693,7 +732,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
         <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center;font-family:monospace;font-size:11px">capital</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">10/20/40</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">配资金额(万)</td></tr>
         <tr><td style="padding:5px;text-align:center;font-family:monospace;font-size:11px">mode</td><td style="padding:5px;text-align:center">正/反</td><td style="padding:5px;font-size:11px;text-align:center">正=≤阈值出手<br>反=>阈值出手</td></tr>
       </table>
-      <p style="font-size:11px;color:#8899b0;margin:4px 0">单店搜参：<b>49×3×2=294</b>种 · 8店全组合 <b>294⁸</b> → 坐标下降</p>
+      <p style="font-size:11px;color:#8899b0;margin:4px 0">单店搜参：<b>10×3×2=60</b>种 · 8店全组合 <b>60⁸</b> → 坐标下降（精简版，秒级完成）</p>
 
       <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">五、优化算法</h3>
       <div style="padding:6px 10px;background:#fef9c3;border:1px solid #fde047;border-radius:6px;font-size:11px;margin:4px 0"><b>外层：</b>优化每店参数 · <b>内层：</b>给定参数→逐日90天→总收益</div>
@@ -707,13 +746,14 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
       </div>
       <div style="padding:6px 10px;background:#dcfce7;border:1px solid #86efac;border-radius:6px;font-size:11px;margin:6px 0">💡 所有店EV相同（只取决于draw），选店按capital降序。优化本质：找「哪些店阈值让它在更多命中日出任」</div>
 
-      <p style="font-size:11px;margin:8px 0 4px"><b style="color:#3b82f6">外层（坐标下降）：</b></p>
+      <p style="font-size:11px;margin:8px 0 4px"><b style="color:#3b82f6">外层（坐标下降精简版）：</b></p>
       <div style="font-size:11px;line-height:1.8;padding:0 4px">
-        ① 初始化每店随机参数<br>
-        ② 迭代：固定其他7店→遍历294种组合→取最优<br>
-        ③ 输出最优参数+总收益
+        ① 初始化每店随机参数（从10个阈值档位中随机）<br>
+        ② 迭代：固定其他7店→遍历60种组合→取最优<br>
+        ③ 输出最优参数+总收益<br>
+        ④ 支持4种模式：坐标下降 / 等权统一 / 仅正向 / 连亏止损
       </div>
-      <p style="font-size:10px;color:#8899b0;margin:4px 0">⏱ 8×294×90≈21万次/轮 · 5~10轮 ≈ <b>1~2秒</b></p>
+      <p style="font-size:10px;color:#8899b0;margin:4px 0">⏱ 8×60×3轮=1,440次 · 约<b>0.5~1秒</b>完成（阈值搜索从49档精简到10档：1,5,10,15,20,25,30,35,40,45）</p>
 
       <p style="font-size:11px;margin:8px 0 4px"><b style="color:#3b82f6">防过拟合：</b>720数据点(90天×8店)，覆盖多周期。可选 walk-forward 前60训练+后30验证</p>
 
@@ -4472,11 +4512,11 @@ var simLastResult = null;  // 最后结果
 var STORE_NAMES = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
 
 function initSimPanel() {
-  if (simData) { renderSimStoreTable(); return; }
+  if (simData) { renderSimStoreTable(); updateAlgoHint(); return; }
   // 首次加载数据
   fetch(API_BASE + '/api/simulate/data')
     .then(r => r.json())
-    .then(d => { simData = d; renderSimStoreTable(); })
+    .then(d => { simData = d; renderSimStoreTable(); updateAlgoHint(); })
     .catch(e => { document.getElementById('sim-store-table').innerHTML = '<p style="color:#dc2626;font-size:12px;padding:8px">加载数据失败: '+e.message+'</p>'; });
 }
 
@@ -4488,25 +4528,71 @@ function toggleSimMode() {
   renderSimStoreTable();
 }
 
+function updateAlgoHint() {
+  var hints = {
+    'coordinate': '💡 <b>每家店独立调参，正反模式自由组合</b><br>'
+      +'<b>出手条件</b>：<span style="color:#e67e22">看前一日排位决策今天</span>——正=昨排位≤阈→今天出手 | 反=昨排位＞阈→今天出手<br>'
+      +'<b>结果</b>：今天出手后用今天draw≤25判定中奖/亏损<br>'
+      +'<b>例子</b>：4/10一店排位1→4/11一店(正,阈25)达标✔出手40万 · 若4/11draw=20→中奖+880万<br>'
+      +'  　　4/15三店排位35→4/16三店(反,阈30)达标✔出手10万 · 若4/16draw=40→亏损−250万<br>'
+      +'<b>搜参方式</b>：每家店试遍 10个阈值(1/5/10/15/20/25/30/35/40/45) × 3个配资(10/20/40万) × 2种模式(正/反) = 60种组合，找最优。'
+      +'8家店各搜一次算一轮，跑3轮=共试 8×60×3=1440次，约0.8秒<br>'
+      +'<b>每日选店</b>：先筛选昨排位达标的店→按配资从大到小排队→取前3名出手（配资大的优先）。例：5家达标(40/40/20/20/10万)→取前3家(40/40/20)',
+
+    'uniform': '💡 <b>所有店一刀切，统一参数</b><br>'
+      +'<b>出手条件</b>：8店统一看前一日排位，按相同规则决定今天出手<br>'
+      +'<b>例子</b>：最优=阈35·反·配40万→昨排位＞35的店今天出手40万 · ≤35不出<br>'
+      +'<b>搜参方式</b>：8店共用一套参数，直接试遍10×3×2=60种组合取最优，约0.02秒<br>'
+      +'<b>每日选店</b>：同坐标下降，达标店按配资降序取前3',
+
+    'positive_only': '💡 <b>只做正向，绝不反向出手</b><br>'
+      +'<b>出手条件</b>：<span style="color:#16a34a">昨排位 ≤ 阈值</span>→今天出手　昨排位＞阈值→今天不动<br>'
+      +'<b>例子</b>：4/20一店排位3→4/21一店(阈3,配20万)达标✔出手20万<br>'
+      +'  　　4/21六店排位26→4/22六店(阈20,配40万)超标✘不出<br>'
+      +'<b>搜参方式</b>：模式锁死正向，每家店试10阈值×3配资=30种，坐标下降3轮=8×30×3=720次<br>'
+      +'<b>每日选店</b>：达标的店按配资降序取前3<br>'
+      +'<b>风格</b>：保守，不好不出手，不加反向赌注',
+
+    'stop_neg2': '💡 <b>坐标下降 + 止损</b><br>'
+      +'<b>出手条件</b>：同坐标下降，看前一日排位；出手后draw≤25中奖<br>'
+      +'<b>止损</b>：<span style="color:#dc2626">任一店连续2天亏损→封杀</span><br>'
+      +'<b>例子</b>：四店(反,阈40,配20万) 昨排位45✔出手→D1亏20万 D2昨排位又达标→再出又亏→D3封杀<br>'
+      +'<b>搜参方式</b>：同坐标下降（10×3×2=60种/店×8店×3轮=1440次），模拟时叠加止损<br>'
+      +'<b>每日选店</b>：达标且未止损的店，按配资降序取前3'
+  };
+  var v = document.getElementById('sim-algo').value;
+  document.getElementById('algo-hint').innerHTML = hints[v] || '';
+  // 换算法时清空旧结果，避免混淆
+  simLastResult = null;
+  document.getElementById('sim-result').style.display = 'none';
+  document.getElementById('sim-daily').style.display = 'none';
+  renderSimStoreTable();
+}
+
 function renderSimStoreTable() {
   var html = '<div style="font-size:12px;color:#8899b0;margin-bottom:8px;text-align:center">'+
     (simData ? simData.date_range : '加载中...') + ' · 共'+(simData?simData.days:'-')+'天</div>';
   html += '<table style="width:100%;font-size:12px">'+
     '<tr style="background:#f0f3f8"><th style="padding:5px;text-align:center">门店</th>'+
     '<th style="padding:5px;text-align:center">阈值</th>'+
-    '<th style="padding:5px;text-align:center">配资</th></tr>';
+    '<th style="padding:5px;text-align:center">配资</th>'+
+    '<th style="padding:5px;text-align:center">模式</th></tr>';
   
   // 恢复上次结果参数
   var lastParams = simLastResult ? simLastResult.params : {};
   
   STORE_NAMES.forEach(function(s,i) {
-    var p = lastParams[s] || {threshold:25, capital:10};
+    var p = lastParams[s] || {threshold:25, capital:10, mode:'positive'};
+    var modeSel = p.mode === 'negative' ? ' selected' : '';
     html += '<tr>'+
       '<td style="padding:4px;text-align:center;font-weight:600">'+s+'</td>'+
       '<td style="padding:4px"><select id="sim-th-'+i+'" style="width:100%;padding:5px;border:1px solid #cdd7e5;border-radius:6px;font-size:12px;background:#f8fafc;text-align:center">'+
         Array.from({length:49},function(_,j){return '<option value="'+(j+1)+'"'+(j+1===p.threshold?' selected':'')+'>'+(j+1)+'</option>';}).join('')+'</select></td>'+
       '<td style="padding:4px"><select id="sim-cap-'+i+'" style="width:100%;padding:5px;border:1px solid #cdd7e5;border-radius:6px;font-size:12px;background:#f8fafc;text-align:center">'+
-        [10,20,40].map(function(c){return '<option value="'+c+'"'+(c===p.capital?' selected':'')+'>'+c+'万</option>';}).join('')+'</select></td>'+
+        [10,20,40].map(function(c){return '<option value="'+c+'"'+(c===p.capital?' selected':'')+'>'+c+'</option>';}).join('')+'</select></td>'+
+      '<td style="padding:4px"><select id="sim-mode-'+i+'" style="width:100%;padding:5px;border:1px solid #cdd7e5;border-radius:6px;font-size:12px;background:#f8fafc;text-align:center">'+
+        '<option value="positive"'+(p.mode!=='negative'?' selected':'')+'>正</option>'+
+        '<option value="negative"'+modeSel+'>反</option></select></td>'+
       '</tr>';
   });
   html += '</table>';
@@ -4563,18 +4649,24 @@ function runSimManual() {
       name: s,
       threshold: parseInt(document.getElementById('sim-th-'+i).value),
       capital: parseInt(document.getElementById('sim-cap-'+i).value),
-      mode: simMode
+      mode: document.getElementById('sim-mode-'+i).value
     };
   });
-  
+
+  // 手动模拟也缓存参数，使模式能在表格中回显
+  var manualParams = {};
+  stores.forEach(function(st){ manualParams[st.name] = {threshold:st.threshold, capital:st.capital, mode:st.mode}; });
+
   var algo = document.getElementById('sim-algo').value;
-  
+
   fetch(API_BASE + '/api/simulate/manual', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({stores: stores, days:90, algorithm:algo})
   }).then(r => r.json()).then(function(d) {
-    renderSimResult(d);
+    simLastResult = { params: manualParams, result: d.result, daily: d.daily };
+    renderSimStoreTable();
+    renderSimResult({ result: d.result });
     renderSimDaily(d.daily);
     btn.disabled = false;
     btn.textContent = '▶ 手动模拟';
@@ -4588,12 +4680,14 @@ function runSimManual() {
 function renderSimResult(d) {
   var r = d.result;
   var profitClass = r.total_profit >= 0 ? 'color:#16a34a' : 'color:#dc2626';
+  var algoName = document.getElementById('sim-algo').selectedOptions[0].text;
   var html = '<div style="text-align:center;margin:4px 0">'+
-    '<div style="font-size:28px;font-weight:700;'+profitClass+'">'+(r.total_profit>=0?'+':'')+Math.round(r.total_profit).toLocaleString()+'<span style="font-size:14px">万</span></div>'+
+    '<div style="font-size:10px;color:#8899b0;margin-bottom:2px">算法：'+algoName+'</div>'+
+    '<div style="font-size:28px;font-weight:700;'+profitClass+'">'+(r.total_profit>=0?'+':'')+Math.round(r.total_profit).toLocaleString()+'</div>'+
     '<div style="display:flex;justify-content:space-around;font-size:11px;color:#5a6b85;margin:8px 0">'+
       '<span>出手<b style="color:#1e3a5f">'+r.total_shots+'</b>次</span>'+
       '<span>命中<b style="color:#16a34a">'+r.hit_rate+'%</b></span>'+
-      '<span>回撤<b style="color:#dc2626">'+Math.round(r.max_drawdown).toLocaleString()+'万</b></span>'+
+      '<span>回撤<b style="color:#dc2626">'+Math.round(r.max_drawdown).toLocaleString()+'</b></span>'+
     '</div></div>';
   
   // 门店详情（仅optimize有）
@@ -4603,8 +4697,8 @@ function renderSimResult(d) {
       var pClass = s.estimated_profit >= 0 ? 'color:#16a34a' : 'color:#dc2626';
       html += '<div style="display:flex;justify-content:space-between;padding:2px 0">'+
         '<span style="font-weight:600">'+s.name+'</span>'+
-        '<span style="font-size:10px;color:#8899b0">阈'+s.threshold+' 资'+s.capital+'万 '+s.mode+'</span>'+
-        '<span style="'+pClass+'">'+(s.estimated_profit>=0?'+':'')+Math.round(s.estimated_profit)+'万</span></div>';
+        '<span style="font-size:10px;color:#8899b0">阈'+s.threshold+' 资'+s.capital+' '+(s.mode==='positive'?'正':'反')+'</span>'+
+        '<span style="'+pClass+'">'+(s.estimated_profit>=0?'+':'')+Math.round(s.estimated_profit)+'</span></div>';
     });
     html += '</div>';
   }
@@ -4619,7 +4713,7 @@ function renderSimDaily(daily) {
   var activeDays = daily.filter(function(d){ return d.shots > 0 || d.__stopped__; });
   if (!activeDays.length) { document.getElementById('sim-daily').style.display = 'none'; return; }
   
-  var html = '<div class="entry-form" style="max-height:300px;overflow-y:auto">'+
+  var html = '<div class="entry-form" style="max-height:400px;overflow-y:auto">'+
     '<div style="font-size:12px;font-weight:600;color:#5a6b85;margin-bottom:6px">📅 每日明细（仅出手日）</div>';
   
   activeDays.forEach(function(d){
@@ -4628,14 +4722,444 @@ function renderSimDaily(daily) {
       return;
     }
     var pClass = d.profit >= 0 ? 'color:#16a34a' : 'color:#dc2626';
-    html += '<div style="display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px dotted #eee">'+
-      '<span>'+d.date+'</span>'+
-      '<span style="font-size:10px;color:#8899b0">draw='+d.draw+' | '+d.shots+'出手 '+d.hits+'中</span>'+
-      '<span style="'+pClass+'">'+(d.profit>=0?'+':'')+Math.round(d.profit)+'万</span></div>';
+    
+    // 构建前日排位行
+    var prevLine = '';
+    if (d.qual_summary && d.qual_summary.length) {
+      var parts = [];
+      d.qual_summary.forEach(function(q){
+        if (q.rank == null) return;
+        var op = q.mode==='positive' ? '≤'+q.threshold : '>'+q.threshold;
+        var icon = q.qualified ? '✔' : '✘';
+        var style = q.qualified ? (q.selected ? 'color:#16a34a;font-weight:600' : 'color:#16a34a') : 'color:#999';
+        parts.push('<span style="'+style+'">'+q.store+' 阈'+op+'·排'+q.rank+icon+'</span>');
+      });
+      if (parts.length) prevLine = '<div style="font-size:10px;color:#8899b0;margin-top:1px">前日: '+parts.join(' · ')+'</div>';
+    }
+    
+    // 构建出手行
+    var shotLine = '';
+    if (d.shot_details && d.shot_details.length) {
+      var sp = [];
+      d.shot_details.forEach(function(s){
+        sp.push(s.store+'资'+s.capital);
+      });
+      shotLine = '<div style="font-size:10px;color:#e67e22;margin-top:1px">→出手: '+sp.join(', ')+'</div>';
+    }
+    
+    html += '<div style="padding:3px 0;border-bottom:1px dotted #eee">'+
+      '<div style="display:flex;justify-content:space-between;font-size:11px">'+
+        '<span>'+d.date+'</span>'+
+        '<span style="font-size:10px;color:#8899b0">draw='+d.draw+' | '+d.shots+'出手 '+d.hits+'中</span>'+
+        '<span style="'+pClass+'">'+(d.profit>=0?'+':'')+Math.round(d.profit)+'</span></div>'+
+      prevLine + shotLine +
+      '</div>';
   });
   html += '</div>';
   document.getElementById('sim-daily').innerHTML = html;
   document.getElementById('sim-daily').style.display = 'block';
+}
+
+// ── 下单指南 ──
+function runDailyGuide() {
+  fetchGuide('positive');
+}
+
+function runDailyGuideNegative() {
+  fetchGuide('negative');
+}
+
+var _lastGuideMode = 'positive';
+
+function fetchGuide(mode) {
+  _lastGuideMode = mode;
+  var btnId = mode === 'positive' ? 'sim-guide-btn' : 'sim-guide-neg-btn';
+  var btn = document.getElementById(btnId);
+  btn.disabled = true;
+  btn.textContent = '⏳ 加载中...';
+  
+  fetch(API_BASE + '/api/simulate/daily-guide?days=90&mode=' + mode)
+    .then(r => r.json())
+    .then(function(d) {
+      renderGuide(d);
+      document.getElementById('guide-modal').classList.remove('hide');
+      btn.disabled = false;
+      btn.textContent = mode === 'positive' ? '📋 下单指南' : '📋 反帮扶';
+    })
+    .catch(function(e) {
+      btn.disabled = false;
+      btn.textContent = mode === 'positive' ? '📋 下单指南' : '📋 反帮扶';
+      alert('加载失败: ' + e.message);
+    });
+}
+
+function loadGuideCompare() {
+  var modal = document.getElementById('compare-modal');
+  var container = document.getElementById('compare-content');
+  container.innerHTML = '<div style="color:#8899b0;text-align:center;padding:20px">⏳ 加载中...</div>';
+  modal.classList.remove('hide');
+  
+  Promise.all([
+    fetch(API_BASE + '/api/simulate/guide-history?limit=1000&mode=positive').then(r => r.json()),
+    fetch(API_BASE + '/api/simulate/guide-history?limit=1000&mode=negative').then(r => r.json())
+  ]).then(function(results) {
+    var posData = results[0], negData = results[1];
+    var posRows = posData.rows || [];
+    var negRows = negData.rows || [];
+    
+    // 建立 date → row 映射
+    var posMap = {};
+    posRows.forEach(function(r){ posMap[r.date] = r; });
+    var negMap = {};
+    negRows.forEach(function(r){ negMap[r.date] = r; });
+    
+    // 合并日期列表
+    var allDates = [];
+    var seen = {};
+    posRows.concat(negRows).forEach(function(r){
+      if (!seen[r.date]) { seen[r.date] = true; allDates.push(r.date); }
+    });
+    allDates.sort().reverse();
+    
+    if (!allDates.length) {
+      container.innerHTML = '<div style="color:#94a3b8;text-align:center">暂无数据</div>';
+      return;
+    }
+    
+    document.getElementById('compare-freshness').textContent = allDates.length + '天';
+    
+    // 汇总
+    var posTotalProfit = 0, negTotalProfit = 0, posTotalCap = 0, negTotalCap = 0, posHits = 0, negHits = 0, posShots = 0, negShots = 0;
+    
+    var h = '';
+    allDates.forEach(function(d) {
+      var pr = posMap[d], nr = negMap[d];
+      var pds = pr ? pr.day_summary : null;
+      var nds = nr ? nr.day_summary : null;
+      var pp = pds ? pds.profit : null;
+      var np = nds ? nds.profit : null;
+      var pc = pds ? pds.capital : 0;
+      var nc = nds ? nds.capital : 0;
+      
+      if (pp !== null) { posTotalProfit += pp; posTotalCap += pc; }
+      if (np !== null) { negTotalProfit += np; negTotalCap += nc; }
+      
+      // 统计命中
+      if (pds && pds.store_details) {
+        pds.store_details.forEach(function(sd){ posShots++; if (sd.hit) posHits++; });
+      }
+      if (nds && nds.store_details) {
+        nds.store_details.forEach(function(sd){ negShots++; if (sd.hit) negHits++; });
+      }
+      
+      // 店名缩写
+      function storeRange(ds) {
+        if (!ds || !ds.store_capitals) return '—';
+        var caps = ds.store_capitals;
+        var details = ds.store_details || [];
+        var hitMap = {};
+        details.forEach(function(d){ hitMap[d.store] = d.hit; });
+        var order = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
+        var names = ['一','二','三','四','五','六','14','16']; // 简写适配手机
+        var top = '', bot = '';
+        order.forEach(function(s, i) {
+          var c = caps[s] || 0;
+          var hit = hitMap[s];
+          top += '<span style="display:inline-block;width:12.5%;text-align:center;font-size:8px;color:#8899b0">' + names[i] + '</span>';
+          var label = c;
+          if (c > 0) label = hit ? c + '(+)' : c + '(-)';
+          var col = c > 0 ? (hit ? '#16a34a' : '#dc2626') : '#ccc';
+          bot += '<span style="display:inline-block;width:12.5%;text-align:center;font-weight:700;font-size:9px;color:' + col + '">' + label + '</span>';
+        });
+        return '<div style="line-height:1.3;overflow-x:auto">' + top + '<br>' + bot + '</div>';
+      }
+      
+      // 颜色：正优→绿，反优→红
+      var diffColor = '#8899b0';
+      if (pp !== null && np !== null) {
+        if (pp > np) diffColor = '#16a34a';
+        else if (np > pp) diffColor = '#dc2626';
+      }
+      
+      h += '<div style="padding:8px 10px;margin-bottom:4px;background:#f8fafc;border-radius:8px">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">';
+      h += '<span style="font-weight:700;font-size:13px">' + d + '</span>';
+      // 右上角：当天 正+反=总
+      var pt = (pp||0), nt = (np||0), tt = pt + nt;
+      var tfmt = (pt>=0?'+':'') + pt.toLocaleString() + (nt>=0?'+':'') + nt.toLocaleString() + '=' + (tt>=0?'+':'') + tt.toLocaleString();
+      h += '<span style="font-size:10px;font-weight:600;color:' + (tt>=0?'#16a34a':'#dc2626') + '">' + tfmt + '</span>';
+      h += '</div>';
+      h += '<div style="font-size:10px;margin-bottom:2px">';
+      h += '<span>🟢正: <b style="color:#2563eb">' + (pc||0) + '</b></span>';
+      h += storeRange(pds);
+      h += '</div>';
+      h += '<div style="font-size:10px">';
+      h += '<span>🔴反: <b style="color:#dc2626">' + (nc||0) + '</b></span>';
+      h += storeRange(nds);
+      h += '</div>';
+      h += '</div>';
+    });
+    
+    // 汇总放在顶部
+    var summary = '<div style="background:linear-gradient(135deg,#f0f7ff,#fef2f2);border-radius:12px;padding:12px;margin-bottom:12px">';
+    summary += '<div style="font-size:12px;font-weight:700;color:#1e3a5f;margin-bottom:8px">📊 汇总对比</div>';
+    summary += '<table style="width:100%;font-size:11px;border-collapse:collapse">';
+    summary += '<tr><td></td><td style="text-align:center;color:#2563eb;font-weight:600">🟢 正帮扶</td><td style="text-align:center;color:#dc2626;font-weight:600">🔴 反帮扶</td></tr>';
+    summary += '<tr><td>累计利润</td><td style="text-align:center;color:#2563eb;font-weight:700">' + posTotalProfit.toLocaleString() + '</td><td style="text-align:center;color:#dc2626;font-weight:700">' + negTotalProfit.toLocaleString() + '</td></tr>';
+    summary += '<tr><td>累计出手</td><td style="text-align:center">' + posTotalCap + '</td><td style="text-align:center">' + negTotalCap + '</td></tr>';
+    summary += '<tr><td>命中率</td><td style="text-align:center">' + (posShots ? (posHits/posShots*100).toFixed(0)+'%' : '—') + '</td><td style="text-align:center">' + (negShots ? (negHits/negShots*100).toFixed(0)+'%' : '—') + '</td></tr>';
+    summary += '</table>';
+    // 差异
+    var diff = posTotalProfit - negTotalProfit;
+    var diffColor2 = diff > 0 ? '#16a34a' : '#dc2626';
+    summary += '<div style="margin-top:6px;font-size:11px;text-align:center;font-weight:700;color:' + diffColor2 + '">正帮扶比反帮扶' + (diff>=0?'多赚':'少赚') + ' ' + Math.abs(diff).toLocaleString() + '</div>';
+    summary += '</div>';
+    
+    container.innerHTML = summary + h;
+  }).catch(function(e) {
+    container.innerHTML = '<div style="color:#e53e3e">加载失败: ' + e.message + '</div>';
+  });
+}
+
+function renderGuide(d) {
+  // 每次渲染新指南时重置历史面板状态，确保切换模式后重新加载
+  document.getElementById('guide-history').style.display = 'none';
+  document.getElementById('guide-content').style.display = 'block';
+  var h = '';
+  // 今日排位
+  h += '<div style="margin-bottom:12px;padding:8px 10px;background:#f0f7ff;border-radius:8px">';
+  h += '<div style="font-size:11px;color:#8899b0;margin-bottom:3px">📅 '+d.date+' 排位（决策明日）</div>';
+  h += '<div style="font-size:12px;font-weight:600">';
+  ['一店','二店','三店','四店','五店','六店','集合14','集合16'].forEach(function(s){
+    h += s+':<b style="color:#2563eb">'+(d.today_rankings[s]||'?')+'</b> ';
+  });
+  h += '</div></div>';
+
+  // 四组算法结果
+  var modeLabel = (d.mode === 'negative' ? '🔴 反帮扶' : '🟢 正帮扶');
+  h += '<div style="margin-bottom:10px;font-size:12px;font-weight:600;color:#3a5070">📊 四组算法 · '+modeLabel+'</div>';
+  d.algorithms.forEach(function(a) {
+    var borderColor = a.profit >= 30000 ? '#16a34a' : a.profit >= 20000 ? '#e67e22' : '#94a3b8';
+    h += '<div style="margin-bottom:8px;padding:8px;border-left:3px solid '+borderColor+';background:#f8fafc;border-radius:0 6px 6px 0">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+    h += '<span style="font-weight:700;font-size:13px">'+a.name+'</span>';
+    h += '<span style="font-size:12px">💰 '+a.profit.toLocaleString()+'</span>';
+    h += '</div>';
+    
+    // 参数行
+    var params = [];
+    for (var s in a.params) {
+      var p = a.params[s];
+      params.push(s + '(<span style="color:#2563eb">' + p.threshold + '</span>/' + p.capital + 'w' + (p.mode=='positive'?'正':'反') + ')');
+    }
+    h += '<div style="font-size:10px;color:#8899b0;margin-top:2px">' + params.join(' ') + '</div>';
+    
+    // 下单
+    var isNeg = d.mode === 'negative';
+    if (a.orders.length) {
+      h += '<div style="margin-top:3px">';
+      a.orders.forEach(function(o) {
+        var badge = isNeg 
+          ? 'background:#fce4ec;color:#c62828'
+          : 'background:#e8f5e9;color:#2e7d32';
+        var icon = isNeg ? '🔴 ' : '🟢 ';
+        h += '<span style="display:inline-block;' + badge + ';padding:2px 8px;border-radius:4px;font-size:11px;margin:1px 2px">' + icon + o.store + ' ' + o.capital + '</span>';
+      });
+      h += '</div>';
+    } else {
+      h += '<div style="color:#94a3b8;font-size:11px;margin-top:2px">— 不出手</div>';
+    }
+    
+    // 逐店判定（折叠）
+    h += '<details style="margin-top:3px"><summary style="font-size:10px;color:#8899b0;cursor:pointer">逐店判定</summary>';
+    h += '<div style="font-size:9px;color:#6b7a90">';
+    a.detail.forEach(function(q) {
+      var s = q.reason.replace(/✓/,'<b style="color:#16a34a">✓</b>').replace(/✗/,'<b style="color:#e53e3e">✗</b>');
+      h += '<div>'+q.store+' '+s+'</div>';
+    });
+    h += '</div></details>';
+    h += '</div>';
+  });
+
+  // 投票汇总
+  h += '<div style="margin-top:12px;padding:10px;background:#fffbe6;border-radius:8px">';
+  h += '<div style="font-size:12px;font-weight:700;color:#b45309;margin-bottom:6px">🎯 投票汇总</div>';
+  var hasVote = false;
+  d.consensus.forEach(function(c) {
+    if (c.votes > 0) {
+      hasVote = true;
+      var caps = [];
+      for (var k in c.caps) caps.push(c.caps[k]);
+      var strength = c.votes >= 4 ? '🔥 4/4全票' : c.votes+'/4';
+      h += '<div style="display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px dashed #fde68a">';
+      h += '<span><b>'+c.store+'</b> '+caps.join('/')+'</span>';
+      h += '<span style="font-weight:700;color:#b45309">'+strength+'</span>';
+      h += '</div>';
+    }
+  });
+  if (!hasVote) h += '<div style="font-size:11px;color:#94a3b8">无算法建议出手</div>';
+  h += '</div>';
+
+  document.getElementById('guide-content').innerHTML = h;
+  // 显示数据时效
+  document.getElementById('guide-freshness').textContent = '数据: ' + d.date;
+}
+
+function refreshGuide() {
+  var btn = document.querySelector('#guide-modal .modal-btns button');
+  btn.textContent = '⏳ 刷新中...';
+  btn.disabled = true;
+  
+  fetch(API_BASE + '/api/simulate/daily-guide?days=90&mode=' + _lastGuideMode)
+    .then(r => r.json())
+    .then(function(d) {
+      renderGuide(d);
+      btn.textContent = '🔄 刷新';
+      btn.disabled = false;
+    })
+    .catch(function(e) {
+      btn.textContent = '🔄 刷新';
+      btn.disabled = false;
+      alert('刷新失败: ' + e.message);
+    });
+}
+var _lastGuideMode = 'positive';
+var _guidePage = 0;
+var _guideAllRows = [];
+var _guideTotal = 0;
+var _guidePageSize = 30;
+
+function loadGuideHistory() {
+  var historyDiv = document.getElementById('guide-history');
+  if (historyDiv.style.display === 'block') {
+    historyDiv.style.display = 'none';
+    document.getElementById('guide-content').style.display = 'block';
+    return;
+  }
+  
+  _guidePage = 0;
+  fetchGuidePage(0);
+}
+
+function fetchGuidePage(page) {
+  var historyDiv = document.getElementById('guide-history');
+  historyDiv.innerHTML = '<div style="color:#8899b0;text-align:center">⏳ 加载中...</div>';
+  historyDiv.style.display = 'block';
+  
+  var offset = page * _guidePageSize;
+  fetch(API_BASE + '/api/simulate/guide-history?limit=' + _guidePageSize + '&offset=' + offset + '&mode=' + _lastGuideMode)
+    .then(r => r.json())
+    .then(function(data) {
+      var rows = data.rows || [];
+      var total = data.total || 0;
+      _guideAllRows = rows;
+      _guideTotal = total;
+      _guidePage = page;
+      if (!rows.length) {
+        historyDiv.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:12px">暂无历史记录</div>';
+        return;
+      }
+      renderGuidePage();
+    })
+    .catch(function(e) {
+      historyDiv.innerHTML = '<div style="color:#e53e3e">加载失败: '+e.message+'</div>';
+    });
+}
+
+function renderGuidePage() {
+  var historyDiv = document.getElementById('guide-history');
+  var rows = _guideAllRows;
+  var total = _guideTotal;
+  var totalPages = Math.ceil(total / _guidePageSize);
+  
+  var h = '<div style="font-size:11px;font-weight:700;color:#3a5070;margin-bottom:4px;display:flex;justify-content:space-between">';
+  h += '<span>📜 历史记录 ('+total+'条)</span>';
+  h += '<span style="font-weight:400;color:#8899b0">第' + (_guidePage+1) + '/' + totalPages + '页</span>';
+  h += '</div>';
+  
+  rows.forEach(function(r) {
+    var ds = r.day_summary || {};
+    var tt = r.total || {};
+    var top = (r.result.consensus||[]).filter(function(c){ return c.votes>0; }).slice(0,3);
+    var tops = top.map(function(c){ return c.store+''+c.votes+'/4'; }).join(' ');
+    
+    h += '<div style="padding:8px 10px;margin-bottom:6px;background:#f8fafc;border-radius:8px;cursor:pointer" onclick="viewHistory('+r.id+',\''+r.date+'\')">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+    var modeTag = (r.result.mode === 'negative') ? '<span style="font-size:9px;color:#dc2626;margin-left:4px">反</span>' : '';
+    h += '<span style="font-size:13px;font-weight:700">'+r.date+modeTag+'</span>';
+    h += '<span style="font-size:9px;color:#8899b0">'+r.created_at.slice(0,16)+'</span>';
+    h += '</div>';
+    h += '<div style="font-size:11px;color:#1e3a5f;margin-bottom:2px">';
+    h += '当天 <b style="color:#2563eb">'+(ds.profit||0).toLocaleString()+'</b> · 出手<b style="color:#b45309">'+(ds.capital||0)+'</b>';
+    if (ds.top_store) h += ' · 首<b style="color:#16a34a">'+ds.top_store+'</b>';
+    h += '</div>';
+    h += '<div style="font-size:10px;color:#8899b0">';
+    h += '合计 利润<b style="color:#1e3a5f">'+(tt.profit||0).toLocaleString()+'</b> · 出手<b style="color:#1e3a5f">'+(tt.capital||0).toLocaleString()+'</b> · '+tt.days+'天';
+    h += '</div>';
+    if (tops) h += '<div style="font-size:9px;color:#b45309;margin-top:2px;border-top:1px solid #e8ecf0;padding-top:2px">🎯 '+tops+'</div>';
+    var sd = ds.store_details || [];
+    if (sd.length) {
+      var parts = [];
+      for (var i=0; i<sd.length; i++) {
+        var s = sd[i];
+        var color = s.hit ? '#16a34a' : '#e53e3e';
+        var icon = s.hit ? '🟢' : '🔴';
+        parts.push('<span>'+icon+' '+s.store+'<b> 投'+s.capital+'→<span style="color:'+color+'">'+s.formula+'</span></b></span>');
+      }
+      h += '<div style="font-size:10px;margin-top:2px">' + parts.join('<br>') + '</div>';
+    }
+    h += '</div>';
+  });
+  
+  // 分页按钮
+  if (totalPages > 1) {
+    h += '<div style="display:flex;justify-content:center;gap:12px;margin-top:10px">';
+    h += '<button onclick="changeGuidePage(-1)" style="padding:6px 20px;border-radius:8px;border:1px solid #d0d8e0;background:#fff;color:#3a5070;font-size:12px" ' + (_guidePage === 0 ? 'disabled' : '') + '>◀ 上一页</button>';
+    h += '<button onclick="changeGuidePage(1)" style="padding:6px 20px;border-radius:8px;border:1px solid #d0d8e0;background:#fff;color:#3a5070;font-size:12px" ' + (_guidePage >= totalPages-1 ? 'disabled' : '') + '>下一页 ▶</button>';
+    h += '</div>';
+  }
+  
+  historyDiv.innerHTML = h;
+}
+
+function changeGuidePage(delta) {
+  var totalPages = Math.ceil(_guideTotal / _guidePageSize);
+  var newPage = _guidePage + delta;
+  if (newPage < 0 || newPage >= totalPages) return;
+  document.getElementById('guide-history').scrollTop = 0;
+  fetchGuidePage(newPage);
+}
+
+// 历史记录数据缓存
+window._guideCache = {};
+
+function viewHistory(id, date) {
+  // 从缓存取
+  if (window._guideCache[id]) {
+    var d = window._guideCache[id];
+    renderGuide(d);
+    // 同步模式按钮
+    if (d.mode) switchGuideModeUI(d.mode);
+    document.getElementById('guide-history').style.display = 'none';
+    document.getElementById('guide-content').style.display = 'block';
+    return;
+  }
+  // 重新拉取
+  var historyDiv = document.getElementById('guide-history');
+  historyDiv.innerHTML = '<div style="color:#8899b0;text-align:center">⏳ 加载 '+date+' 详情...</div>';
+  
+  fetch(API_BASE + '/api/simulate/guide-history?limit=50')
+    .then(r => r.json())
+    .then(function(rows) {
+      var found = rows.find(function(r){ return r.id == id; });
+      if (found) {
+        window._guideCache[id] = found.result;
+        renderGuide(found.result);
+        if (found.result.mode) switchGuideModeUI(found.result.mode);
+        document.getElementById('guide-history').style.display = 'none';
+        document.getElementById('guide-content').style.display = 'block';
+      }
+    });
 }
 </script>
 </body>
