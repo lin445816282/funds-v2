@@ -357,6 +357,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
       <button class="hdr-btn" onclick="exportData()" title="导出">📤</button>
       <button class="hdr-btn" onclick="document.getElementById('import-file').click()" title="导入">📥</button>
       <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(this)">
+      <button class="hdr-btn" onclick="switchTab('doc')" title="系统文档">📄</button>
       <span class="user-pill" onclick="doLogout()">👤 退出</span>
     </div>
   </div>
