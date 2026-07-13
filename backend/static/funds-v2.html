@@ -1427,7 +1427,7 @@ function showToast(msg, ms, cls) {
 }
 function toast(msg, cls) { showToast(msg, 2000, cls||'error'); }
 
-function showAlert(msg, title) {
+function showAlert(msg, title, onConfirm) {
   var overlay = document.getElementById('alert-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -1439,8 +1439,12 @@ function showAlert(msg, title) {
   overlay.innerHTML = '<div class="modal-box" onclick="event.stopPropagation()" style="text-align:center">' +
     '<h3>' + (title || '⚠️ 提示') + '</h3>' +
     '<p style="font-size:14px;color:#5a6b85;margin:8px 0 16px;line-height:1.6">' + msg + '</p>' +
-    '<button onclick="document.getElementById(\'alert-overlay\').remove()" style="width:100%;padding:12px;border-radius:10px;border:none;background:#1e3a5f;color:#fff;font-size:15px;font-weight:600;cursor:pointer">确认</button>' +
+    '<button id="alert-confirm-btn" style="width:100%;padding:12px;border-radius:10px;border:none;background:#1e3a5f;color:#fff;font-size:15px;font-weight:600;cursor:pointer">确认</button>' +
     '</div>';
+  document.getElementById('alert-confirm-btn').onclick = function() {
+    overlay.remove();
+    if (typeof onConfirm === 'function') onConfirm();
+  };
   overlay.classList.remove('hide');
 }
 
@@ -3922,7 +3926,7 @@ function renderOrderSheet(d) {
   h += '<button onclick="syncAllOrders()" style="padding:2px 8px;border-radius:12px;border:1px solid #cdd7e5;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer">📅 全量</button>';
   h += '<input type="date" id="order-sync-date" value="'+nextDate+'" style="width:108px;padding:2px 6px;border-radius:12px;border:1px solid #cdd7e5;font-size:10px;color:#5a6b85;background:#f8fafc">';
   h += '<button onclick="syncOrderByDate()" style="padding:2px 8px;border-radius:12px;border:1px solid #3b82f6;background:#eff6ff;font-size:10px;color:#3b82f6;cursor:pointer;font-weight:600">🔄 同步</button>';
-  h += '<button onclick="showCollectSummary()" style="padding:2px 8px;border-radius:12px;border:1px solid #16a34a;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer;font-weight:600">📊 采集</button>';
+  h += '<button onclick="showCollectSummary()" style="padding:2px 8px;border-radius:12px;border:1px solid #16a34a;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer;font-weight:600">📊 采集记录</button>';
   h += '</div></div>';
 
   // 双列：正帮扶 | 反帮扶
@@ -4017,7 +4021,7 @@ function renderOrderSheet(d) {
   }
   h += '</div></div>';
 
-  h += '<div style="text-align:center;margin-top:8px;display:flex;gap:8px;justify-content:center"><button onclick="updateOrderAmounts()" style="padding:10px 24px;border-radius:12px;border:1px solid #2563eb;background:#eff6ff;color:#1e40af;font-size:14px;font-weight:600;cursor:pointer">📊 更新下单金额</button><button onclick="trimMinAmounts()" style="padding:10px 24px;border-radius:12px;border:1px solid #dc2626;background:#fef2f2;color:#dc2626;font-size:14px;font-weight:600;cursor:pointer">✂️ 除最小</button></div>';
+  h += '<div style="text-align:center;margin-top:8px;display:flex;gap:8px;justify-content:center"><button onclick="updateOrderAmounts()" style="padding:10px 24px;border-radius:12px;border:1px solid #2563eb;background:#eff6ff;color:#1e40af;font-size:14px;font-weight:600;cursor:pointer">📊 更新下单金额</button><button onclick="showOrderNumbersModal()" style="padding:10px 24px;border-radius:12px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;font-size:14px;font-weight:600;cursor:pointer">📋 列表</button><button onclick="trimMinAmounts()" style="padding:10px 24px;border-radius:12px;border:1px solid #dc2626;background:#fef2f2;color:#dc2626;font-size:14px;font-weight:600;cursor:pointer">✂️ 除最小</button></div>';
 
   el.innerHTML = h;
 
@@ -4192,37 +4196,35 @@ function syncOrderNumbers() {
   var btn = document.getElementById('sync-order-btn');
   if (!btn) return;
   btn.disabled = true;
-  btn.textContent = '⏳ 更新中...';
+  btn.textContent = '⏳ 拉取号码...';
   var dateInput = document.getElementById('order-date-input');
   var syncDate = dateInput ? dateInput.value : orderSheetDate;
 
-  // 步骤1：并行跑正帮扶 + 反帮扶指南（更新 sim_guides 缓存）
-  var posGuide = fetch(API_BASE + '/api/simulate/daily-guide?mode=positive&max_iter=1').then(r => r.json());
-  var negGuide = fetch(API_BASE + '/api/simulate/daily-guide?mode=negative&max_iter=1').then(r => r.json());
-
-  Promise.all([posGuide, negGuide])
-    .then(function(results){
-      // 检查验证错误
-      if (results[0].error) { showAlert(results[0].error, '数据未就绪'); btn.disabled = false; btn.textContent = '更新正负下单'; return; }
-      if (results[1].error) { showAlert(results[1].error, '数据未就绪'); btn.disabled = false; btn.textContent = '更新正负下单'; return; }
-      btn.textContent = '⏳ 拉取号码...';
-      // 步骤2：拉取数字仓库号码 → order_numbers
-      var url = API_BASE + '/api/simulate/pull-numbers';
-      if (syncDate) url += '?date=' + encodeURIComponent(syncDate);
-      return fetch(url, {method:'POST'}).then(r => r.json());
-    })
+  // 步骤1：先拉取号码，无数据直接终止（不更新指南）
+  var url = API_BASE + '/api/simulate/pull-numbers';
+  if (syncDate) url += '?date=' + encodeURIComponent(syncDate);
+  fetch(url, {method:'POST'}).then(r => r.json())
     .then(function(res){
-      if (res.ok) {
-        showToast('✅ 已更新 ' + (res.items||res.total_items||0) + ' 条');
-      } else {
-        showToast('⚠️ 号码拉取: ' + (res.error || '无数据') + '（指南已更新）');
+      if (!res.ok) {
+        showAlert('号码无数据', '拉取号码失败', function(){
+          btn.disabled = false; btn.textContent = '更新正负下单';
+          initOrderSheet();
+        });
+        return;
       }
-      initOrderSheet();
+      // 步骤2：号码有了，并行更新正反指南
+      btn.textContent = '⏳ 更新指南...';
+      var posGuide = fetch(API_BASE + '/api/simulate/daily-guide?mode=positive&max_iter=1').then(r => r.json());
+      var negGuide = fetch(API_BASE + '/api/simulate/daily-guide?mode=negative&max_iter=1').then(r => r.json());
+      return Promise.all([posGuide, negGuide]).then(function(results){
+        if (results[0].error) { showAlert(results[0].error, '数据未就绪', function(){ btn.disabled = false; btn.textContent = '更新正负下单'; }); return; }
+        if (results[1].error) { showAlert(results[1].error, '数据未就绪', function(){ btn.disabled = false; btn.textContent = '更新正负下单'; }); return; }
+        showToast('✅ 已更新 ' + (res.items||res.total_items||0) + ' 条');
+        initOrderSheet();
+      });
     })
     .catch(function(e){
-      showAlert(e.message, '数据未就绪');
-      btn.disabled = false;
-      btn.textContent = '更新正负下单';
+      showAlert(e.message, '数据未就绪', function(){ btn.disabled = false; btn.textContent = '更新正负下单'; });
     });
 }
 

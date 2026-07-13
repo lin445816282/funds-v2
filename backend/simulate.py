@@ -798,7 +798,8 @@ def get_order_sheet(days=90):
         pos_stores = extract_stores(pos.get("consensus", []))
         neg_stores = extract_stores(neg.get("consensus", []))
         ranking_date = pos["date"]
-        numbers = _load_order_numbers(ranking_date)
+        action_date = (datetime.strptime(ranking_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        numbers = _load_order_numbers(action_date)
         # 计算各号码累计金额
         amounts_data = _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date)
         return {
@@ -824,7 +825,8 @@ def get_order_sheet(days=90):
     pos_stores = extract_stores(pos.get("consensus", []))
     neg_stores = extract_stores(neg.get("consensus", []))
     ranking_date2 = pos.get("date", "")
-    numbers2 = _load_order_numbers(ranking_date2)
+    action_date2 = (datetime.strptime(ranking_date2, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d") if ranking_date2 else ""
+    numbers2 = _load_order_numbers(action_date2)
     amounts_data2 = _build_amounts_data(pos_stores, neg_stores, numbers2, ranking_date2)
     return {
         "date": ranking_date2,
