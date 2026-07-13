@@ -3940,7 +3940,7 @@ function renderOrderSheet(d) {
       var strength = s.votes === '4/4' ? '🔥' : s.votes >= '3' ? '⭐' : '';
       var ns = (d.numbers||{})[s.store]||{};
       var top = ns['25']||[];
-      var numsStr = top.join(' ');
+      var numsStr = top.join('.');
       var dataAttr = 'data-type="Top25" data-date="'+(d.numbers.date||'')+'" data-store="'+s.store+'" data-numbers="'+escapeHtml(numsStr)+'"';
       h += '<div style="padding:6px 8px;margin-bottom:4px;background:#f0fdf4;border-radius:8px;font-size:13px">';
       h += '<div style="display:flex;justify-content:space-between;align-items:center">';
@@ -4347,20 +4347,22 @@ function showOrderDetailPopup(date) {
       var body = document.getElementById('order-detail-body');
       if (!body) return;
       if (d.ok && d.items && d.items.length > 0) {
-        var h = '<table style="width:100%;border-collapse:collapse"><tr style="background:#f8fafc"><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">门店</th><th style="padding:6px 8px;text-align:center;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">阀值</th><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">汇总</th><th style="padding:6px 8px;text-align:center;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">号码数</th></tr>';
+        var h = '<table style="width:100%;border-collapse:collapse"><tr style="background:#f8fafc"><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">门店</th><th style="padding:6px 8px;text-align:center;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">阀值</th><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">汇总</th><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">号码</th><th style="padding:6px 8px;text-align:center;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">号码数</th></tr>';
         for (var i = 0; i < d.items.length; i++) {
           var it = d.items[i];
           var storeName = STORE_MAP[String(it.collection_id)] || ('col' + it.collection_id);
           var numCount = Array.isArray(it.numbers) ? it.numbers.length : 0;
+          var numsStr = (it.numbers || []).join('.');
           var numsJson = JSON.stringify(it.numbers || []).replace(/"/g, '&quot;');
           h += '<tr style="border-bottom:1px solid #f0f0f0" data-numbers="' + numsJson + '">';
           h += '<td style="padding:6px 8px;font-weight:600;color:#1e3a5f">' + storeName + '</td>';
           h += '<td style="padding:6px 8px;text-align:center;color:' + (it.threshold === 25 ? '#16a34a' : '#dc2626') + ';font-weight:600">' + it.threshold + '</td>';
-          h += '<td style="padding:6px 8px;font-size:12px;color:#667">' + (it.summary_name || '—') + '</td>';
+          h += '<td style="padding:6px 8px;font-size:12px;color:#667;white-space:nowrap">' + (it.summary_name || '—') + '</td>';
+          h += '<td style="padding:6px 8px;font-size:10px;color:#334;line-height:1.8;word-break:break-all;font-family:monospace;max-width:200px">' + numsStr + '</td>';
           h += '<td style="padding:4px 8px;text-align:center"><button onclick="showNumDetail(this)" style="padding:2px 8px;border-radius:8px;border:1px solid #3b82f6;background:#eff6ff;color:#2563eb;font-size:12px;font-weight:700;cursor:pointer">' + numCount + '</button></td>';
           h += '</tr>';
         }
-        h += '<tr style="background:#f0fdf4;font-weight:700"><td style="padding:6px 8px;color:#16a34a">合计</td><td></td><td></td><td style="padding:6px 8px;text-align:center;color:#16a34a">' + d.count + ' 条</td></tr>';
+        h += '<tr style="background:#f0fdf4;font-weight:700"><td style="padding:6px 8px;color:#16a34a">合计</td><td></td><td></td><td></td><td style="padding:6px 8px;text-align:center;color:#16a34a">' + d.count + ' 条</td></tr>';
         h += '</table>';
         // 收集全部号码
         var allNums = [];
