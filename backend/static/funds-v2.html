@@ -3967,7 +3967,7 @@ function renderOrderSheet(d) {
       var strength = s.votes === '4/4' ? '🔥' : s.votes >= '3' ? '⭐' : '';
       var ns2 = (d.numbers||{})[s.store]||{};
       var bot = ns2['24']||[];
-      var numsStr2 = bot.join(' ');
+      var numsStr2 = bot.join('.');
       var dataAttr2 = 'data-type="Bottom24" data-date="'+(d.numbers.date||'')+'" data-store="'+s.store+'" data-numbers="'+escapeHtml(numsStr2)+'"';
       h += '<div style="padding:6px 8px;margin-bottom:4px;background:#fef2f2;border-radius:8px;font-size:13px">';
       h += '<div style="display:flex;justify-content:space-between;align-items:center">';
@@ -4347,30 +4347,21 @@ function showOrderDetailPopup(date) {
       var body = document.getElementById('order-detail-body');
       if (!body) return;
       if (d.ok && d.items && d.items.length > 0) {
-        var h = '<table style="width:100%;border-collapse:collapse"><tr style="background:#f8fafc"><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">门店</th><th style="padding:6px 8px;text-align:center;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">阀值</th><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">汇总</th><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">号码</th><th style="padding:6px 8px;text-align:center;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">号码数</th></tr>';
+        var h = '<table style="width:100%;border-collapse:collapse"><tr style="background:#f8fafc"><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">门店</th><th style="padding:6px 8px;text-align:center;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">阀值</th><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">汇总</th><th style="padding:6px 8px;text-align:center;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">号码数</th></tr>';
         for (var i = 0; i < d.items.length; i++) {
           var it = d.items[i];
           var storeName = STORE_MAP[String(it.collection_id)] || ('col' + it.collection_id);
           var numCount = Array.isArray(it.numbers) ? it.numbers.length : 0;
           var numsStr = (it.numbers || []).join('.');
-          var numsJson = JSON.stringify(it.numbers || []).replace(/"/g, '&quot;');
-          h += '<tr style="border-bottom:1px solid #f0f0f0" data-numbers="' + numsJson + '">';
+          h += '<tr style="border-bottom:1px solid #f0f0f0">';
           h += '<td style="padding:6px 8px;font-weight:600;color:#1e3a5f">' + storeName + '</td>';
           h += '<td style="padding:6px 8px;text-align:center;color:' + (it.threshold === 25 ? '#16a34a' : '#dc2626') + ';font-weight:600">' + it.threshold + '</td>';
           h += '<td style="padding:6px 8px;font-size:12px;color:#667;white-space:nowrap">' + (it.summary_name || '—') + '</td>';
-          h += '<td style="padding:6px 8px;font-size:10px;color:#334;line-height:1.8;word-break:break-all;font-family:monospace;max-width:200px">' + numsStr + '</td>';
-          h += '<td style="padding:4px 8px;text-align:center"><button onclick="showNumDetail(this)" style="padding:2px 8px;border-radius:8px;border:1px solid #3b82f6;background:#eff6ff;color:#2563eb;font-size:12px;font-weight:700;cursor:pointer">' + numCount + '</button></td>';
+          h += '<td style="padding:4px 8px;text-align:center;white-space:nowrap"><button onclick="var s=\'' + numsStr.replace(/'/g, "\\'") + '\';navigator.clipboard.writeText(s);var b=event.target;var t=b.nextSibling;b.textContent=\'📋\';t.textContent=\'✅\';setTimeout(function(){b.textContent=\'📋\';t.textContent=' + numCount + '},1500)" style="border:none;background:none;font-size:14px;cursor:pointer;padding:0 4px" title="复制号码">📋</button><span style="font-weight:700;color:#1e3a5f;font-size:12px">' + numCount + '</span></td>';
           h += '</tr>';
         }
-        h += '<tr style="background:#f0fdf4;font-weight:700"><td style="padding:6px 8px;color:#16a34a">合计</td><td></td><td></td><td></td><td style="padding:6px 8px;text-align:center;color:#16a34a">' + d.count + ' 条</td></tr>';
+        h += '<tr style="background:#f0fdf4;font-weight:700"><td style="padding:6px 8px;color:#16a34a">合计</td><td></td><td></td><td style="padding:6px 8px;text-align:center;color:#16a34a">' + d.count + ' 条</td></tr>';
         h += '</table>';
-        // 收集全部号码
-        var allNums = [];
-        for (var i = 0; i < d.items.length; i++) {
-          var ns = d.items[i].numbers || [];
-          for (var j = 0; j < ns.length; j++) allNums.push(ns[j]);
-        }
-        h += '<button onclick="var a=' + JSON.stringify(allNums) + ';navigator.clipboard.writeText(a.join(\'.\'));var b=event.target;b.textContent=\'✅ 已复制\';setTimeout(function(){b.textContent=\'📋 复制全部号码\'},1500)" style="width:100%;margin-top:10px;padding:10px;border:none;border-radius:10px;background:#1e3a5f;color:#fff;font-size:14px;font-weight:600;cursor:pointer">📋 复制全部号码</button>';
         body.innerHTML = h;
       } else {
         body.innerHTML = '<div style="text-align:center;padding:40px;color:#999">暂无明细</div>';
@@ -4380,57 +4371,6 @@ function showOrderDetailPopup(date) {
       var body = document.getElementById('order-detail-body');
       if (body) body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626">加载失败: ' + e.message + '</div>';
     });
-}
-
-function showNumDetail(btn) {
-  var tr = btn.closest('tr');
-  var numsAttr = tr.getAttribute('data-numbers') || '';
-  var nums = [];
-  try { nums = JSON.parse(numsAttr.replace(/&quot;/g, '"')); } catch(e) {}
-  if (!nums.length) return;
-  
-  var numsStr = nums.join('.');
-  // 移除旧弹窗
-  var old = document.getElementById('num-detail-overlay');
-  if (old) old.remove();
-  
-  var overlay = document.createElement('div');
-  overlay.id = 'num-detail-overlay';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:99999;display:flex;align-items:center;justify-content:center';
-  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
-  
-  var box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:14px;padding:16px;width:90%;max-width:340px;box-shadow:0 4px 20px rgba(0,0,0,.15)';
-  box.onclick = function(e) { e.stopPropagation(); };
-  
-  var header = document.createElement('div');
-  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px';
-  header.innerHTML = '<span style="font-weight:700;font-size:14px;color:#1e3a5f">🔢 ' + nums.length + '个号码</span>';
-  var closeBtn = document.createElement('button');
-  closeBtn.textContent = '✕';
-  closeBtn.style.cssText = 'border:none;background:none;font-size:18px;color:#999;cursor:pointer';
-  closeBtn.onclick = function() { overlay.remove(); };
-  header.appendChild(closeBtn);
-  box.appendChild(header);
-  
-  var body = document.createElement('div');
-  body.style.cssText = 'background:#f8fafc;border-radius:10px;padding:12px;font-size:14px;line-height:2;color:#1e3a5f;word-break:break-all;font-family:monospace';
-  body.textContent = numsStr;
-  box.appendChild(body);
-  
-  var copyBtn = document.createElement('button');
-  copyBtn.textContent = '📋 复制';
-  copyBtn.style.cssText = 'width:100%;margin-top:10px;padding:10px;border:none;border-radius:10px;background:#1e3a5f;color:#fff;font-size:14px;font-weight:600;cursor:pointer';
-  copyBtn.onclick = function() {
-    navigator.clipboard.writeText(numsStr).then(function() {
-      copyBtn.textContent = '✅ 已复制';
-      setTimeout(function() { copyBtn.textContent = '📋 复制'; }, 1500);
-    });
-  };
-  box.appendChild(copyBtn);
-  
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
 }
 
 function showOrderNumbersModal(page) {
