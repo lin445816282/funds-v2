@@ -22,16 +22,31 @@ MISS_MULT = {"positive": 25, "negative": 24}
 # ═══════════════ 数据加载 ═══════════════════
 def load_data(days=90):
     """返回 {date: {draw: int, rankings: {store: rank}}} 列表，按日期排序"""
+    from datetime import datetime, timedelta
+    from dateutil.relativedelta import relativedelta
+    
     fv = sqlite3.connect(FUNDS_DB)
     fv.row_factory = sqlite3.Row
+    
+    # 动态计算起始日期：最新排位日往前3个月
+    latest_row = fv.execute(
+        "SELECT MAX(date) FROM records WHERE category=?", (RANKING_CAT,)
+    ).fetchone()
+    latest_date = latest_row[0] if latest_row and latest_row[0] else None
+    if latest_date:
+        dt = datetime.strptime(latest_date, "%Y-%m-%d")
+        start_dt = dt - relativedelta(months=3)
+        start_date = start_dt.strftime("%Y-%m-%d")
+    else:
+        start_date = '2026-04-11'  # fallback
     
     # 获取排位数据
     rankings = {}
     rows = fv.execute("""
         SELECT store, date, amount FROM records 
-        WHERE category=? AND date >= '2026-04-11'
+        WHERE category=? AND date >= ?
         ORDER BY date, store
-    """, (RANKING_CAT,)).fetchall()
+    """, (RANKING_CAT, start_date)).fetchall()
     
     # 去重：同一store+date取最新的一条
     seen = set()
@@ -47,9 +62,9 @@ def load_data(days=90):
     store_income = {}
     rows_i = fv.execute("""
         SELECT date, store, amount FROM records 
-        WHERE category='income' AND date >= '2026-04-11'
+        WHERE category='income' AND date >= ?
         ORDER BY date, store
-    """).fetchall()
+    """, (start_date,)).fetchall()
     for r in rows_i:
         d = r["date"]
         if d not in store_income:
@@ -63,9 +78,9 @@ def load_data(days=90):
     draws = {}
     rows_d = wh.execute("""
         SELECT date, draw_number FROM analysis_daily 
-        WHERE project_id=19 AND date >= '2026-04-11'
+        WHERE project_id=19 AND date >= ?
         ORDER BY date
-    """).fetchall()
+    """, (start_date,)).fetchall()
     for r in rows_d:
         draws[r["date"]] = r["draw_number"]
     wh.close()
@@ -468,22 +483,23 @@ def store_params_to_dict(sp):
 
 
 # ═══════════════ API：每日下单指南 ═══════════════
-def run_daily_guide(days=90, mode="positive"):
+def run_daily_guide(days=90, mode="positive", max_iter=3):
     """跑4组优化 + 取最新排位 + 逐店判定 → 投票汇总
     mode: "positive"=正帮扶（排位≤阈值出手）, "negative"=反帮扶（排位>阈值出手）
+    max_iter: 坐标下降迭代轮数（3=全精度, 1=快速）
     """
     data = load_data(days)
     if not data:
         return {"error": "无数据"}
 
-    # 找最新有真实开奖结果的日子（draw>0），避免排位入库但未开奖的日子
+    # 找最新有排位数据的日子
     last_day = None
     for d in reversed(data):
-        if d.get("draw", 0) > 0 and d.get("rankings"):
+        if d.get("rankings"):
             last_day = d
             break
     if not last_day:
-        return {"error": "无有效数据（需有开奖结果）"}
+        return {"error": "无排位数据"}
 
     today_rankings = last_day["rankings"]
     today_date = last_day["date"]
@@ -497,7 +513,7 @@ def run_daily_guide(days=90, mode="positive"):
 
     algo_results = []
     for algo_key, algo_name in algorithms:
-        params, result = optimize(data, mode, algo_key)
+        params, result = optimize(data, mode, algo_key, max_iter)
         orders, detail = _predict_orders(today_rankings, params)
         algo_results.append({
             "name": algo_name, "key": algo_key,
@@ -520,6 +536,268 @@ def run_daily_guide(days=90, mode="positive"):
     # 保存历史
     _save_guide(result)
     return result
+
+
+def _pull_one_date(date_str):
+    """拉取单个日期 → 返回 (date, items转列表, 错误信息)"""
+    import urllib.request, urllib.parse
+    url = "http://localhost:8016/api/threshold/results?" + urllib.parse.urlencode({"date": date_str})
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            data = json.loads(resp.read())
+    except Exception as e:
+        return None, None, str(e)
+    if not data.get("items"):
+        return None, None, "无数据"
+    return data["date"], data["items"], None
+
+
+def _save_order_items(date, items):
+    """入库单日数据 → 返回写入条数"""
+    db = sqlite3.connect(FUNDS_DB)
+    count = 0
+    for item in items:
+        cid = item["collection_id"]
+        sname = item.get("summary_name", "")
+        for threshold, nums in item.get("thresholds", {}).items():
+            th = int(threshold)
+            nums_json = json.dumps(nums["numbers"])
+            db.execute(
+                "INSERT OR REPLACE INTO order_numbers (date, collection_id, threshold, summary_name, numbers_json) VALUES (?,?,?,?,?)",
+                (date, cid, th, sname, nums_json)
+            )
+            count += 1
+    db.commit()
+    db.close()
+    return count
+
+
+def pull_threshold_numbers(target_date=None, from_date=None, to_date=None):
+    """从数字仓库拉取阈值号码 → 入库 order_numbers 表
+    target_date: 单日期(YYYY-MM-DD)，不传且无范围则取最新
+    from_date/to_date: 日期范围，批量拉取
+    """
+    # ── 范围模式 ──
+    if from_date and to_date:
+        from datetime import datetime, timedelta
+        d = datetime.strptime(from_date, "%Y-%m-%d")
+        end = datetime.strptime(to_date, "%Y-%m-%d")
+        total = 0
+        dates = []
+        errors = []
+        while d <= end:
+            ds = d.strftime("%Y-%m-%d")
+            date, items, err = _pull_one_date(ds)
+            if err:
+                errors.append(f"{ds}: {err}")
+            else:
+                n = _save_order_items(date, items)
+                total += n
+                dates.append(ds)
+            d += timedelta(days=1)
+        return {
+            "ok": True,
+            "dates": dates,
+            "total_items": total,
+            "errors": errors
+        }
+
+    # ── 单日期模式 ──
+    date, items, err = _pull_one_date(target_date)
+    if err:
+        return {"ok": False, "error": err}
+    count = _save_order_items(date, items)
+    return {"ok": True, "date": date, "items": count, "collections": len(items)}
+
+
+def list_order_numbers(page=1, limit=20):
+    """分页查 order_numbers 表，按日期聚合"""
+    db = sqlite3.connect(FUNDS_DB)
+    db.row_factory = sqlite3.Row
+
+    total = db.execute(
+        "SELECT COUNT(DISTINCT date) FROM order_numbers"
+    ).fetchone()[0]
+
+    offset = (page - 1) * limit
+    rows = db.execute("""
+        SELECT date, COUNT(*) as cnt, MAX(pulled_at) as pulled_at
+        FROM order_numbers
+        GROUP BY date ORDER BY date DESC
+        LIMIT ? OFFSET ?
+    """, (limit, offset)).fetchall()
+
+    items = []
+    for r in rows:
+        items.append({
+            "date": r["date"],
+            "count": r["cnt"],
+            "pulled_at": r["pulled_at"] or ""
+        })
+
+    db.close()
+    return {"ok": True, "total": total, "page": page, "limit": limit, "items": items}
+
+
+def delete_order_numbers_by_date(date):
+    """删除指定日期的所有入库记录，并清除 sim_guides 缓存"""
+    db = sqlite3.connect(FUNDS_DB)
+    cursor = db.execute("DELETE FROM order_numbers WHERE date=?", (date,))
+    deleted = cursor.rowcount
+    db.execute("DELETE FROM sim_guides WHERE date=?", (date,))
+    db.commit()
+    db.close()
+    return {"ok": True, "date": date, "deleted": deleted}
+
+
+# ── 门店 → collection_id 映射 ─────────────────
+STORE_TO_COLLECTION = {
+    "一店": -23, "二店": -24, "三店": -25,
+    "四店": -26, "五店": -28, "六店": -29,
+    "集合14": 14, "集合16": 16,
+}
+COLLECTION_TO_STORE = {v: k for k, v in STORE_TO_COLLECTION.items()}
+
+def _load_order_numbers(ranking_date=None):
+    """从 order_numbers 表取号码 → 按门店映射返回 {store: {top25:[], bottom24:[]}}
+    ranking_date: 排位日期。直接用于 order_numbers.date 查询。
+    """
+    from datetime import datetime, timedelta
+
+    db = sqlite3.connect(FUNDS_DB)
+    db.row_factory = sqlite3.Row
+
+    target_date = ranking_date
+    if target_date:
+        # 检查 ranking_date 是否存在
+        exists = db.execute(
+            "SELECT 1 FROM order_numbers WHERE date=?", (target_date,)
+        ).fetchone()
+        if not exists:
+            target_date = None
+
+    # 回退到最新
+    if not target_date:
+        row = db.execute(
+            "SELECT date FROM order_numbers ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            db.close()
+            return {}
+        target_date = row["date"]
+
+    rows = db.execute(
+        "SELECT collection_id, threshold, numbers_json, pulled_at FROM order_numbers WHERE date=?",
+        (target_date,)
+    ).fetchall()
+
+    # 取 order_numbers 表最新日期（而非 sim_guides 缓存的 ranking_date）
+    latest_row = db.execute(
+        "SELECT date FROM order_numbers ORDER BY date DESC LIMIT 1"
+    ).fetchone()
+    latest_db_date = latest_row["date"] if latest_row else target_date
+
+    db.close()
+
+    result = {"date": latest_db_date}
+    if ranking_date and ranking_date == target_date:
+        result["matched"] = True
+    pulled_at = None
+    for r in rows:
+        cid = r["collection_id"]
+        th = r["threshold"]
+        store = COLLECTION_TO_STORE.get(cid)
+        if not store:
+            continue
+        if store not in result:
+            result[store] = {}
+        result[store][str(th)] = json.loads(r["numbers_json"])
+        if r["pulled_at"] and not pulled_at:
+            pulled_at = r["pulled_at"]
+
+    # 补充空门店
+    for store in STORE_TO_COLLECTION:
+        if store not in result:
+            result[store] = {}
+
+    result["pulled_at"] = pulled_at
+    return result
+
+
+def get_order_sheet(days=90):
+    """合并正反帮扶指南 → 下单表（门店列表 + 1-49空网格）
+    优先从 sim_guides 缓存读取，避免重新计算。
+    """
+    db = sqlite3.connect(FUNDS_DB)
+    db.row_factory = sqlite3.Row
+
+    def extract_stores(consensus):
+        stores = []
+        for c in consensus:
+            if c.get("votes", 0) > 0:
+                caps = c.get("caps", {})
+                max_cap = max(caps.values()) if caps else 0
+                stores.append({
+                    "store": c["store"],
+                    "capital": max_cap,
+                    "votes": f"{c['votes']}/{c['out_of']}",
+                    "caps": caps
+                })
+        return stores
+
+    # 从缓存读正帮扶
+    pos_row = db.execute(
+        "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')='positive' ORDER BY date DESC LIMIT 1"
+    ).fetchone()
+    # 从缓存读反帮扶
+    neg_row = db.execute(
+        "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')='negative' ORDER BY date DESC LIMIT 1"
+    ).fetchone()
+    db.close()
+
+    # 优先用缓存
+    if pos_row and neg_row:
+        pos = json.loads(pos_row["result"])
+        neg = json.loads(neg_row["result"])
+        pos_stores = extract_stores(pos.get("consensus", []))
+        neg_stores = extract_stores(neg.get("consensus", []))
+        ranking_date = pos["date"]
+        return {
+            "date": ranking_date,
+            "rankings": pos.get("today_rankings", {}),
+            "cached": True,
+            "numbers": _load_order_numbers(ranking_date),
+            "positive": {
+                "stores": pos_stores,
+                "total_capital": sum(s["capital"] for s in pos_stores)
+            },
+            "negative": {
+                "stores": neg_stores,
+                "total_capital": sum(s["capital"] for s in neg_stores)
+            }
+        }
+
+    # 缓存无 → 实时计算（轻量：max_iter=1）
+    print("[order-sheet] 无缓存，实时计算中...")
+    pos = run_daily_guide(days, "positive", max_iter=1)
+    neg = run_daily_guide(days, "negative", max_iter=1)
+    pos_stores = extract_stores(pos.get("consensus", []))
+    neg_stores = extract_stores(neg.get("consensus", []))
+    ranking_date2 = pos.get("date", "")
+    return {
+        "date": ranking_date2,
+        "rankings": pos.get("today_rankings", {}),
+        "cached": False,
+        "numbers": _load_order_numbers(ranking_date2),
+        "positive": {
+            "stores": pos_stores,
+            "total_capital": sum(s["capital"] for s in pos_stores)
+        },
+        "negative": {
+            "stores": neg_stores,
+            "total_capital": sum(s["capital"] for s in neg_stores)
+        }
+    }
 
 
 def _save_guide(result):

@@ -40,9 +40,10 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
 .sync-bar .syncing{animation:spin .8s linear infinite;display:inline-block}
 
 /* 标签导航 */
-.tab-bar{display:flex;margin:0 16px;position:sticky;top:50px;z-index:9;background:#e4edf7;padding:8px 0 4px}
-.tab-bar button{flex:1;padding:8px 0;border:none;background:transparent;font-size:13px;font-weight:600;color:#8899b0;border-bottom:2px solid transparent;cursor:pointer;transition:all .2s}
-.tab-bar button.on{color:#1e3a5f;border-bottom-color:#1e3a5f}
+.tab-bar{display:flex;margin:8px 12px;gap:4px;position:sticky;top:50px;z-index:9;background:none;padding:0}
+.tab-bar button{flex:1;padding:8px 2px;border:1px solid #cdd7e5;background:#fff;font-size:12px;font-weight:600;color:#5a6b85;border-radius:8px;cursor:pointer;transition:all .15s;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.tab-bar button.on{color:#fff;background:#1e3a5f;border-color:#1e3a5f;box-shadow:0 2px 6px rgba(30,58,95,.25)}
+.tab-bar button:active{transform:scale(.96)}
 
 /* 面板 */
 .panel{display:none;padding:0 16px 90px}
@@ -357,7 +358,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
       <button class="hdr-btn" onclick="exportData()" title="导出">📤</button>
       <button class="hdr-btn" onclick="document.getElementById('import-file').click()" title="导入">📥</button>
       <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(this)">
-      <button class="hdr-btn" onclick="switchTab('doc')" title="系统文档">📄</button>
+      <button class="hdr-btn" onclick="showDocPopup()" title="系统文档">📄</button>
       <span class="user-pill" onclick="doLogout()">👤 退出</span>
     </div>
   </div>
@@ -370,20 +371,19 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   </div>
 
   <!-- 标签 -->
-  <div class="tab-bar">
-    <button class="on" onclick="switchTab('entry')">📝 录入</button>
-    <button onclick="switchTab('overview')">📊 总览</button>
-    <button onclick="switchTab('ranking')">🏆 排位</button>
-    <button onclick="switchTab('compare')">📈 对比</button>
-    <button onclick="switchTab('alerts')">⚠️ 预警</button>
-    <button onclick="switchTab('mgmt')">⚙️ 管理</button>
-    <button onclick="switchTab('ext')">🔗 对接</button>
-    <button onclick="switchTab('sim')">🎯 模拟</button>
-    <button onclick="switchTab('doc')">📄 文档</button>
+   <div class="tab-bar">
+    <button class="on" onclick="switchTab('alerts')">预警</button>
+    <button onclick="switchTab('order')">下单</button>
+    <button onclick="switchTab('sim')">模拟</button>
+    <button onclick="switchTab('ranking')">排位</button>
+    <button onclick="switchTab('overview')">总览</button>
+    <button onclick="switchTab('compare')">对比</button>
+    <button onclick="switchTab('entry')">录入</button>
+    <button onclick="switchTab('mgmt')">管理</button>
   </div>
 
   <!-- ====== 录入面板 ====== -->
-  <div class="panel on" id="panel-entry">
+  <div class="panel" id="panel-entry">
     <button class="mgmt-pill" style="width:100%;justify-content:center;margin-top:8px" onclick="openEntryPopup()">＋ 记一笔</button>
     <input class="search-input" id="search-records" placeholder="🔍 搜索 门店/日期/备注..." oninput="renderRecords()" style="width:100%;padding:10px 14px;border:1px solid #cdd7e5;border-radius:10px;font-size:14px;margin-top:8px;background:#f8fafc">
     <div class="record-list" id="record-list"></div>
@@ -483,8 +483,8 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   </div>
 
   <!-- ====== 预警面板 ====== -->
-  <div class="panel" id="panel-alerts">
-    <div class="alert-list" id="alert-list"></div>
+  <div class="panel on" id="panel-alerts">
+    <div class="alert-list" id="alert-list"><div class="empty">⏳ 加载中...</div></div>
     <div class="alert-rules" id="alert-rules"></div>
   </div>
 
@@ -516,7 +516,10 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   <!-- ====== 管理面板 ====== -->
   <div class="panel" id="panel-mgmt">
     <div class="mgmt-section">
-      <h3>🏪 门店管理</h3>
+      <h3 style="display:flex;align-items:center;justify-content:space-between">
+        <span>🏪 门店管理</span>
+        <button class="copy-btn" onclick="openExtPopup()" style="font-size:11px;padding:2px 8px;font-weight:400">🔗 对接</button>
+      </h3>
       <div id="mgmt-stores"></div>
       <div class="mgmt-pill-row">
         <button class="mgmt-pill" onclick="showMgmtSheet('store')">＋ 添加门店 <span class="arr">▾</span></button>
@@ -535,69 +538,17 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     </div>
   </div>
 
-  <!-- ====== 外部对接面板 ====== -->
-  <div class="panel" id="panel-ext">
-    <div class="mgmt-section">
-      <h3>🔗 外部对接</h3>
-      <div style="font-size:12px;color:#5a6b85;margin-bottom:10px;line-height:1.6">
-        外部系统可通过此接口推送流水记录。<b>仅接受流水数据</b>，门店和分类需在管理面板维护。
-      </div>
-      <button class="copy-btn copy-all-btn" onclick="copyAllDoc()" style="margin-bottom:12px">📋 一键复制接口文档</button>
-
-      <div class="api-field">
-        <span class="api-label">方法</span>
-        <code style="flex:1;padding:4px 8px;background:#e8f5e9;border-radius:6px;font-size:11px;font-weight:600">POST</code>
-      </div>
-      <div class="api-field" style="margin-top:6px">
-        <span class="api-label">地址</span>
-        <code id="ext-url" style="flex:1;padding:4px 8px;background:#f0f3f8;border-radius:6px;font-size:11px;word-break:break-all"></code>
-        <button class="copy-btn" onclick="copyExt('url')">📋</button>
-      </div>
-      <div class="api-field" style="margin-top:6px">
-        <span class="api-label">密钥</span>
-        <code id="ext-key" style="flex:1;padding:4px 8px;background:#fef3c7;border-radius:6px;font-size:11px"></code>
-        <button class="copy-btn" onclick="copyExt('key')">📋</button>
-      </div>
-
-      <div style="margin-top:10px;font-size:12px;color:#5a6b85;font-weight:600">📥 请求体 (JSON)</div>
-      <table class="api-table" style="width:100%;margin-top:6px;font-size:11px;border-collapse:collapse">
-        <tr style="background:#f8fafc"><th style="text-align:left;padding:4px 8px;border:1px solid #e2e8f0">字段</th><th style="text-align:left;padding:4px 8px;border:1px solid #e2e8f0">类型</th><th style="text-align:left;padding:4px 8px;border:1px solid #e2e8f0">必填</th><th style="text-align:left;padding:4px 8px;border:1px solid #e2e8f0">说明</th></tr>
-        <tr><td style="padding:4px 8px;border:1px solid #e2e8f0"><code>records</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">数组</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">流水记录数组，一次可推多条</td></tr>
-        <tr style="background:#f8fafc"><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>id</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">字符串</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">唯一标识，用于去重（同ID重复推送自动忽略）</td></tr>
-        <tr><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>store</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">字符串</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">门店名称</td></tr>
-        <tr style="background:#f8fafc"><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>date</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">字符串</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">日期 YYYY-MM-DD</td></tr>
-        <tr><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>category</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">字符串</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">分类ID</td></tr>
-        <tr style="background:#f8fafc"><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>amount</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">数字</td><td style="padding:4px 8px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:4px 8px;border:1px solid #e2e8f0">金额（收入+ / 支出-，由分类方向决定符号）</td></tr>
-        <tr><td style="padding:4px 8px;border:1px solid #e2e8f0">　<code>note</code></td><td style="padding:4px 8px;border:1px solid #e2e8f0">字符串</td><td style="padding:4px 8px;border:1px solid #e2e8f0"></td><td style="padding:4px 8px;border:1px solid #e2e8f0">备注（可为空）</td></tr>
-      </table>
-
-      <div style="margin-top:8px;font-size:11px;color:#8899b0">
-        <span style="font-weight:600">可用门店：</span><span id="ext-stores">加载中…</span>
-        <span style="margin-left:12px;font-weight:600">分类ID：</span><span id="ext-cats">加载中…</span>
-      </div>
-
-      <div style="margin-top:10px;font-size:12px;color:#5a6b85;font-weight:600">📤 响应</div>
-      <code style="display:block;padding:6px 8px;background:#f0f3f8;border-radius:6px;font-size:10px;margin-top:4px;white-space:pre-wrap">{"ok": true, "records": 1}</code>
-      <div style="font-size:10px;color:#8899b0;margin-top:2px"><code>records</code> 为成功入库的条数（已存在的ID不重复计入）</div>
-
-      <div style="margin-top:8px;font-size:12px;color:#5a6b85;font-weight:600">📋 示例</div>
-      <code id="ext-body" style="display:block;padding:6px 8px;background:#eff6ff;border-radius:6px;font-size:10px;margin-top:4px;white-space:pre-wrap"></code>
-      <button class="copy-btn" onclick="copyExt('body')" style="margin-top:4px">📋 复制 body</button>
-
-      <div style="margin-top:6px;font-size:12px;color:#5a6b85;font-weight:600">curl 命令</div>
-      <code id="ext-curl" style="display:block;padding:6px 8px;background:#1a2438;color:#e2e8f0;border-radius:6px;font-size:10px;margin-top:4px;white-space:pre-wrap"></code>
-      <button class="copy-btn" onclick="copyExt('curl')" style="margin-top:4px">📋 复制 curl</button>
-    </div>
-  </div>
-
   <!-- ====== 模拟面板 ====== -->
   <div class="panel" id="panel-sim" style="padding-bottom:120px">
-    <!-- 模式选择 -->
-    <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
+      <!-- 模式选择 -->
+      <div style="display:flex;align-items:center;gap:8px">
       <span style="font-size:12px;color:#5a6b85;white-space:nowrap">模式：</span>
       <span class="cal-pill" id="sim-mode-pill" onclick="toggleSimMode()" style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer">
         <span id="sim-mode-label">正帮扶（排位≤阈值出手）</span><span class="arr">▾</span>
       </span>
+    </div>
+      <button onclick="showDocPopup()" style="background:#1e3a5f;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;font-weight:600">📄 文档</button>
     </div>
 
     <!-- 算法选项 -->
@@ -670,42 +621,67 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     </div>
   </div>
 
-  <!-- ====== 文档面板 ====== -->
-  <div class="panel" id="panel-doc" style="padding-bottom:120px">
-    <div style="background:#fff;border-radius:14px;padding:16px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.03);font-size:13px;line-height:1.8;color:#333;overflow-x:auto">
-      <h2 style="font-size:18px;color:#1e3a5f;margin:0 0 6px;text-align:center">🎯 总部出手模拟系统</h2>
-      <p style="text-align:center;font-size:11px;color:#8899b0;margin:0 0 16px">v1.0 · 2026-07-10 · 设计文档</p>
+  <!-- ====== 下单面板 ====== -->
+  <div class="panel" id="panel-order" style="padding-bottom:120px">
+    <div id="order-sheet">
+      <div class="empty">⏳ 加载中...</div>
+    </div>
+  </div>
+
+  <!-- ====== 文档弹窗 ====== -->
+  <div class="modal-mask hide" id="doc-popup" onclick="if(event.target===this)closeDocPopup()">
+    <div class="modal-box" style="width:95%;max-width:520px;max-height:85vh;overflow-y:auto;padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="margin:0;font-size:18px;color:#1e3a5f">🎯 总部出手模拟系统</h3>
+        <button onclick="closeDocPopup()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8;padding:0 4px">✕</button>
+      </div>
+      <p style="text-align:center;font-size:11px;color:#8899b0;margin:0 0 16px">v2.0 · 2026-07-13 · 以代码为准</p>
 
       <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">一、对赌协议</h3>
+      <div style="padding:6px 10px;background:#fef9c3;border:1px solid #fde047;border-radius:6px;font-size:11px;margin:4px 0">⚠️ <b>命中由当日排位 ≤ 25 判定</b>（非 draw 值）——排位反映门店当天的预测能力</div>
       <table style="width:100%;border-collapse:collapse;font-size:11px;margin:6px 0">
-        <tr style="background:#3b82f6;color:#fff"><th style="padding:6px;text-align:center">条件</th><th style="padding:6px;text-align:center">结果</th><th style="padding:6px;text-align:center">公式</th></tr>
-        <tr><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">draw ≤ 25</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">命中·盈利</td><td style="padding:5px;text-align:center;font-size:11px;border-bottom:1px solid #eee">+ (配资 × 25 × 0.88)</td></tr>
-        <tr><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">draw > 25</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">未中·亏损</td><td style="padding:5px;text-align:center;font-size:11px;border-bottom:1px solid #eee">− (配资 × 25)</td></tr>
+        <tr style="background:#3b82f6;color:#fff"><th style="padding:6px;text-align:center">模式</th><th style="padding:6px;text-align:center">命中条件</th><th style="padding:6px;text-align:center">命中收益</th><th style="padding:6px;text-align:center">亏损</th><th style="padding:6px;text-align:center">买号数</th></tr>
+        <tr><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">正帮扶</td><td style="padding:5px;text-align:center;border-bottom:1px solid #eee">今日排位 ≤ 25</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+配资×22</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−配资×25</td><td style="padding:5px;text-align:center;font-size:10px;border-bottom:1px solid #eee">25个号</td></tr>
+        <tr><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">反帮扶</td><td style="padding:5px;text-align:center;border-bottom:1px solid #eee">今日排位 &gt; 25</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+配资×23</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−配资×24</td><td style="padding:5px;text-align:center;font-size:10px;border-bottom:1px solid #eee">24个号</td></tr>
       </table>
 
       <table style="width:100%;border-collapse:collapse;font-size:11px;margin:8px 0">
-        <tr style="background:#f0f3f8;color:#1e3a5f"><th style="padding:5px;text-align:center">配资</th><th style="padding:5px;text-align:center">命中收益</th><th style="padding:5px;text-align:center">未中亏损</th></tr>
-        <tr><td style="padding:5px;text-align:center;border-bottom:1px solid #eee">10万</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+220万</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−250万</td></tr>
-        <tr><td style="padding:5px;text-align:center;border-bottom:1px solid #eee">20万</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+440万</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−500万</td></tr>
-        <tr><td style="padding:5px;text-align:center;border-bottom:1px solid #eee">40万</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+880万</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−1000万</td></tr>
+        <tr style="background:#f0f3f8;color:#1e3a5f"><th style="padding:5px;text-align:center">配资</th><th style="padding:5px;text-align:center">正·命中</th><th style="padding:5px;text-align:center">正·亏损</th><th style="padding:5px;text-align:center">反·命中</th><th style="padding:5px;text-align:center">反·亏损</th></tr>
+        <tr><td style="padding:5px;text-align:center;border-bottom:1px solid #eee">10万</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+220万</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−250万</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+230万</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−240万</td></tr>
+        <tr><td style="padding:5px;text-align:center;border-bottom:1px solid #eee">20万</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+440万</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−500万</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+460万</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−480万</td></tr>
+        <tr><td style="padding:5px;text-align:center;border-bottom:1px solid #eee">40万</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+880万</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−1000万</td><td style="padding:5px;text-align:center;color:#16a34a;font-weight:700;border-bottom:1px solid #eee">+920万</td><td style="padding:5px;text-align:center;color:#dc2626;font-weight:700;border-bottom:1px solid #eee">−960万</td></tr>
       </table>
 
       <div style="padding:8px 10px;background:#1a1a2e;color:#c9d1d9;border-radius:8px;font-size:10px;line-height:1.5;margin:6px 0;overflow-x:auto">
-        EV = 配资 × 25 × (P(≤25)×0.88 − P(>25))<br>
-        &nbsp;&nbsp;= 250万 × (0.55×0.88 − 0.45) = +8.5万/次
+        正 EV = cap × (P(排≤25)×22 − P(排>25)×25)<br>
+        反 EV = cap × (P(排>25)×23 − P(排≤25)×24)
       </div>
 
-      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">二、规则约束</h3>
+      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">二、核心逻辑：双排位模型</h3>
+      <div style="padding:8px 10px;background:#1a1a2e;color:#c9d1d9;border-radius:8px;font-size:10px;line-height:1.5;margin:6px 0;overflow-x:auto">
+        <b style="color:#e67e22">决策</b>：用 <b>前一日排位</b> 判断是否出手（达标 = 匹配 threshold+mode）<br>
+        <b style="color:#16a34a">结果</b>：用 <b>当日排位 ≤25</b> 判定命中/亏损（正: ≤25中 · 反: >25中）<br>
+        <b style="color:#8899b0">独立</b>：决策条件 ≠ 结果条件，两者完全解耦
+      </div>
+
+      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">三、规则约束</h3>
       <table style="width:100%;border-collapse:collapse;font-size:11px;margin:6px 0">
-        <tr style="background:#3b82f6;color:#fff"><th style="padding:6px;text-align:center">约束</th><th style="padding:6px;text-align:center">值</th><th style="padding:6px;text-align:center">说明</th></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee">轮次</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">每天1轮</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">逐日独立</td></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee">每轮出手</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">≤3次</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">≤3店，可重同店</td></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee">每店每天</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">≤3次</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">同店可连续</td></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee">总轮数</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">90轮</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">90天全部</td></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee">资金</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">不限</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">总部管够</td></tr>
+        <tr style="background:#3b82f6;color:#fff"><th style="padding:6px;text-align:center">约束</th><th style="padding:6px;text-align:center">值</th><th style="padding:6px;text-align:center">代码</th></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee">轮次</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">每天1轮</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">simulate_one_day × 90天</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee">每轮出手</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">≤3家店</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">shots_per_day=3, 按capital降序取前3</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee">每店每天</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">≤1次</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">每店从前日排位一次判定，qualified_list每店至多1条</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee">总天数</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">90天</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">2026-04-11 起</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee">资金</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">不限</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">总部管够</td></tr>
+        <tr><td style="padding:5px">止损</td><td style="padding:5px;text-align:center">负负则结束</td><td style="padding:5px;font-size:10px;text-align:center">stop_on_neg2: 连续2天负收益→出局</td></tr>
       </table>
 
-      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">三、数据源 &amp; 实测画像</h3>
+      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">四、数据源</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:11px;margin:6px 0">
+        <tr style="background:#3b82f6;color:#fff"><th style="padding:6px;text-align:center">数据</th><th style="padding:6px;text-align:center">来源</th><th style="padding:6px;text-align:center">详情</th></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center;font-weight:600">排位</td><td style="padding:5px;border-bottom:1px solid #eee;font-family:monospace;font-size:10px;text-align:center">funds-v2.db → records</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">category=cat_1783487972049 · 同店+日期去重取最新</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center;font-weight:600">抽签号</td><td style="padding:5px;border-bottom:1px solid #eee;font-family:monospace;font-size:10px;text-align:center">warehouse.db → analysis_daily</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">project_id=19 · draw_number（仅显示用）</td></tr>
+        <tr><td style="padding:5px;text-align:center;font-weight:600">实际盈亏</td><td style="padding:5px;font-family:monospace;font-size:10px;text-align:center">funds-v2.db → records</td><td style="padding:5px;font-size:10px;text-align:center">category='income' · 历史指南用</td></tr>
+      </table>
       <div style="display:flex;flex-wrap:wrap;gap:3px;margin:4px 0 8px">
         <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">一店</span>
         <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">二店</span>
@@ -716,81 +692,103 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
         <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">集合14</span>
         <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">集合16</span>
       </div>
-      <table style="width:100%;border-collapse:collapse;font-size:11px;margin:4px 0">
-        <tr><td style="padding:6px;background:#f9fafb;text-align:center;border-radius:6px 0 0 0"><b style="font-size:14px;color:#1e3a5f">90/90</b><br><span style="font-size:9px;color:#8899b0">有效天数</span></td>
-        <td style="padding:6px;background:#f9fafb;text-align:center;border-radius:0 6px 0 0"><b style="font-size:14px;color:#1e3a5f">93%</b><br><span style="font-size:9px;color:#8899b0">有达标店天</span></td></tr>
-        <tr><td style="padding:6px;background:#f9fafb;text-align:center"><b style="font-size:14px;color:#1e3a5f">4.0</b><br><span style="font-size:9px;color:#8899b0">日均达标店</span></td>
-        <td style="padding:6px;background:#f9fafb;text-align:center"><b style="font-size:14px;color:#16a34a">54.8%</b><br><span style="font-size:9px;color:#8899b0">命中率</span></td></tr>
-        <tr><td style="padding:6px;background:#f9fafb;text-align:center;border-radius:0 0 0 6px"><b style="font-size:14px;color:#1e3a5f">51.0%</b><br><span style="font-size:9px;color:#8899b0">理论命中率</span></td>
-        <td style="padding:6px;background:#f9fafb;text-align:center;border-radius:0 0 6px 0"><b style="font-size:14px;color:#16a34a">+7.4万</b><br><span style="font-size:9px;color:#8899b0">单次期望</span></td></tr>
-      </table>
-      <div style="padding:6px 10px;background:#dcfce7;border:1px solid #86efac;border-radius:6px;font-size:11px;margin:8px 0">✅ 命中率55% > 理论51%，EV为正，策略可行</div>
 
-      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">四、决策变量</h3>
+      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">五、决策变量</h3>
       <table style="width:100%;border-collapse:collapse;font-size:11px;margin:6px 0">
-        <tr style="background:#3b82f6;color:#fff"><th style="padding:6px;text-align:center">参数</th><th style="padding:6px;text-align:center">范围</th><th style="padding:6px;text-align:center">含义</th></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center;font-family:monospace;font-size:11px">threshold</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">1~49</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">排位触发门槛</td></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center;font-family:monospace;font-size:11px">capital</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">10/20/40</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">配资金额(万)</td></tr>
-        <tr><td style="padding:5px;text-align:center;font-family:monospace;font-size:11px">mode</td><td style="padding:5px;text-align:center">正/反</td><td style="padding:5px;font-size:11px;text-align:center">正=≤阈值出手<br>反=>阈值出手</td></tr>
+        <tr style="background:#3b82f6;color:#fff"><th style="padding:6px;text-align:center">参数</th><th style="padding:6px;text-align:center">优化用</th><th style="padding:6px;text-align:center">全量范围</th><th style="padding:6px;text-align:center">含义</th></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center;font-family:monospace;font-size:11px">threshold</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center;font-size:10px">10档: 1/5/10/15/20/25/30/35/40/45</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">1~49（手动模式全部可用）</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">排位触发门槛</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center;font-family:monospace;font-size:11px">capital</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center;font-size:10px">3档: 10/20/40</td><td style="padding:5px;border-bottom:1px solid #eee;text-align:center">10/20/40 万</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">配资金额(万)</td></tr>
+        <tr><td style="padding:5px;text-align:center;font-family:monospace;font-size:11px">mode</td><td style="padding:5px;text-align:center;font-size:10px">2种: positive/negative</td><td style="padding:5px;text-align:center">正=≤阈值出手</td><td style="padding:5px;font-size:11px;text-align:center">正帮扶/反帮扶</td></tr>
       </table>
-      <p style="font-size:11px;color:#8899b0;margin:4px 0">单店搜参：<b>10×3×2=60</b>种 · 8店全组合 <b>60⁸</b> → 坐标下降（精简版，秒级完成）</p>
+      <p style="font-size:10px;color:#8899b0;margin:4px 0">每店组合空间：10×3×2=<b>60</b>种（优化）· 8店全组合 <b>60⁸</b> → 坐标下降压制到秒级</p>
 
-      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">五、优化算法</h3>
-      <div style="padding:6px 10px;background:#fef9c3;border:1px solid #fde047;border-radius:6px;font-size:11px;margin:4px 0"><b>外层：</b>优化每店参数 · <b>内层：</b>给定参数→逐日90天→总收益</div>
+      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">六、4种优化算法</h3>
 
-      <p style="font-size:11px;margin:8px 0 4px"><b style="color:#3b82f6">内层（逐日贪心）：</b></p>
-      <div style="font-size:11px;line-height:1.8;padding:0 4px">
-        ① 每日过滤：每店按(threshold,mode)判达标<br>
-        ② 排序：达标店按capital降序<br>
-        ③ 选店：取前3名，分配各自capital<br>
-        ④ 结算：对照draw计算盈亏 → 90天累加
+      <p style="font-size:11px;margin:8px 0 4px"><b style="color:#3b82f6">① 坐标下降</b>（坐标下降精简版 · coordinate）</p>
+      <div style="font-size:10px;line-height:1.8;padding:0 4px;color:#5a6b85">
+        5个均匀起点 (th:5/15/25/35/45, cap:10/20/40/20/10)<br>
+        → 每家店搜 10×3×2=60 种 · 固定其他7店<br>
+        → 8店 × 60 × 3轮 = <b>1,440 次</b> · 约 0.8 秒<br>
+        → 5个起点各跑一遍，取最优点（确定性、无随机性）
       </div>
-      <div style="padding:6px 10px;background:#dcfce7;border:1px solid #86efac;border-radius:6px;font-size:11px;margin:6px 0">💡 所有店EV相同（只取决于draw），选店按capital降序。优化本质：找「哪些店阈值让它在更多命中日出任」</div>
 
-      <p style="font-size:11px;margin:8px 0 4px"><b style="color:#3b82f6">外层（坐标下降精简版）：</b></p>
-      <div style="font-size:11px;line-height:1.8;padding:0 4px">
-        ① 初始化每店随机参数（从10个阈值档位中随机）<br>
-        ② 迭代：固定其他7店→遍历60种组合→取最优<br>
-        ③ 输出最优参数+总收益<br>
-        ④ 支持4种模式：坐标下降 / 等权统一 / 仅正向 / 连亏止损
+      <p style="font-size:11px;margin:8px 0 4px"><b style="color:#3b82f6">② 等权统一</b>（uniform）</p>
+      <div style="font-size:10px;line-height:1.8;padding:0 4px;color:#5a6b85">
+        阶段1：暴力搜统一参数 10×3=30 种 → 取最优<br>
+        阶段2：逐店微调阈值（±邻档：-10/-5/0/+5/+10）→ 8×5=<b>40 次</b><br>
+        总计 <b>70 次</b> · 约 0.02 秒
       </div>
-      <p style="font-size:10px;color:#8899b0;margin:4px 0">⏱ 8×60×3轮=1,440次 · 约<b>0.5~1秒</b>完成（阈值搜索从49档精简到10档：1,5,10,15,20,25,30,35,40,45）</p>
 
-      <p style="font-size:11px;margin:8px 0 4px"><b style="color:#3b82f6">防过拟合：</b>720数据点(90天×8店)，覆盖多周期。可选 walk-forward 前60训练+后30验证</p>
+      <p style="font-size:11px;margin:8px 0 4px"><b style="color:#3b82f6">③ 仅正向出手</b>（positive_only）</p>
+      <div style="font-size:10px;line-height:1.8;padding:0 4px;color:#5a6b85">
+        mode 锁定 positive · 每家店搜 10×3=<b>30 种</b><br>
+        → 8×30×3轮 = <b>720 次</b> · 保守风格
+      </div>
 
-      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">六、API 设计</h3>
+      <p style="font-size:11px;margin:8px 0 4px"><b style="color:#3b82f6">④ 连亏止损</b>（stop_neg2）</p>
+      <div style="font-size:10px;line-height:1.8;padding:0 4px;color:#5a6b85">
+        坐标下降 + 连续 2 天负收益→出局 · 同 1,440 次
+      </div>
+
+      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">七、每日选店机制</h3>
+      <div style="font-size:10px;line-height:1.8;padding:0 8px;color:#5a6b85">
+        ① 每店用前日排位按 (threshold, mode) 判达标<br>
+        ② 达标店按 capital 降序排队<br>
+        ③ 取前 3 名出手（capital 大的优先）<br>
+        ④ 例：5家达标(40/40/20/20/10万) → 取前3家(40/40/20)
+      </div>
+      <div style="padding:6px 10px;background:#dcfce7;border:1px solid #86efac;border-radius:6px;font-size:11px;margin:6px 0">💡 所有店 EV 期望相同（只取决于排位分布），选店按 capital 降序。优化本质：找「哪些店阈值让它在前日达标、且当日排≤25(正)或>25(反)」</div>
+
+      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">八、API 设计</h3>
       <table style="width:100%;border-collapse:collapse;font-size:11px;margin:6px 0">
-        <tr style="background:#3b82f6;color:#fff"><th style="padding:6px;text-align:center">方法</th><th style="padding:6px;text-align:center">路径</th><th style="padding:6px;text-align:center">说明</th></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center"><b style="color:#3b82f6">GET</b></td><td style="padding:5px;border-bottom:1px solid #eee;font-family:monospace;font-size:10px">/api/simulate/data</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">取90天排位+抽签</td></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center"><b style="color:#16a34a">POST</b></td><td style="padding:5px;border-bottom:1px solid #eee;font-family:monospace;font-size:10px">/api/simulate/optimize</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">跑坐标下降优化</td></tr>
-        <tr><td style="padding:5px;text-align:center"><b style="color:#16a34a">POST</b></td><td style="padding:5px;font-family:monospace;font-size:10px">/api/simulate/manual</td><td style="padding:5px;font-size:10px;text-align:center">手动设参模拟</td></tr>
+        <tr style="background:#3b82f6;color:#fff"><th style="padding:6px;text-align:center">方法</th><th style="padding:6px;text-align:center">路径</th><th style="padding:6px;text-align:center">参数</th><th style="padding:6px;text-align:center">说明</th></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center"><b style="color:#3b82f6">GET</b></td><td style="padding:5px;border-bottom:1px solid #eee;font-family:monospace;font-size:10px">/api/simulate/data</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">?days=90</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">90天排位+抽签原始数据</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center"><b style="color:#16a34a">POST</b></td><td style="padding:5px;border-bottom:1px solid #eee;font-family:monospace;font-size:10px">/api/simulate/optimize</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">{days,mode,algorithm}</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">一键优化 → 每店参数+总收益+每日明细</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center"><b style="color:#16a34a">POST</b></td><td style="padding:5px;border-bottom:1px solid #eee;font-family:monospace;font-size:10px">/api/simulate/manual</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">{stores,days,algorithm}</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">逐店手动设参 → 模拟90天</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee;text-align:center"><b style="color:#3b82f6">GET</b></td><td style="padding:5px;border-bottom:1px solid #eee;font-family:monospace;font-size:10px">/api/simulate/daily-guide</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">?days=90&amp;mode=positive</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:10px;text-align:center">4组算法投票 → 当日下单建议（正/反）</td></tr>
+        <tr><td style="padding:5px;text-align:center"><b style="color:#3b82f6">GET</b></td><td style="padding:5px;font-family:monospace;font-size:10px">/api/simulate/guide-history</td><td style="padding:5px;font-size:10px;text-align:center">?limit=30&amp;mode=positive</td><td style="padding:5px;font-size:10px;text-align:center">历史指南 + 当天实际盈亏 + 累计统计</td></tr>
       </table>
 
-      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">七、模拟面板 UI</h3>
+      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">九、下单指南（投票机制）</h3>
+      <div style="font-size:10px;line-height:1.8;padding:0 8px;color:#5a6b85">
+        ① 4种算法（坐标下降/等权/正向/止损）各跑一次优化<br>
+        ② 取最新一天门店排位 → 逐店用各算法最优参数判达标<br>
+        ③ 4组算法就「该店是否出手」投票 → 得票≥1即为推荐<br>
+        ④ 每店记录配资明细（哪个算法推荐了多少配资）<br>
+        ⑤ 结果保存到 sim_guides 表，支持历史回查
+      </div>
+
+      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">十、模拟面板 UI</h3>
       <div style="padding:8px 10px;background:#1a1a2e;color:#c9d1d9;border-radius:8px;font-size:10px;line-height:1.5;margin:6px 0;overflow-x:auto">
-┌──────────────────────────────┐<br>
-│ 🎯 总部出手模拟　2026-04~07 │<br>
-│ 模式: [正帮扶 ▾]　　　　　　 │<br>
-│ ──────────────────────────── │<br>
-│ 门店　 阈值　配资　 收益　　 │<br>
-│ 一店 [15▼] [40万] +3,520万  │<br>
-│ 二店 [28▼] [20万]　 +440万  │<br>
-│ ──────────────────────────── │<br>
-│ 📊总:+5,280万 🎯68% ⚡-2,000│<br>
-│ [🚀一键优化] [▶手动模拟]    │<br>
-└──────────────────────────────┘
+┌────────────────────────────────┐<br>
+│ 🎯 总部出手模拟  2026-04~07   │<br>
+│ 模式: [正帮扶 ▾]              │<br>
+│ 算法: [坐标下降 ▾] + 提示     │<br>
+│ ────────────────────────────── │<br>
+│ 门店  阈值  配资  模式        │<br>
+│ 一店 [15▼] [40▼] [正▼]       │<br>
+│ 二店 [28▼] [20▼] [反▼]       │<br>
+│ ...   (8家店各独立设置)       │<br>
+│ ────────────────────────────── │<br>
+│ [🚀一键优化] [▶手动模拟]      │<br>
+│ [📋下单指南]  [📋反帮扶]      │<br>
+│ [⚖️ 正负帮扶对比]             │<br>
+│ ────────────────────────────── │<br>
+│ 📊总收益  🎯命中率  📉回撤    │<br>
+│ 📅 每日明细（仅出手日可展开） │<br>
+└────────────────────────────────┘
       </div>
 
-      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">八、部署</h3>
+      <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">十一、部署</h3>
       <table style="width:100%;border-collapse:collapse;font-size:11px;margin:6px 0">
         <tr style="background:#3b82f6;color:#fff"><th style="padding:6px;text-align:center">层</th><th style="padding:6px;text-align:center">位置</th></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee">后端</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">funds-v2/main.py(8009) + simulate.py</td></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee">前端</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">funds-v2.html「📄文档」Tab</td></tr>
-        <tr><td style="padding:5px;border-bottom:1px solid #eee">数据</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">跨库: funds-v2.db + warehouse.db</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee">后端</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">~/projects/funds-v2/backend/main.py (port 8009) + simulate.py</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee">前端</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">funds-v2.html (单文件, ~5200行)</td></tr>
+        <tr><td style="padding:5px;border-bottom:1px solid #eee">数据库</td><td style="padding:5px;border-bottom:1px solid #eee;font-size:11px;text-align:center">跨库: funds-v2.db + warehouse.db (number-warehouse)</td></tr>
         <tr><td style="padding:5px">线上</td><td style="padding:5px;font-size:11px;text-align:center">https://www.ct256.cn/funds-v2</td></tr>
       </table>
 
-      <p style="text-align:center;color:#ccc;font-size:10px;margin:16px 0 0">总部出手模拟 · v1.0</p>
+      <p style="text-align:center;color:#ccc;font-size:10px;margin:16px 0 0">总部出手模拟 · v2.0 · 以业务代码为准</p>
     </div>
   </div>
 
@@ -879,6 +877,49 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   </div>
 </div>
 
+<!-- ====== 外部对接弹窗 ====== -->
+<div class="mgmt-sheet-mask hide" id="ext-popup-mask" onclick="closeExtPopup()">
+  <div class="mgmt-sheet" onclick="event.stopPropagation()" style="width:340px;max-height:80vh;overflow-y:auto;padding:16px">
+    <div class="ms-title">🔗 外部对接</div>
+    <div style="font-size:11px;color:#5a6b85;margin-bottom:10px;line-height:1.5">
+      外部系统通过此接口推送流水记录。<b>仅接受流水数据</b>，门店和分类需在管理面板维护。
+    </div>
+    <div class="api-field" style="margin-bottom:4px">
+      <span class="api-label">方法</span>
+      <code style="flex:1;padding:4px 8px;background:#e8f5e9;border-radius:6px;font-size:11px;font-weight:600">POST</code>
+    </div>
+    <div class="api-field" style="margin-bottom:4px">
+      <span class="api-label">地址</span>
+      <code id="ext-url" style="flex:1;padding:4px 8px;background:#f0f3f8;border-radius:6px;font-size:11px;word-break:break-all"></code>
+      <button class="copy-btn" onclick="copyExt('url')">📋</button>
+    </div>
+    <div class="api-field" style="margin-bottom:10px">
+      <span class="api-label">密钥</span>
+      <code id="ext-key" style="flex:1;padding:4px 8px;background:#fef3c7;border-radius:6px;font-size:11px"></code>
+      <button class="copy-btn" onclick="copyExt('key')">📋</button>
+    </div>
+    <div style="font-size:11px;color:#5a6b85;font-weight:600;margin-bottom:4px">📥 请求体 (JSON)</div>
+    <table class="api-table" style="width:100%;font-size:10px;border-collapse:collapse;margin-bottom:6px">
+      <tr style="background:#f8fafc"><th style="text-align:left;padding:3px 6px;border:1px solid #e2e8f0">字段</th><th style="text-align:left;padding:3px 6px;border:1px solid #e2e8f0">类型</th><th style="text-align:left;padding:3px 6px;border:1px solid #e2e8f0">必填</th><th style="text-align:left;padding:3px 6px;border:1px solid #e2e8f0">说明</th></tr>
+      <tr><td style="padding:3px 6px;border:1px solid #e2e8f0"><code>records</code></td><td style="padding:3px 6px;border:1px solid #e2e8f0">数组</td><td style="padding:3px 6px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:3px 6px;border:1px solid #e2e8f0">流水记录数组，一次可推多条</td></tr>
+      <tr style="background:#f8fafc"><td style="padding:3px 6px;border:1px solid #e2e8f0">　<code>id</code></td><td style="padding:3px 6px;border:1px solid #e2e8f0">字符串</td><td style="padding:3px 6px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:3px 6px;border:1px solid #e2e8f0">唯一标识，用于去重</td></tr>
+      <tr><td style="padding:3px 6px;border:1px solid #e2e8f0">　<code>store</code></td><td style="padding:3px 6px;border:1px solid #e2e8f0">字符串</td><td style="padding:3px 6px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:3px 6px;border:1px solid #e2e8f0">门店名称</td></tr>
+      <tr style="background:#f8fafc"><td style="padding:3px 6px;border:1px solid #e2e8f0">　<code>date</code></td><td style="padding:3px 6px;border:1px solid #e2e8f0">字符串</td><td style="padding:3px 6px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:3px 6px;border:1px solid #e2e8f0">日期 YYYY-MM-DD</td></tr>
+      <tr><td style="padding:3px 6px;border:1px solid #e2e8f0">　<code>category</code></td><td style="padding:3px 6px;border:1px solid #e2e8f0">字符串</td><td style="padding:3px 6px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:3px 6px;border:1px solid #e2e8f0">分类ID</td></tr>
+      <tr style="background:#f8fafc"><td style="padding:3px 6px;border:1px solid #e2e8f0">　<code>amount</code></td><td style="padding:3px 6px;border:1px solid #e2e8f0">数字</td><td style="padding:3px 6px;border:1px solid #e2e8f0;color:#e53e3e">✓</td><td style="padding:3px 6px;border:1px solid #e2e8f0">金额（收入+ / 支出-）</td></tr>
+      <tr><td style="padding:3px 6px;border:1px solid #e2e8f0">　<code>note</code></td><td style="padding:3px 6px;border:1px solid #e2e8f0">字符串</td><td style="padding:3px 6px;border:1px solid #e2e8f0"></td><td style="padding:3px 6px;border:1px solid #e2e8f0">备注（可为空）</td></tr>
+    </table>
+    <div style="font-size:10px;color:#8899b0;margin-bottom:6px">
+      可用门店：<span id="ext-stores">—</span>　分类ID：<span id="ext-cats">—</span>
+    </div>
+    <div style="font-size:11px;color:#5a6b85;font-weight:600;margin-bottom:2px">📋 示例</div>
+    <code id="ext-body" style="display:block;padding:6px 8px;background:#eff6ff;border-radius:6px;font-size:10px;margin-bottom:4px;white-space:pre-wrap"></code>
+    <div style="font-size:11px;color:#5a6b85;font-weight:600;margin-bottom:2px">curl 命令</div>
+    <code id="ext-curl" style="display:block;padding:6px 8px;background:#1a2438;color:#e2e8f0;border-radius:6px;font-size:10px;margin-bottom:4px;white-space:pre-wrap"></code>
+    <button class="copy-btn copy-all-btn" onclick="copyAllDoc()" style="width:100%;padding:8px;margin-top:4px">📋 一键复制接口文档</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -912,7 +953,7 @@ var alertRules = [
   {id:'combo_p2n', cat:'', type:'combo_p2n', desc:'组合震荡转负预警(盈后累计2负)', pct:3, on:false},
   {id:'store_rank', cat:'', type:'store_rank', desc:'排位>25连续预警(阈值25)', pct:3, on:true},
 ];
-var currentTab = 'entry';
+var currentTab = 'alerts';
 
 // 管理弹窗状态
 var mgmtMode = '';
@@ -1378,6 +1419,7 @@ function showToast(msg, ms, cls) {
   el.textContent = msg;
   el.className = 'toast show' + (cls ? ' ' + cls : '');
   clearTimeout(toastTimer);
+  if (ms === undefined) ms = 3000;
   if (ms) toastTimer = setTimeout(function(){ el.classList.remove('show'); }, ms);
 }
 function toast(msg, cls) { showToast(msg, 2000, cls||'error'); }
@@ -3583,6 +3625,14 @@ function closeMgmtSheet() {
   document.getElementById('mgmt-sheet-mask').classList.add('hide');
 }
 
+function openExtPopup() {
+  fillExtInfo();
+  document.getElementById('ext-popup-mask').classList.remove('hide');
+}
+function closeExtPopup() {
+  document.getElementById('ext-popup-mask').classList.add('hide');
+}
+
 function toggleCatShow(id) {
   var cat = findCat(id);
   if (!cat) return;
@@ -3650,22 +3700,434 @@ function importData(input) {
 
 // ═══════════ 标签切换 ═══════════
 function switchTab(tab) {
+  // 旧版 ext 标签已合并到管理
+  if (tab === 'ext') tab = 'mgmt';
   currentTab = tab;
   var btns = document.querySelectorAll('.tab-bar button');
   btns.forEach(function(b,i){
-    b.className = ['entry','overview','ranking','compare','alerts','mgmt','ext','sim','doc'][i]===tab ? 'on' : '';
+    b.className = ['alerts','order','sim','ranking','overview','compare','entry','mgmt'][i]===tab ? 'on' : '';
   });
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('on'); });
   document.getElementById('panel-'+tab).classList.add('on');
   // FAB：排位/对比页隐藏
   var fab = document.getElementById('fab-btn');
-  if (fab) fab.classList.toggle('hide', tab==='ranking'||tab==='compare'||tab==='doc'||tab==='sim');
+  if (fab) fab.classList.toggle('hide', tab==='ranking'||tab==='compare'||tab==='sim');
   if (tab === 'entry') { loadRankingTo('entry-rank'); }
   if (tab === 'compare') { initCmpCanvas(); drawCompare(); }
-  if (tab === 'mgmt') { fetchLogs(); }
-  if (tab === 'ext') { fillExtInfo(); }
+  if (tab === 'mgmt') { fetchLogs(); fillExtInfo(); }
   if (tab === 'ranking') { loadRankingTo('rank-content'); updateRankStats(); }
   if (tab === 'sim') { initSimPanel(); }
+  if (tab === 'order') { initOrderSheet(); }
+}
+
+function showDocPopup() {
+  document.getElementById('doc-popup').classList.remove('hide');
+}
+function closeDocPopup() {
+  document.getElementById('doc-popup').classList.add('hide');
+}
+
+// ═══════════ 下单表 ═══════════
+var orderData = null;
+
+function initOrderSheet() {
+  var el = document.getElementById('order-sheet');
+  el.innerHTML = '<div class="empty">⏳ 加载中...</div>';
+  fetch(API_BASE + '/api/simulate/order-sheet?days=30')
+    .then(r => r.json())
+    .then(function(d) {
+      orderData = d;
+      renderOrderSheet(d);
+    })
+    .catch(function(e) {
+      el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">加载失败: '+e.message+'</div>';
+    });
+}
+
+function renderOrderSheet(d) {
+  var el = document.getElementById('order-sheet');
+  var h = '';
+
+  // 日期行（含同步状态）
+  var pulledAt = (d.numbers||{}).pulled_at || '';
+  var numMatched = (d.numbers||{}).matched;
+  var latestDataDate = (d.numbers||{}).date || '';
+  var syncStatus = numMatched ? '✅ 已同步 ' + latestDataDate : '⚠️ 未同步';
+  var dateTag = d.date ? ' · ' + d.date.substr(5) : '';  // MM-DD
+  var nextDate = offsetDate(d.date, 1);
+  orderSheetDate = nextDate;
+  h += '<div style="background:#fff;border-radius:14px;padding:12px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.03);text-align:center">';
+  h += '<div style="display:flex;justify-content:center;gap:20px;font-size:13px;color:#5a6b85;margin-bottom:8px">';
+  h += '<span>最新排位日期 <b style="color:#1e3a5f">'+d.date+'</b></span>';
+  h += '<span>出手日期 <b style="color:#1e3a5f">'+nextDate+'</b></span>';
+  h += '</div>';
+  h += '<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">';
+  h += '<input type="date" id="order-date-input" value="'+nextDate+'" style="width:130px;padding:6px 8px;border-radius:8px;border:1px solid #cdd7e5;font-size:13px;color:#1e3a5f;text-align:center;background:#f8fafc">';
+  h += '<button onclick="syncOrderNumbers()" id="sync-order-btn" style="padding:6px 12px;border-radius:8px;border:none;background:#3b82f6;color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">更新正负下单</button>';
+  h += '<button onclick="showOrderNumbersModal()" id="order-view-btn" style="padding:6px 12px;border-radius:8px;border:1px solid #cdd7e5;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;'+(numMatched?'background:#f8fafc;color:#3a5070':'background:#e5e7eb;color:#9ca3af;cursor:default')+'"'+(numMatched?'':' disabled')+'>列表</button>';
+  h += '</div>';
+  h += '<div style="font-size:10px;color:'+(pulledAt?'#16a34a':'#dc2626')+'">'+syncStatus+'</div>';
+
+  h += '<button onclick="syncAllOrders()" style="padding:2px 8px;border-radius:12px;border:1px solid #cdd7e5;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer">📅 全量</button>';
+  h += '<input type="date" id="order-sync-date" value="'+nextDate+'" style="width:108px;padding:2px 6px;border-radius:12px;border:1px solid #cdd7e5;font-size:10px;color:#5a6b85;background:#f8fafc">';
+  h += '<button onclick="syncOrderByDate()" style="padding:2px 8px;border-radius:12px;border:1px solid #3b82f6;background:#eff6ff;font-size:10px;color:#3b82f6;cursor:pointer;font-weight:600">🔄 同步</button>';
+  h += '<button onclick="showOrderNumbersModal()" style="padding:2px 8px;border-radius:12px;border:1px solid #cdd7e5;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer">📋 查看</button>';
+  h += '</div></div>';
+
+  // 双列：正帮扶 | 反帮扶
+  h += '<div style="display:flex;gap:8px;margin-top:8px">';
+
+  // 正帮扶
+  h += '<div style="flex:1;background:#fff;border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:13px;font-weight:700;color:#16a34a;margin-bottom:8px;text-align:center">🟢 正帮扶'+dateTag+'</div>';
+  if (d.positive.stores.length) {
+    d.positive.stores.forEach(function(s) {
+      var strength = s.votes === '4/4' ? '🔥' : s.votes >= '3' ? '⭐' : '';
+      var ns = (d.numbers||{})[s.store]||{};
+      var top = ns['25']||[];
+      var numsStr = top.join(' ');
+      var dataAttr = 'data-type="Top25" data-date="'+(d.numbers.date||'')+'" data-store="'+s.store+'" data-numbers="'+escapeHtml(numsStr)+'"';
+      h += '<div style="padding:6px 8px;margin-bottom:4px;background:#f0fdf4;border-radius:8px;font-size:13px">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+      h += '<span style="font-weight:600">'+s.store+'</span>';
+      h += '<span style="font-size:11px;color:#667">'+s.votes+'票 '+strength+'</span>';
+      h += '<span style="font-weight:700;color:#16a34a">'+s.capital+'</span>';
+      h += '</div>';
+      h += '<div style="display:flex;gap:6px;margin-top:4px" '+dataAttr+'>';
+      h += '<button onclick="copyStoreNums(this)" style="flex:1;font-size:11px;padding:2px 6px;background:#f0fdf4;border:1px solid #86efac;border-radius:4px;color:#16a34a;cursor:pointer">📋 复制</button>';
+      h += '<button onclick="showNumModal(this)" style="flex:1;font-size:11px;padding:2px 6px;background:#f0fdf4;border:1px solid #86efac;border-radius:4px;color:#16a34a;cursor:pointer">🔍 查看</button>';
+      h += '</div></div>';
+    });
+    h += '<div style="text-align:center;font-size:11px;color:#8899b0;margin-top:4px">合计 <b style="color:#16a34a">'+d.positive.total_capital+'</b></div>';
+  } else {
+    h += '<div style="text-align:center;font-size:12px;color:#94a3b8;padding:8px">不出手</div>';
+  }
+  h += '</div>';
+
+  // 反帮扶
+  h += '<div style="flex:1;background:#fff;border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:13px;font-weight:700;color:#dc2626;margin-bottom:8px;text-align:center">🔴 反帮扶'+dateTag+'</div>';
+  if (d.negative.stores.length) {
+    d.negative.stores.forEach(function(s) {
+      var strength = s.votes === '4/4' ? '🔥' : s.votes >= '3' ? '⭐' : '';
+      var ns2 = (d.numbers||{})[s.store]||{};
+      var bot = ns2['24']||[];
+      var numsStr2 = bot.join(' ');
+      var dataAttr2 = 'data-type="Bottom24" data-date="'+(d.numbers.date||'')+'" data-store="'+s.store+'" data-numbers="'+escapeHtml(numsStr2)+'"';
+      h += '<div style="padding:6px 8px;margin-bottom:4px;background:#fef2f2;border-radius:8px;font-size:13px">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+      h += '<span style="font-weight:600">'+s.store+'</span>';
+      h += '<span style="font-size:11px;color:#667">'+s.votes+'票 '+strength+'</span>';
+      h += '<span style="font-weight:700;color:#dc2626">'+s.capital+'</span>';
+      h += '</div>';
+      h += '<div style="display:flex;gap:6px;margin-top:4px" '+dataAttr2+'>';
+      h += '<button onclick="copyStoreNums(this)" style="flex:1;font-size:11px;padding:2px 6px;background:#fef2f2;border:1px solid #fca5a5;border-radius:4px;color:#dc2626;cursor:pointer">📋 复制</button>';
+      h += '<button onclick="showNumModal(this)" style="flex:1;font-size:11px;padding:2px 6px;background:#fef2f2;border:1px solid #fca5a5;border-radius:4px;color:#dc2626;cursor:pointer">🔍 查看</button>';
+      h += '</div></div>';
+    });
+    h += '<div style="text-align:center;font-size:11px;color:#8899b0;margin-top:4px">合计 <b style="color:#dc2626">'+d.negative.total_capital+'</b></div>';
+  } else {
+    h += '<div style="text-align:center;font-size:12px;color:#94a3b8;padding:8px">不出手</div>';
+  }
+  h += '</div>';
+  h += '</div>'; // end dual columns
+
+  // 1-49 号码网格（集合14聚合：前4汇总 Top25 + Bottom24）
+  var numbers = d.numbers || {};
+  var c14 = numbers['集合14'] || {};
+  var top25 = c14['25'] || [];
+  var bottom24 = c14['24'] || [];
+  var topSet = {}, botSet = {};
+  top25.forEach(function(n) { topSet[n] = true; });
+  bottom24.forEach(function(n) { botSet[n] = true; });
+  var numDate = numbers.date || '';
+  
+  h += '<div style="background:#fff;border-radius:14px;padding:12px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:4px;text-align:center">🔢 号码 '+(numDate?'<span style=\"font-size:11px;color:#8899b0\">'+numDate+'</span>':'')+' <span style=\"font-size:10px;color:#8899b0\">(数字仓库)</span></div>';
+  h += '<div style="display:flex;gap:8px;margin-bottom:6px;font-size:10px;justify-content:center\">';
+  h += '<span style=\"color:#16a34a\">🟢 Top25</span>';
+  h += '<span style=\"color:#dc2626\">🔴 Bottom24</span>';
+  h += '</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">';
+  for (var i=1; i<=49; i++) {
+    var isTop = topSet[i], isBot = botSet[i];
+    var bg, tc, border, w;
+    if (isTop) { bg = '#dcfce7'; tc = '#16a34a'; border = '#86efac'; w = '700'; }
+    else if (isBot) { bg = '#fee2e2'; tc = '#dc2626'; border = '#fca5a5'; w = '700'; }
+    else { bg = '#f8fafc'; tc = '#ccc'; border = '#e5e7eb'; w = '400'; }
+    h += '<div style="text-align:center;padding:8px 2px;background:'+bg+';border-radius:6px;font-size:13px;font-weight:'+w+';color:'+tc+';border:1px solid '+border+'">'+i+'</div>';
+  }
+  h += '</div></div>';
+
+  // 底部按钮区
+  h += '<div style="display:flex;gap:8px;margin-top:8px">';
+  h += '<button onclick="initOrderSheet()" style="flex:1;padding:12px;border-radius:12px;border:none;background:#1e3a5f;color:#fff;font-size:14px;font-weight:600;cursor:pointer">🔄 刷新</button>';
+  h += '</div>';
+
+  el.innerHTML = h;
+}
+
+// ═══════ 号码弹窗 ═══════
+function escapeHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function copyStoreNums(btn) {
+  var p = btn.parentElement;
+  var nums = p.getAttribute('data-numbers') || '';
+  var ta = document.createElement('textarea');
+  ta.value = nums;
+  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch(e) {}
+  document.body.removeChild(ta);
+  btn.textContent = '✅ 已复制';
+  setTimeout(function(){ btn.textContent = '📋 复制'; }, 1500);
+}
+
+function showNumModal(btn) {
+  var p = btn.parentElement;
+  var store = p.getAttribute('data-store') || '';
+  var type = p.getAttribute('data-type') || '';
+  var date = p.getAttribute('data-date') || '';
+  var nums = p.getAttribute('data-numbers') || '';
+  var color = type === 'Top25' ? '#16a34a' : '#dc2626';
+  var bg = type === 'Top25' ? '#f0fdf4' : '#fef2f2';
+  var border = type === 'Top25' ? '#86efac' : '#fca5a5';
+
+  var html = '<div id="num-modal-overlay" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center" onclick="closeNumModal(event)">';
+  html += '<div style="background:#fff;border-radius:16px;padding:20px;width:90%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.15)" onclick="event.stopPropagation()">';
+  html += '<div style="font-size:18px;font-weight:700;color:#1e3a5f;margin-bottom:12px">'+store+'</div>';
+  html += '<div style="display:flex;gap:12px;margin-bottom:12px;font-size:13px;color:#667">';
+  html += '<span>📅 '+date+'</span>';
+  html += '<span style="color:'+color+';font-weight:600">'+type+'</span>';
+  html += '</div>';
+  html += '<div id="num-modal-content" data-numbers="'+escapeHtml(nums)+'" style="background:'+bg+';border:1px solid '+border+';border-radius:10px;padding:12px;font-size:14px;line-height:1.8;color:'+color+';word-break:break-all">'+escapeHtml(nums)+'</div>';
+  html += '<div style="display:flex;gap:8px;margin-top:12px">';
+  html += '<button onclick="copyNumModal()" style="flex:1;padding:10px;border:none;border-radius:10px;background:#1e3a5f;color:#fff;font-size:14px;font-weight:600;cursor:pointer">📋 复制</button>';
+  html += '<button onclick="closeNumModal()" style="flex:1;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;color:#667;font-size:14px;cursor:pointer">关闭</button>';
+  html += '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function closeNumModal(e) {
+  var ov = document.getElementById('num-modal-overlay');
+  if (ov) { ov.remove(); }
+  if (e && e.stopPropagation) e.stopPropagation();
+}
+
+function copyNumModal() {
+  var el = document.getElementById('num-modal-content');
+  if (!el) return;
+  var nums = el.getAttribute('data-numbers') || '';
+  var ta = document.createElement('textarea');
+  ta.value = nums;
+  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch(e) {}
+  document.body.removeChild(ta);
+  var btn = document.querySelector('#num-modal-overlay button');
+  if (btn) { btn.textContent = '✅ 已复制'; setTimeout(function(){ btn.textContent = '📋 复制'; }, 1500); }
+}
+
+var orderSheetDate = "";
+function syncOrderNumbers() {
+  var btn = document.getElementById('sync-order-btn');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ 更新中...';
+  var dateInput = document.getElementById('order-date-input');
+  var syncDate = dateInput ? dateInput.value : orderSheetDate;
+
+  // 步骤1：并行跑正帮扶 + 反帮扶指南（更新 sim_guides 缓存）
+  var posGuide = fetch(API_BASE + '/api/simulate/daily-guide?mode=positive&max_iter=1').then(r => r.json());
+  var negGuide = fetch(API_BASE + '/api/simulate/daily-guide?mode=negative&max_iter=1').then(r => r.json());
+
+  Promise.all([posGuide, negGuide])
+    .then(function(results){
+      btn.textContent = '⏳ 拉取号码...';
+      // 步骤2：拉取数字仓库号码 → order_numbers
+      var url = API_BASE + '/api/simulate/pull-numbers';
+      if (syncDate) url += '?date=' + encodeURIComponent(syncDate);
+      return fetch(url, {method:'POST'}).then(r => r.json());
+    })
+    .then(function(res){
+      if (res.ok) {
+        showToast('✅ 已更新 ' + (res.items||res.total_items||0) + ' 条');
+      } else {
+        showToast('⚠️ 号码拉取: ' + (res.error || '无数据') + '（指南已更新）');
+      }
+      initOrderSheet();
+    })
+    .catch(function(e){
+      showToast('❌ ' + e.message);
+      btn.disabled = false;
+      btn.textContent = '更新正负下单';
+    });
+}
+
+function syncOrderByDate() {
+  var dateInput = document.getElementById('order-sync-date');
+  var syncDate = dateInput ? dateInput.value : '';
+  if (!syncDate) { showToast('❌ 请选择日期'); return; }
+  var btn = event && event.target;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳...'; }
+  var url = API_BASE + '/api/simulate/pull-numbers?date=' + syncDate;
+  fetch(url, {method:'POST'})
+    .then(r => r.json())
+    .then(function(res){
+      if (res.ok) {
+        showToast('✅ 同步完成: ' + syncDate + ' (' + (res.items||0) + '条)');
+        initOrderSheet();
+      } else {
+        showToast('❌ ' + (res.error || '同步失败'));
+      }
+      if (btn) { btn.disabled = false; btn.textContent = '🔄 同步'; }
+    })
+    .catch(function(e){
+      showToast('❌ ' + e.message);
+      if (btn) { btn.disabled = false; btn.textContent = '🔄 同步'; }
+    });
+}
+
+function syncAllOrders() {
+  var btn = event && event.target;
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ 全量同步...';
+  // 拉7月1号~今天
+  var today = new Date().toISOString().slice(0,10);
+  var url = API_BASE + '/api/simulate/pull-numbers?from_date=2026-07-01&to_date=' + today;
+  fetch(url, {method:'POST'})
+    .then(r => r.json())
+    .then(function(res){
+      if (res.ok) {
+        var msg = '✅ 全量同步完成: ' + (res.dates||[]).length + '天, ' + res.total_items + '条';
+        if (res.errors && res.errors.length) msg += ' (' + res.errors.length + '天失败)';
+        showToast(msg);
+        btn.disabled = false;
+        btn.textContent = '📅 全量';
+        initOrderSheet();
+      } else {
+        showToast('❌ ' + (res.error || '全量同步失败'));
+        btn.disabled = false;
+        btn.textContent = '📅 全量';
+      }
+    })
+    .catch(function(e){
+      showToast('❌ ' + e.message);
+      btn.disabled = false;
+      btn.textContent = '📅 全量';
+    });
+}
+
+var orderNumbersPage = 1;
+
+function showOrderNumbersModal(page) {
+  if (!page) page = 1;
+  orderNumbersPage = page;
+
+  // 弹框容器
+  var overlay = document.getElementById('order-nums-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'order-nums-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+
+  overlay.innerHTML = '<div style="background:#fff;border-radius:16px;padding:20px;width:92%;max-width:400px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-weight:700;font-size:15px;color:#1e3a5f">📋 入库记录（来源于数字仓库）</span><button onclick="document.getElementById(\'order-nums-overlay\').remove()" style="border:none;background:none;font-size:20px;color:#999;cursor:pointer">✕</button></div><div id="order-nums-body" style="flex:1;overflow-y:auto;font-size:13px"><div style="text-align:center;padding:40px;color:#999">⏳ 加载中...</div></div></div>';
+  overlay.style.display = 'flex';
+
+  loadOrderNumbersPage(page);
+}
+
+function loadOrderNumbersPage(page) {
+  fetch(API_BASE + '/api/simulate/order-numbers-list?page=' + page + '&limit=15')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var body = document.getElementById('order-nums-body');
+      if (!body) return;
+
+      var h = '';
+      if (d.items && d.items.length > 0) {
+        for (var i = 0; i < d.items.length; i++) {
+          var it = d.items[i];
+          h += '<div style="padding:10px 12px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center">';
+          h += '<span><span style="font-weight:600;color:#1e3a5f">' + it.date + '</span><span style="color:#8899b0;margin-left:8px;font-size:11px">' + it.count + ' 条' + '</span></span>';
+          h += '<span style="display:flex;align-items:center;gap:8px">';
+          h += '<span style="font-size:10px;color:#bbb">' + (it.pulled_at ? it.pulled_at.substr(11,5) : '') + '</span>';
+          h += '<button onclick="deleteOrderNumbersByDate(\'' + it.date + '\')" title="删除" style="border:none;background:none;cursor:pointer;font-size:16px;padding:0;line-height:1">🗑</button>';
+          h += '</span>';
+          h += '</div>';
+        }
+
+        // 分页
+        var totalPages = Math.ceil(d.total / d.limit);
+        if (totalPages > 1) {
+          h += '<div style="display:flex;justify-content:center;gap:6px;padding:12px 0">';
+          for (var p2 = 1; p2 <= totalPages; p2++) {
+            var active = (p2 === page);
+            h += '<button onclick="loadOrderNumbersPage(' + p2 + ')" style="min-width:32px;height:32px;border-radius:8px;border:' + (active ? '2px solid #1e3a5f' : '1px solid #e5e7eb') + ';background:' + (active ? '#1e3a5f' : '#fff') + ';color:' + (active ? '#fff' : '#5a6b85') + ';font-size:12px;font-weight:600;cursor:pointer">' + p2 + '</button>';
+          }
+          h += '</div>';
+        }
+      } else {
+        h = '<div style="text-align:center;padding:40px;color:#999">暂无记录</div>';
+      }
+      body.innerHTML = h;
+    })
+    .catch(function(e) {
+      var body = document.getElementById('order-nums-body');
+      if (body) body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626">加载失败: ' + e.message + '</div>';
+    });
+}
+
+var pendingDeleteDate = null;
+
+function deleteOrderNumbersByDate(date) {
+  pendingDeleteDate = date;
+  var overlay = document.getElementById('confirm-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'confirm-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:99999;display:none;align-items:center;justify-content:center';
+    overlay.onclick = function(e) { if (e.target === overlay) { overlay.style.display = 'none'; pendingDeleteDate = null; } };
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = '<div style="background:#fff;border-radius:16px;padding:24px;width:300px;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.15)">' +
+    '<div style="font-size:15px;font-weight:600;color:#1e3a5f;margin-bottom:8px">删除确认</div>' +
+    '<div style="font-size:13px;color:#5a6b85;margin-bottom:20px">确定删除 <b>' + date + '</b> 的全部入库记录？</div>' +
+    '<div style="display:flex;gap:10px">' +
+    '<button onclick="doDeleteConfirm()" style="flex:1;padding:10px;border-radius:10px;border:none;background:#ee0a24;color:#fff;font-size:14px;font-weight:600;cursor:pointer">确定删除</button>' +
+    '<button onclick="document.getElementById(\'confirm-overlay\').style.display=\'none\';pendingDeleteDate=null" style="flex:1;padding:10px;border-radius:10px;border:1px solid #ddd;background:#fff;color:#666;font-size:14px;cursor:pointer">取消</button>' +
+    '</div></div>';
+  overlay.style.display = 'flex';
+}
+
+function doDeleteConfirm() {
+  var date = pendingDeleteDate;
+  var overlay = document.getElementById('confirm-overlay');
+  overlay.style.display = 'none';
+  pendingDeleteDate = null;
+  if (!date) return;
+  fetch(API_BASE + '/api/simulate/order-numbers?date=' + date, {method:'DELETE'})
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+      if (res.ok) {
+        showToast('✅ 已删除 ' + date + ': ' + res.deleted + ' 条');
+        loadOrderNumbersPage(orderNumbersPage);
+        initOrderSheet();
+      } else {
+        showToast('❌ ' + (res.detail || '删除失败'));
+      }
+    })
+    .catch(function(e) {
+      showToast('❌ ' + e.message);
+    });
 }
 
 // ═══════════ 排位 ═══════════
@@ -3684,6 +4146,15 @@ function fmtRank(v) {
 function fmtDate(d) {
   var p = d.split('-');
   return p[0].slice(2) + '/' + parseInt(p[1]) + '/' + parseInt(p[2]);
+}
+
+function offsetDate(d, days) {
+  var dt = new Date(d + 'T00:00:00');
+  dt.setDate(dt.getDate() + days);
+  var y = dt.getFullYear();
+  var m = String(dt.getMonth() + 1).padStart(2, '0');
+  var day = String(dt.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
 }
 
 function updateRankStats() {
@@ -4533,8 +5004,8 @@ function updateAlgoHint() {
   var hints = {
     'coordinate': '💡 <b>每家店独立调参，正反模式自由组合</b><br>'
       +'<b>出手条件</b>：<span style="color:#e67e22">看前一日排位决策今天</span>——正=昨排位≤阈→今天出手 | 反=昨排位＞阈→今天出手<br>'
-      +'<b>结果</b>：今天出手后用今天draw≤25判定中奖/亏损<br>'
-      +'<b>例子</b>：4/10一店排位1→4/11一店(正,阈25)达标✔出手40万 · 若4/11draw=20→中奖+880万<br>'
+      +'<b>结果</b>：今天出手后用今天draw≤25判定命中/亏损<br>'
+      +'<b>例子</b>：4/10一店排位1→4/11一店(正,阈25)达标✔出手40万 · 若4/11draw=20→命中+880万<br>'
       +'  　　4/15三店排位35→4/16三店(反,阈30)达标✔出手10万 · 若4/16draw=40→亏损−250万<br>'
       +'<b>搜参方式</b>：每家店试遍 10个阈值(1/5/10/15/20/25/30/35/40/45) × 3个配资(10/20/40万) × 2种模式(正/反) = 60种组合，找最优。'
       +'8家店各搜一次算一轮，跑3轮=共试 8×60×3=1440次，约0.8秒<br>'
@@ -4555,7 +5026,7 @@ function updateAlgoHint() {
       +'<b>风格</b>：保守，不好不出手，不加反向赌注',
 
     'stop_neg2': '💡 <b>坐标下降 + 止损</b><br>'
-      +'<b>出手条件</b>：同坐标下降，看前一日排位；出手后draw≤25中奖<br>'
+      +'<b>出手条件</b>：同坐标下降，看前一日排位；出手后draw≤25命中<br>'
       +'<b>止损</b>：<span style="color:#dc2626">任一店连续2天亏损→封杀</span><br>'
       +'<b>例子</b>：四店(反,阈40,配20万) 昨排位45✔出手→D1亏20万 D2昨排位又达标→再出又亏→D3封杀<br>'
       +'<b>搜参方式</b>：同坐标下降（10×3×2=60种/店×8店×3轮=1440次），模拟时叠加止损<br>'
@@ -4779,7 +5250,7 @@ function fetchGuide(mode) {
   btn.disabled = true;
   btn.textContent = '⏳ 加载中...';
   
-  fetch(API_BASE + '/api/simulate/daily-guide?days=90&mode=' + mode)
+  fetch(API_BASE + '/api/simulate/daily-guide?mode=' + mode)
     .then(r => r.json())
     .then(function(d) {
       renderGuide(d);
@@ -5002,8 +5473,13 @@ function renderGuide(d) {
   h += '</div>';
 
   document.getElementById('guide-content').innerHTML = h;
-  // 显示数据时效
-  document.getElementById('guide-freshness').textContent = '数据: ' + d.date;
+  // 显示数据时效：最新排位日往前3个月
+  var parts = d.date.split('-');
+  var endDate = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+  var startDate = new Date(endDate);
+  startDate.setMonth(startDate.getMonth() - 3);
+  var startStr = startDate.toISOString().slice(0,10);
+  document.getElementById('guide-freshness').textContent = startStr + ' ~ ' + d.date;
 }
 
 function refreshGuide() {
@@ -5011,7 +5487,7 @@ function refreshGuide() {
   btn.textContent = '⏳ 刷新中...';
   btn.disabled = true;
   
-  fetch(API_BASE + '/api/simulate/daily-guide?days=90&mode=' + _lastGuideMode)
+  fetch(API_BASE + '/api/simulate/daily-guide?mode=' + _lastGuideMode)
     .then(r => r.json())
     .then(function(d) {
       renderGuide(d);

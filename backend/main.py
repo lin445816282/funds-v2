@@ -46,6 +46,16 @@ def init_db():
             detail TEXT,
             data TEXT
         );
+        CREATE TABLE IF NOT EXISTS order_numbers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            collection_id INTEGER NOT NULL,
+            threshold INTEGER NOT NULL,
+            summary_name TEXT NOT NULL DEFAULT '',
+            numbers_json TEXT NOT NULL,
+            pulled_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(date, collection_id, threshold)
+        );
     """)
     conn.commit()
     conn.close()
@@ -493,7 +503,7 @@ async def index_predictions(days: int = 30):
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
 # ═══════════════ 总部出手模拟 ═══════════════
-from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history
+from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date
 
 @app.get("/api/simulate/data")
 async def api_simulate_data(days: int = 90):
@@ -520,14 +530,38 @@ async def api_simulate_manual(request: Request):
     ))
 
 @app.get("/api/simulate/daily-guide")
-async def api_daily_guide(days: int = 90, mode: str = "positive"):
+async def api_daily_guide(days: int = 90, mode: str = "positive", max_iter: int = 3):
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, lambda: run_daily_guide(days, mode))
+    return await loop.run_in_executor(_executor, lambda: run_daily_guide(days, mode, max_iter))
 
 @app.get("/api/simulate/guide-history")
 async def api_guide_history(limit: int = 30, mode: str = None, offset: int = 0):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: get_guide_history(limit, mode, offset))
+
+@app.get("/api/simulate/order-sheet")
+async def api_order_sheet(days: int = 90):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: get_order_sheet(days))
+
+@app.post("/api/simulate/pull-numbers")
+async def api_pull_numbers(date: str = None, from_date: str = None, to_date: str = None):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: pull_threshold_numbers(
+        target_date=date, from_date=from_date, to_date=to_date
+    ))
+
+@app.get("/api/simulate/order-numbers-list")
+async def api_order_numbers_list(page: int = 1, limit: int = 20):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: list_order_numbers(page, limit))
+
+@app.delete("/api/simulate/order-numbers")
+async def api_order_numbers_delete(date: str = ""):
+    if not date:
+        raise HTTPException(400, "date required")
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: delete_order_numbers_by_date(date))
 
 # ═══════════════ Static + SPA ═══════════════
 STATIC_DIR = os.path.join(BASE_DIR, "static")
