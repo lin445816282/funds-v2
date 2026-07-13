@@ -4303,7 +4303,7 @@ function showCollectSummary() {
       var body = document.getElementById('collect-body');
       if (!body) return;
       if (d.items && d.items.length > 0) {
-        var h = '<table style="width:100%;border-collapse:collapse"><tr style="background:#f8fafc"><th style="padding:8px;text-align:left;font-size:12px;color:#5a6b85;border-bottom:2px solid #e5e7eb">日期</th><th style="padding:8px;text-align:right;font-size:12px;color:#5a6b85;border-bottom:2px solid #e5e7eb">记录数</th><th style="padding:8px;text-align:right;font-size:12px;color:#5a6b85;border-bottom:2px solid #e5e7eb">同步时间</th></tr>';
+        var h = '<table style="width:100%;border-collapse:collapse"><tr style="background:#f8fafc"><th style="padding:8px;text-align:left;font-size:12px;color:#5a6b85;border-bottom:2px solid #e5e7eb">日期</th><th style="padding:8px;text-align:right;font-size:12px;color:#5a6b85;border-bottom:2px solid #e5e7eb">记录数</th><th style="padding:8px;text-align:right;font-size:12px;color:#5a6b85;border-bottom:2px solid #e5e7eb">同步时间</th><th style="padding:8px;text-align:center;font-size:12px;color:#5a6b85;border-bottom:2px solid #e5e7eb;width:36px">明细</th></tr>';
         var total = 0;
         for (var i = 0; i < d.items.length; i++) {
           var it = d.items[i];
@@ -4312,9 +4312,10 @@ function showCollectSummary() {
           h += '<td style="padding:8px;font-weight:600;color:#1e3a5f">' + it.date + '</td>';
           h += '<td style="padding:8px;text-align:right">' + it.count + ' 条</td>';
           h += '<td style="padding:8px;text-align:right;font-size:10px;color:#bbb">' + (it.pulled_at ? it.pulled_at.substr(11,5) : '-') + '</td>';
+          h += '<td style="padding:4px;text-align:center"><button onclick="showOrderDetailPopup(\'' + it.date + '\')" style="padding:2px 6px;border-radius:8px;border:1px solid #e5e7eb;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer" title="查看' + it.count + '条记录明细">👁</button></td>';
           h += '</tr>';
         }
-        h += '<tr style="background:#f0fdf4;font-weight:700"><td style="padding:8px;color:#16a34a">合计</td><td style="padding:8px;text-align:right;color:#16a34a">' + total + ' 条</td><td style="padding:8px"></td></tr>';
+        h += '<tr style="background:#f0fdf4;font-weight:700"><td style="padding:8px;color:#16a34a">合计</td><td style="padding:8px;text-align:right;color:#16a34a">' + total + ' 条</td><td style="padding:8px"></td><td style="padding:8px"></td></tr>';
         h += '</table>';
         body.innerHTML = h;
       } else {
@@ -4325,6 +4326,71 @@ function showCollectSummary() {
       var body = document.getElementById('collect-body');
       if (body) body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626">加载失败: ' + e.message + '</div>';
     });
+}
+
+function showOrderDetailPopup(date) {
+  var overlay = document.getElementById('order-detail-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'order-detail-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = '<div style="background:#fff;border-radius:16px;padding:20px;width:92%;max-width:420px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-weight:700;font-size:15px;color:#1e3a5f">📋 ' + date + ' 采集明细</span><button onclick="document.getElementById(\'order-detail-overlay\').remove()" style="border:none;background:none;font-size:20px;color:#999;cursor:pointer">✕</button></div><div id="order-detail-body" style="flex:1;overflow-y:auto;font-size:13px"><div style="text-align:center;padding:40px;color:#999">⏳ 加载中...</div></div></div>';
+  overlay.style.display = 'flex';
+
+  var STORE_MAP = {'-23':'一店','-24':'二店','-25':'三店','-26':'四店','-28':'五店','-29':'六店','14':'集合14','16':'集合16'};
+  fetch(API_BASE + '/api/simulate/order-numbers-detail?date=' + encodeURIComponent(date))
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var body = document.getElementById('order-detail-body');
+      if (!body) return;
+      if (d.ok && d.items && d.items.length > 0) {
+        var h = '<table style="width:100%;border-collapse:collapse"><tr style="background:#f8fafc"><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">门店</th><th style="padding:6px 8px;text-align:center;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">阀值</th><th style="padding:6px 8px;text-align:left;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">汇总</th><th style="padding:6px 8px;text-align:center;font-size:11px;color:#5a6b85;border-bottom:2px solid #e5e7eb">号码数</th></tr>';
+        for (var i = 0; i < d.items.length; i++) {
+          var it = d.items[i];
+          var storeName = STORE_MAP[String(it.collection_id)] || ('col' + it.collection_id);
+          var numCount = Array.isArray(it.numbers) ? it.numbers.length : 0;
+          var numsJson = JSON.stringify(it.numbers || []).replace(/"/g, '&quot;');
+          h += '<tr style="border-bottom:1px solid #f0f0f0" data-numbers="' + numsJson + '">';
+          h += '<td style="padding:6px 8px;font-weight:600;color:#1e3a5f">' + storeName + '</td>';
+          h += '<td style="padding:6px 8px;text-align:center;color:' + (it.threshold === 25 ? '#16a34a' : '#dc2626') + ';font-weight:600">' + it.threshold + '</td>';
+          h += '<td style="padding:6px 8px;font-size:12px;color:#667">' + (it.summary_name || '—') + '</td>';
+          h += '<td style="padding:4px 8px;text-align:center"><button onclick="showNumDetail(this)" style="padding:2px 8px;border-radius:8px;border:1px solid #3b82f6;background:#eff6ff;color:#2563eb;font-size:12px;font-weight:700;cursor:pointer">' + numCount + '</button></td>';
+          h += '</tr>';
+        }
+        h += '<tr style="background:#f0fdf4;font-weight:700"><td style="padding:6px 8px;color:#16a34a">合计</td><td></td><td></td><td style="padding:6px 8px;text-align:center;color:#16a34a">' + d.count + ' 条</td></tr>';
+        h += '</table>';
+        body.innerHTML = h;
+      } else {
+        body.innerHTML = '<div style="text-align:center;padding:40px;color:#999">暂无明细</div>';
+      }
+    })
+    .catch(function(e) {
+      var body = document.getElementById('order-detail-body');
+      if (body) body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626">加载失败: ' + e.message + '</div>';
+    });
+}
+
+function showNumDetail(btn) {
+  var tr = btn.closest('tr');
+  var numsAttr = tr.getAttribute('data-numbers') || '';
+  var nums = [];
+  try { nums = JSON.parse(numsAttr.replace(/&quot;/g, '"')); } catch(e) {}
+  if (!nums.length) return;
+  
+  var numsStr = nums.join('.');
+  var overlay = document.getElementById('num-detail-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'num-detail-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:99999;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = '<div style="background:#fff;border-radius:14px;padding:16px;width:90%;max-width:340px;box-shadow:0 4px 20px rgba(0,0,0,.15)" onclick="event.stopPropagation()"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><span style="font-weight:700;font-size:14px;color:#1e3a5f">🔢 ' + nums.length + '个号码</span><button onclick="document.getElementById('num-detail-overlay').remove()" style="border:none;background:none;font-size:18px;color:#999;cursor:pointer">✕</button></div><div style="background:#f8fafc;border-radius:10px;padding:12px;font-size:14px;line-height:2;color:#1e3a5f;word-break:break-all;font-family:monospace">' + numsStr + '</div><button onclick="navigator.clipboard.writeText('' + numsStr.replace(/'/g, "\'") + '');var b=event.target;b.textContent=\'✅ 已复制\';setTimeout(function(){b.textContent=\'📋 复制\'},1500)" style="width:100%;margin-top:10px;padding:10px;border:none;border-radius:10px;background:#1e3a5f;color:#fff;font-size:14px;font-weight:600;cursor:pointer">📋 复制</button></div>';
+  overlay.style.display = 'flex';
 }
 
 function showOrderNumbersModal(page) {
