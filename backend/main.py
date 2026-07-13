@@ -516,7 +516,7 @@ async def index_predictions(days: int = 30):
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
 # ═══════════════ 总部出手模拟 ═══════════════
-from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, save_order_amounts, get_order_amounts
+from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts
 
 @app.get("/api/simulate/data")
 async def api_simulate_data(days: int = 90):
@@ -568,6 +568,13 @@ async def api_pull_numbers(date: str = None, from_date: str = None, to_date: str
 async def api_order_numbers_list(page: int = 1, limit: int = 20):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: list_order_numbers(page, limit))
+
+@app.get("/api/simulate/order-numbers-detail")
+async def api_order_numbers_detail(date: str = ""):
+    if not date:
+        raise HTTPException(400, "date required")
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: get_order_numbers_detail(date))
 
 @app.delete("/api/simulate/order-numbers")
 async def api_order_numbers_delete(date: str = ""):

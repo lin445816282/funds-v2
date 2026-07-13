@@ -660,6 +660,29 @@ def delete_order_numbers_by_date(date):
     return {"ok": True, "date": date, "deleted": deleted}
 
 
+def get_order_numbers_detail(date):
+    """获取指定日期的所有 order_numbers 记录明细"""
+    db = sqlite3.connect(FUNDS_DB)
+    db.row_factory = sqlite3.Row
+    rows = db.execute(
+        "SELECT * FROM order_numbers WHERE date=? ORDER BY collection_id ASC, threshold ASC",
+        (date,)
+    ).fetchall()
+    items = []
+    for r in rows:
+        nums = json.loads(r["numbers_json"]) if r["numbers_json"] else []
+        items.append({
+            "id": r["id"],
+            "collection_id": r["collection_id"],
+            "threshold": r["threshold"],
+            "summary_name": r["summary_name"] or "",
+            "numbers": nums,
+            "pulled_at": r["pulled_at"] or ""
+        })
+    db.close()
+    return {"ok": True, "date": date, "count": len(items), "items": items}
+
+
 # ── 门店 → collection_id 映射 ─────────────────
 STORE_TO_COLLECTION = {
     "一店": -23, "二店": -24, "三店": -25,

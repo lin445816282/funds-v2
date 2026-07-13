@@ -3843,6 +3843,7 @@ function markDayResult(result) {
 
 // ═══════════ 下单表 ═══════════
 var orderData = null;
+var trimCount = 0;
 
 function initOrderSheet() {
   var el = document.getElementById('order-sheet');
@@ -3853,6 +3854,7 @@ function initOrderSheet() {
       .then(r => r.json())
       .then(function(d) {
         orderData = d;
+        trimCount = 0;
         renderOrderSheet(d);
       })
       .catch(function(e) {
@@ -4044,16 +4046,56 @@ function trimMinAmounts() {
     if (v > 0 && (minAmt === null || v < minAmt)) minAmt = v;
   }
   if (minAmt === null || minAmt <= 0) return alert('没有可减的最小金额');
-  // 统一全部减 minAmt，允许多个变0
-  var subAmt = minAmt;
+  // 第二次之后弹框确认
+  if (trimCount > 0) {
+    showTrimConfirm(minAmt);
+    return;
+  }
+  doTrimCore(minAmt);
+}
+
+var trimConfirmMinAmt = null;
+function showTrimConfirm(minAmt) {
+  trimConfirmMinAmt = minAmt;
+  var overlay = document.getElementById('trim-confirm-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'trim-confirm-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); trimConfirmMinAmt = null; } };
+    document.body.appendChild(overlay);
+  }
+  var h = '<div style="background:#fff;border-radius:14px;padding:20px;max-width:280px;text-align:center">';
+  h += '<div style="font-size:15px;font-weight:700;color:#1e3a5f;margin-bottom:8px">⚠️ 确认继续</div>';
+  h += '<div style="font-size:13px;color:#5a6b85;margin-bottom:16px">已执行过一次除最小，确定继续？<br>将再减 <b style="color:#dc2626">' + minAmt + '</b></div>';
+  h += '<div style="display:flex;gap:10px;justify-content:center">';
+  h += '<button onclick="var o=document.getElementById(\'trim-confirm-overlay\');o.remove();trimConfirmMinAmt=null" style="padding:8px 20px;border-radius:8px;border:1px solid #e5e7eb;background:#f8fafc;color:#5a6b85;font-size:13px;cursor:pointer">取消</button>';
+  h += '<button onclick="doTrimConfirm()" style="padding:8px 20px;border-radius:8px;border:none;background:#2563eb;color:#fff;font-size:13px;font-weight:600;cursor:pointer">确定继续</button>';
+  h += '</div></div>';
+  overlay.innerHTML = h;
+  overlay.style.display = 'flex';
+}
+
+function doTrimConfirm() {
+  var o = document.getElementById('trim-confirm-overlay');
+  if (o) o.remove();
+  var minAmt = trimConfirmMinAmt;
+  trimConfirmMinAmt = null;
+  if (!minAmt || minAmt <= 0) return;
+  doTrimCore(minAmt);
+}
+
+function doTrimCore(minAmt) {
+  var amounts = orderData.order_amounts.amounts;
   var newTotal = 0;
   for (var n = 1; n <= 49; n++) {
-    amounts[n] = Math.max(0, (amounts[n] || 0) - subAmt);
+    amounts[n] = Math.max(0, (amounts[n] || 0) - minAmt);
     newTotal += amounts[n];
   }
   orderData.order_amounts.total = newTotal;
+  trimCount++;
   renderOrderSheet(orderData);
-  showToast('已减最小 -' + subAmt);
+  showToast('已减最小 -' + minAmt + (trimCount>1?' (第'+trimCount+'次)':''));
 }
 
 // ═══════ 下单金额更新 ═══════
