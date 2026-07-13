@@ -564,7 +564,7 @@ def _pull_one_date(date_str):
 
 
 def _save_order_items(date, items):
-    """入库单日数据 → 返回写入条数"""
+    """入库单日数据 → 返回写入条数（跳过与已有数据相同的）"""
     db = sqlite3.connect(FUNDS_DB)
     count = 0
     for item in items:
@@ -573,6 +573,13 @@ def _save_order_items(date, items):
         for threshold, nums in item.get("thresholds", {}).items():
             th = int(threshold)
             nums_json = json.dumps(nums["numbers"])
+            # 检查是否与已有数据相同
+            old = db.execute(
+                "SELECT numbers_json FROM order_numbers WHERE date=? AND collection_id=? AND threshold=?",
+                (date, cid, th)
+            ).fetchone()
+            if old and old[0] == nums_json:
+                continue  # 完全相同，跳过
             db.execute(
                 "INSERT OR REPLACE INTO order_numbers (date, collection_id, threshold, summary_name, numbers_json) VALUES (?,?,?,?,?)",
                 (date, cid, th, sname, nums_json)
