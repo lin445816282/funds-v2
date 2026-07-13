@@ -4362,6 +4362,13 @@ function showOrderDetailPopup(date) {
         }
         h += '<tr style="background:#f0fdf4;font-weight:700"><td style="padding:6px 8px;color:#16a34a">合计</td><td></td><td></td><td style="padding:6px 8px;text-align:center;color:#16a34a">' + d.count + ' 条</td></tr>';
         h += '</table>';
+        // 收集全部号码
+        var allNums = [];
+        for (var i = 0; i < d.items.length; i++) {
+          var ns = d.items[i].numbers || [];
+          for (var j = 0; j < ns.length; j++) allNums.push(ns[j]);
+        }
+        h += '<button onclick="var a=' + JSON.stringify(allNums) + ';navigator.clipboard.writeText(a.join(\'.\'));var b=event.target;b.textContent=\'✅ 已复制\';setTimeout(function(){b.textContent=\'📋 复制全部号码\'},1500)" style="width:100%;margin-top:10px;padding:10px;border:none;border-radius:10px;background:#1e3a5f;color:#fff;font-size:14px;font-weight:600;cursor:pointer">📋 复制全部号码</button>';
         body.innerHTML = h;
       } else {
         body.innerHTML = '<div style="text-align:center;padding:40px;color:#999">暂无明细</div>';
