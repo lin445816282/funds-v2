@@ -9,6 +9,8 @@
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#e4edf7;color:#1a2438;max-width:420px;margin:0 auto;min-height:100vh}
 body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:480px;background:rgba(59,130,246,.10);border-radius:50%;filter:blur(80px);z-index:0;pointer-events:none}
 
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+
 /* 登录 */
 .login-gate{position:fixed;inset:0;z-index:500;background:#e4edf7;display:flex;align-items:center;justify-content:center}
 .login-gate.hide{display:none}
@@ -358,7 +360,6 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
       <button class="hdr-btn" onclick="exportData()" title="导出">📤</button>
       <button class="hdr-btn" onclick="document.getElementById('import-file').click()" title="导入">📥</button>
       <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(this)">
-      <button class="hdr-btn" onclick="showDocPopup()" title="系统文档">📄</button>
       <span class="user-pill" onclick="doLogout()">👤 退出</span>
     </div>
   </div>
@@ -486,6 +487,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   <div class="panel on" id="panel-alerts">
     <div class="alert-list" id="alert-list"><div class="empty">⏳ 加载中...</div></div>
     <div class="alert-rules" id="alert-rules"></div>
+    <div id="hit-rate-section" style="margin-top:10px"></div>
   </div>
 
   <!-- 预警详情弹窗 -->
@@ -1389,6 +1391,7 @@ function refreshAll() {
   renderOverview();
   renderCompare();
   renderAlerts();
+  loadHitRates();
   renderMgmt();
 }
 
@@ -1423,6 +1426,23 @@ function showToast(msg, ms, cls) {
   if (ms) toastTimer = setTimeout(function(){ el.classList.remove('show'); }, ms);
 }
 function toast(msg, cls) { showToast(msg, 2000, cls||'error'); }
+
+function showAlert(msg, title) {
+  var overlay = document.getElementById('alert-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'alert-overlay';
+    overlay.className = 'modal-mask';
+    overlay.onclick = function() { overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = '<div class="modal-box" onclick="event.stopPropagation()" style="text-align:center">' +
+    '<h3>' + (title || '⚠️ 提示') + '</h3>' +
+    '<p style="font-size:14px;color:#5a6b85;margin:8px 0 16px;line-height:1.6">' + msg + '</p>' +
+    '<button onclick="document.getElementById(\'alert-overlay\').remove()" style="width:100%;padding:12px;border-radius:10px;border:none;background:#1e3a5f;color:#fff;font-size:15px;font-weight:600;cursor:pointer">确认</button>' +
+    '</div>';
+  overlay.classList.remove('hide');
+}
 
 function saveEntry() {
   var store = document.getElementById('ef-store').value;
@@ -3712,12 +3732,13 @@ function switchTab(tab) {
   // FAB：排位/对比页隐藏
   var fab = document.getElementById('fab-btn');
   if (fab) fab.classList.toggle('hide', tab==='ranking'||tab==='compare'||tab==='sim');
-  if (tab === 'entry') { loadRankingTo('entry-rank'); }
-  if (tab === 'compare') { initCmpCanvas(); drawCompare(); }
-  if (tab === 'mgmt') { fetchLogs(); fillExtInfo(); }
+  if (tab === 'alerts') { fetchAlerts(); loadHitRates(); }
+  if (tab === 'order') { initOrderSheet(); }
   if (tab === 'ranking') { loadRankingTo('rank-content'); updateRankStats(); }
   if (tab === 'sim') { initSimPanel(); }
-  if (tab === 'order') { initOrderSheet(); }
+  if (tab === 'compare') { initCmpCanvas(); drawCompare(); }
+  if (tab === 'mgmt') { fetchLogs(); fillExtInfo(); }
+  if (tab === 'entry') { loadRankingTo('entry-rank'); }
 }
 
 function showDocPopup() {
@@ -3727,21 +3748,117 @@ function closeDocPopup() {
   document.getElementById('doc-popup').classList.add('hide');
 }
 
+function showPlanPopup() {
+  document.getElementById('plan-popup').classList.remove('hide');
+}
+function closePlanPopup() {
+  document.getElementById('plan-popup').classList.add('hide');
+}
+
+// ═══════ 门店命中率 ═══════
+function loadHitRates() {
+  var el = document.getElementById('hit-rate-section');
+  if (!el) return;
+  fetch(API_BASE + '/api/simulate/store-hit-rates?days=30')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var h = '<div style="background:#fff;border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+      h += '<div style="font-size:12px;font-weight:600;color:#1e3a5f;margin-bottom:8px">🎯 帮扶命中率（近'+data.days+'天 · 保本线 ' + data.threshold + '%）</div>';
+      var belowItems = [];
+      [data.positive, data.negative].forEach(function(item) {
+        if (!item || item.total === 0) return;
+        var color = item.below ? '#dc2626' : item.rate < 60 ? '#f59e0b' : '#16a34a';
+        var bg = item.below ? '#fef2f2' : '#f8fafc';
+        h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:'+bg+';border-radius:6px;margin-bottom:3px;font-size:11px">';
+        h += '<span style="font-weight:600">' + item.name + '</span>';
+        h += '<span style="color:'+color+';font-weight:700">' + item.rate + '%</span>';
+        h += '<span style="color:#8899b0">' + item.hits + '/' + item.total + '</span>';
+        if (item.below) { h += '<span style="color:#dc2626">⚠️</span>'; belowItems.push(item); }
+        h += '</div>';
+      });
+      if (!data.positive && !data.negative) {
+        h += '<div style="color:#8899b0;font-size:11px">暂无数据</div>';
+      }
+      if (belowItems.length > 0) {
+        var alertList = document.getElementById('alert-list');
+        var warnHtml = '';
+        belowItems.forEach(function(item) {
+          warnHtml += '<div class="alert-item" style="cursor:default;border-left:3px solid #dc2626">'
+            + '<span class="al-icon">⚠️</span>'
+            + '<div class="al-info"><div class="al-title">' + item.name + ' 命中率低于保本线</div>'
+            + '<div class="al-detail">近'+data.days+'天命中率 ' + item.rate + '%（保本线 ' + data.threshold + '%），' + item.hits + '/' + item.total + '</div></div></div>';
+        });
+        var emptyEl = alertList.querySelector('.empty');
+        if (emptyEl) { alertList.innerHTML = warnHtml; }
+        else { alertList.insertAdjacentHTML('afterbegin', warnHtml); }
+        var badge = document.getElementById('alert-badge');
+        var totalItems = alertList.querySelectorAll('.alert-item').length;
+        if (badge) { badge.style.display = totalItems > 0 ? '' : 'none'; badge.textContent = totalItems; }
+      }
+      h += '</div>';
+      el.innerHTML = h;
+    })
+    .catch(function() { el.innerHTML = ''; });
+}
+
+// ═══════ 亏损追踪 ═══════
+// 后端持久化，跨设备同步
+var _lossResults = [];  // [{date, result}]
+
+function loadLossResults() {
+  return fetch(API_BASE + '/api/simulate/order-daily-results')
+    .then(function(r) { return r.json(); })
+    .then(function(data) { _lossResults = data; return data; })
+    .catch(function() { return []; });
+}
+
+function getLossStreak() {
+  if (!_lossResults || _lossResults.length === 0) return 0;
+  var sorted = _lossResults.slice().sort(function(a, b) { return a.date < b.date ? 1 : -1; });
+  var streak = 0;
+  for (var i = 0; i < sorted.length; i++) {
+    if (sorted[i].result === 'loss') streak++;
+    else break;
+  }
+  return streak;
+}
+
+function markDayResult(result) {
+  var dateInput = document.getElementById('order-date-input');
+  var date = dateInput ? dateInput.value : '';
+  if (!date) { alert('请先选择日期'); return; }
+  fetch(API_BASE + '/api/simulate/order-daily-results', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({date: date, result: result})
+  }).then(function(r) { return r.json(); })
+    .then(function() {
+      // 更新内存缓存
+      _lossResults = _lossResults.filter(function(r) { return r.date !== date; });
+      _lossResults.push({date: date, result: result});
+      initOrderSheet();
+      showToast((result==='win'?'✅ 盈利':'❌ 亏损') + ' | 连亏 ' + getLossStreak() + ' 天');
+    }).catch(function(e) { alert('记录失败: ' + e); });
+}
+
 // ═══════════ 下单表 ═══════════
 var orderData = null;
 
 function initOrderSheet() {
   var el = document.getElementById('order-sheet');
   el.innerHTML = '<div class="empty">⏳ 加载中...</div>';
-  fetch(API_BASE + '/api/simulate/order-sheet?days=30')
-    .then(r => r.json())
-    .then(function(d) {
-      orderData = d;
-      renderOrderSheet(d);
-    })
-    .catch(function(e) {
-      el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">加载失败: '+e.message+'</div>';
-    });
+  // 先加载亏损记录，再加载下单数据
+  loadLossResults().then(function() {
+    fetch(API_BASE + '/api/simulate/order-sheet?days=30')
+      .then(r => r.json())
+      .then(function(d) {
+        orderData = d;
+        renderOrderSheet(d);
+      })
+      .catch(function(e) {
+        el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">加载失败: '+e.message+'</div>';
+      });
+  });
 }
 
 function renderOrderSheet(d) {
@@ -3753,25 +3870,57 @@ function renderOrderSheet(d) {
   var numMatched = (d.numbers||{}).matched;
   var latestDataDate = (d.numbers||{}).date || '';
   var syncStatus = numMatched ? '✅ 已同步 ' + latestDataDate : '⚠️ 未同步';
-  var dateTag = d.date ? ' · ' + d.date.substr(5) : '';  // MM-DD
   var nextDate = offsetDate(d.date, 1);
   orderSheetDate = nextDate;
+  var dateTag = nextDate ? ' · ' + nextDate.substr(5) : '';  // MM-DD 出手日期
   h += '<div style="background:#fff;border-radius:14px;padding:12px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.03);text-align:center">';
   h += '<div style="display:flex;justify-content:center;gap:20px;font-size:13px;color:#5a6b85;margin-bottom:8px">';
   h += '<span>最新排位日期 <b style="color:#1e3a5f">'+d.date+'</b></span>';
   h += '<span>出手日期 <b style="color:#1e3a5f">'+nextDate+'</b></span>';
+  h += '</div>';
+
+  // 投资计划卡片（右上）
+  var streak = getLossStreak();
+  var planDaily = streak >= 3 ? 500 : streak >= 2 ? 1000 : 2000;
+  var planUnit = Math.round(planDaily / 70);
+  h += '<div id="plan-card" onclick="showPlanPopup()" style="display:flex;justify-content:space-between;align-items:center;background:linear-gradient(135deg,#1e3a5f,#2d5a8e);border-radius:10px;padding:10px 14px;margin-bottom:6px;color:#fff;cursor:pointer">';
+  h += '<div style="font-size:11px;opacity:.8">📊 投资计划</div>';
+  h += '<div style="display:flex;gap:12px;font-size:12px">';
+  h += '<span>日投 <b>'+planDaily+'</b></span>';
+  h += '<span>每号 <b>'+planUnit+'</b></span>';
+  h += '<span>月预期 <b>+'+(planUnit*7.9*30).toFixed(0)+'</b></span>';
+  h += '</div></div>';
+
+  // 亏损预警
+  if (streak >= 3) {
+    h += '<div id="loss-warn" style="background:#fef2f2;border:2px solid #dc2626;border-radius:10px;padding:10px;margin-bottom:6px;text-align:center;animation:pulse 1.5s infinite">';
+    h += '<div style="font-size:14px;font-weight:700;color:#dc2626">⚠️ 连续亏损 '+streak+' 天！</div>';
+    h += '<div style="font-size:12px;color:#991b1b;margin-top:4px">立即降到 <b>500元/天</b>（'+Math.round(500/70)+'元/号）</div>';
+    h += '</div>';
+  } else if (streak >= 2) {
+    h += '<div id="loss-warn" style="background:#fffbeb;border:2px solid #f59e0b;border-radius:10px;padding:10px;margin-bottom:6px;text-align:center">';
+    h += '<div style="font-size:14px;font-weight:700;color:#d97706">⚠️ 连续亏损 '+streak+' 天</div>';
+    h += '<div style="font-size:12px;color:#92400e;margin-top:4px">降到 <b>1,000元/天</b>（'+Math.round(1000/70)+'元/号）</div>';
+    h += '</div>';
+  }
+
+  // 记录当日盈亏按钮
+  h += '<div id="streak-bar" style="display:flex;justify-content:center;gap:8px;margin-bottom:6px;font-size:11px;color:#8899b0">';
+  h += '连亏: <b id="loss-streak-num" style="color:'+(streak>=2?'#dc2626':'#16a34a')+'">'+streak+'</b>天 ';
+  h += '<button onclick="markDayResult(\'win\')" style="padding:2px 8px;border-radius:6px;border:1px solid #86efac;background:#f0fdf4;color:#16a34a;font-size:10px;cursor:pointer">✅ 盈</button>';
+  h += '<button onclick="markDayResult(\'loss\')" style="padding:2px 8px;border-radius:6px;border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;font-size:10px;cursor:pointer">❌ 亏</button>';
   h += '</div>';
   h += '<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">';
   h += '<input type="date" id="order-date-input" value="'+nextDate+'" style="width:130px;padding:6px 8px;border-radius:8px;border:1px solid #cdd7e5;font-size:13px;color:#1e3a5f;text-align:center;background:#f8fafc">';
   h += '<button onclick="syncOrderNumbers()" id="sync-order-btn" style="padding:6px 12px;border-radius:8px;border:none;background:#3b82f6;color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">更新正负下单</button>';
   h += '<button onclick="showOrderNumbersModal()" id="order-view-btn" style="padding:6px 12px;border-radius:8px;border:1px solid #cdd7e5;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;'+(numMatched?'background:#f8fafc;color:#3a5070':'background:#e5e7eb;color:#9ca3af;cursor:default')+'"'+(numMatched?'':' disabled')+'>列表</button>';
   h += '</div>';
-  h += '<div style="font-size:10px;color:'+(pulledAt?'#16a34a':'#dc2626')+'">'+syncStatus+'</div>';
+  h += '<div style="font-size:10px;color:'+(pulledAt?'#16a34a':'#dc2626')+'">号码同步 '+syncStatus+'</div>';
 
   h += '<button onclick="syncAllOrders()" style="padding:2px 8px;border-radius:12px;border:1px solid #cdd7e5;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer">📅 全量</button>';
   h += '<input type="date" id="order-sync-date" value="'+nextDate+'" style="width:108px;padding:2px 6px;border-radius:12px;border:1px solid #cdd7e5;font-size:10px;color:#5a6b85;background:#f8fafc">';
   h += '<button onclick="syncOrderByDate()" style="padding:2px 8px;border-radius:12px;border:1px solid #3b82f6;background:#eff6ff;font-size:10px;color:#3b82f6;cursor:pointer;font-weight:600">🔄 同步</button>';
-  h += '<button onclick="showOrderNumbersModal()" style="padding:2px 8px;border-radius:12px;border:1px solid #cdd7e5;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer">📋 查看</button>';
+  h += '<button onclick="showCollectSummary()" style="padding:2px 8px;border-radius:12px;border:1px solid #16a34a;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer;font-weight:600">📊 采集</button>';
   h += '</div></div>';
 
   // 双列：正帮扶 | 反帮扶
@@ -3832,39 +3981,103 @@ function renderOrderSheet(d) {
   h += '</div>';
   h += '</div>'; // end dual columns
 
-  // 1-49 号码网格（集合14聚合：前4汇总 Top25 + Bottom24）
-  var numbers = d.numbers || {};
-  var c14 = numbers['集合14'] || {};
-  var top25 = c14['25'] || [];
-  var bottom24 = c14['24'] || [];
-  var topSet = {}, botSet = {};
-  top25.forEach(function(n) { topSet[n] = true; });
-  bottom24.forEach(function(n) { botSet[n] = true; });
-  var numDate = numbers.date || '';
-  
+  // 1-49 金额累计网格（正帮扶+反帮扶下单金额）
+  var oa = d.order_amounts || {};
+  var oaAmounts = oa.amounts || {};
+  var oaDate = oa.action_date || oa.date || '';
+  var oaDayIndex = oa.day_index || 0;
+  var oaTotal = oa.total || 0;
+  var oaTrimmed = oa._trimmed || 0;
+  var maxAmt = 0;
+  for (var k in oaAmounts) { if (oaAmounts[k] > maxAmt) maxAmt = oaAmounts[k]; }
   h += '<div style="background:#fff;border-radius:14px;padding:12px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
-  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:4px;text-align:center">🔢 号码 '+(numDate?'<span style=\"font-size:11px;color:#8899b0\">'+numDate+'</span>':'')+' <span style=\"font-size:10px;color:#8899b0\">(数字仓库)</span></div>';
-  h += '<div style="display:flex;gap:8px;margin-bottom:6px;font-size:10px;justify-content:center\">';
-  h += '<span style=\"color:#16a34a\">🟢 Top25</span>';
-  h += '<span style=\"color:#dc2626\">🔴 Bottom24</span>';
-  h += '</div>';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:2px;text-align:center">💰 下单金额 '+(oaDate?'<span style="font-size:11px;color:#8899b0">'+oaDate+'</span>':'')+'</div>';
+  h += '<div style="text-align:center;font-size:11px;color:#667;margin-bottom:6px">第 <b style="color:#1e3a5f">'+oaDayIndex+'</b> 天 · 累计 <b style="color:#2563eb">'+oaTotal+'</b>'+(oaTrimmed?' <span style="color:#dc2626;font-size:10px">(除最小-'+oaTrimmed+')</span>':'')+'</div>';
   h += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">';
-  for (var i=1; i<=49; i++) {
-    var isTop = topSet[i], isBot = botSet[i];
-    var bg, tc, border, w;
-    if (isTop) { bg = '#dcfce7'; tc = '#16a34a'; border = '#86efac'; w = '700'; }
-    else if (isBot) { bg = '#fee2e2'; tc = '#dc2626'; border = '#fca5a5'; w = '700'; }
-    else { bg = '#f8fafc'; tc = '#ccc'; border = '#e5e7eb'; w = '400'; }
-    h += '<div style="text-align:center;padding:8px 2px;background:'+bg+';border-radius:6px;font-size:13px;font-weight:'+w+';color:'+tc+';border:1px solid '+border+'">'+i+'</div>';
+  for (var i2=1; i2<=49; i2++) {
+    var amt = oaAmounts[i2] || 0;
+    var intensity = maxAmt > 0 ? amt / maxAmt : 0;
+    var bg2, tc2, fw2;
+    if (amt > 0) {
+      var r = Math.round(239 - intensity * 80);
+      var g = Math.round(242 - intensity * 80);
+      var b = Math.round(255 - intensity * 30);
+      bg2 = 'rgb('+r+','+g+','+b+')';
+      tc2 = intensity > 0.5 ? '#1e40af' : '#2563eb';
+      fw2 = intensity > 0.5 ? '700' : '600';
+    } else {
+      bg2 = '#f8fafc'; tc2 = '#ccc'; fw2 = '400';
+    }
+    h += '<div style="text-align:center;padding:8px 2px;background:'+bg2+';border-radius:6px;font-size:12px;font-weight:'+fw2+';color:'+tc2+';border:1px solid #e5e7eb;line-height:1.2">';
+    h += '<div>'+i2+'</div>';
+    if (amt > 0) h += '<div style="font-size:9px;font-weight:700">'+amt+'</div>';
+    h += '</div>';
   }
   h += '</div></div>';
 
-  // 底部按钮区
-  h += '<div style="display:flex;gap:8px;margin-top:8px">';
-  h += '<button onclick="initOrderSheet()" style="flex:1;padding:12px;border-radius:12px;border:none;background:#1e3a5f;color:#fff;font-size:14px;font-weight:600;cursor:pointer">🔄 刷新</button>';
-  h += '</div>';
+  h += '<div style="text-align:center;margin-top:8px;display:flex;gap:8px;justify-content:center"><button onclick="updateOrderAmounts()" style="padding:10px 24px;border-radius:12px;border:1px solid #2563eb;background:#eff6ff;color:#1e40af;font-size:14px;font-weight:600;cursor:pointer">📊 更新下单金额</button><button onclick="trimMinAmounts()" style="padding:10px 24px;border-radius:12px;border:1px solid #dc2626;background:#fef2f2;color:#dc2626;font-size:14px;font-weight:600;cursor:pointer">✂️ 除最小</button></div>';
 
   el.innerHTML = h;
+
+  // 亏损警告：整框红边
+  var streak = getLossStreak();
+  if (streak >= 3) {
+    el.style.border = '3px solid #dc2626';
+    el.style.boxShadow = '0 0 20px rgba(220,38,38,.25)';
+  } else if (streak >= 2) {
+    el.style.border = '3px solid #f59e0b';
+    el.style.boxShadow = '0 0 16px rgba(245,158,11,.2)';
+  } else {
+    el.style.border = '';
+    el.style.boxShadow = '';
+  }
+}
+
+// ═══════ 除最小 ═══════
+function trimMinAmounts() {
+  if (!orderData || !orderData.order_amounts || !orderData.order_amounts.amounts) return;
+  var amounts = orderData.order_amounts.amounts;
+  // 找最小正数
+  var minAmt = null;
+  for (var k in amounts) {
+    var v = amounts[k];
+    if (v > 0 && (minAmt === null || v < minAmt)) minAmt = v;
+  }
+  if (minAmt === null || minAmt <= 0) return alert('没有可减的最小金额');
+  // 统一全部减 minAmt，允许多个变0
+  var subAmt = minAmt;
+  var newTotal = 0;
+  for (var n = 1; n <= 49; n++) {
+    amounts[n] = Math.max(0, (amounts[n] || 0) - subAmt);
+    newTotal += amounts[n];
+  }
+  orderData.order_amounts.total = newTotal;
+  renderOrderSheet(orderData);
+  showToast('已减最小 -' + subAmt);
+}
+
+// ═══════ 下单金额更新 ═══════
+function updateOrderAmounts() {
+  // collect current store data from the DOM cards
+  var stores = [];
+  var posCards = document.querySelectorAll('#orderTab .store-card .positive-store');
+  var negCards = document.querySelectorAll('#orderTab .store-card .negative-store');
+  // Actually the data is already in the sheetData variable
+  var d = orderData;
+  if (!d) return alert('暂无数据，请先刷新');
+  (d.positive.stores||[]).forEach(function(s) {
+    if (s.capital) stores.push({store: s.store, capital: s.capital, numbers: (d.numbers||{})[s.store]||{}});
+  });
+  (d.negative.stores||[]).forEach(function(s) {
+    if (s.capital) stores.push({store: s.store, capital: s.capital, numbers: (d.numbers||{})[s.store]||{}});
+  });
+  fetch('/api/simulate/order-amounts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({date: d.date, stores: stores})
+  }).then(function(r) { return r.json(); }).then(function() {
+    initOrderSheet(); // 刷新显示
+  }).catch(function(e) { alert('更新失败: '+e); });
 }
 
 // ═══════ 号码弹窗 ═══════
@@ -3947,6 +4160,9 @@ function syncOrderNumbers() {
 
   Promise.all([posGuide, negGuide])
     .then(function(results){
+      // 检查验证错误
+      if (results[0].error) { showAlert(results[0].error, '数据未就绪'); btn.disabled = false; btn.textContent = '更新正负下单'; return; }
+      if (results[1].error) { showAlert(results[1].error, '数据未就绪'); btn.disabled = false; btn.textContent = '更新正负下单'; return; }
       btn.textContent = '⏳ 拉取号码...';
       // 步骤2：拉取数字仓库号码 → order_numbers
       var url = API_BASE + '/api/simulate/pull-numbers';
@@ -3962,7 +4178,7 @@ function syncOrderNumbers() {
       initOrderSheet();
     })
     .catch(function(e){
-      showToast('❌ ' + e.message);
+      showAlert(e.message, '数据未就绪');
       btn.disabled = false;
       btn.textContent = '更新正负下单';
     });
@@ -4025,10 +4241,49 @@ function syncAllOrders() {
 
 var orderNumbersPage = 1;
 
-function showOrderNumbersModal(page) {
-  if (!page) page = 1;
-  orderNumbersPage = page;
+function showCollectSummary() {
+  var overlay = document.getElementById('collect-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'collect-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = '<div style="background:#fff;border-radius:16px;padding:20px;width:92%;max-width:400px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-weight:700;font-size:15px;color:#1e3a5f">📊 采集记录</span><button onclick="document.getElementById(\'collect-overlay\').remove()" style="border:none;background:none;font-size:20px;color:#999;cursor:pointer">✕</button></div><div id="collect-body" style="flex:1;overflow-y:auto;font-size:13px"><div style="text-align:center;padding:40px;color:#999">⏳ 加载中...</div></div></div>';
+  overlay.style.display = 'flex';
 
+  fetch(API_BASE + '/api/simulate/order-numbers-list?page=1&limit=1000')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var body = document.getElementById('collect-body');
+      if (!body) return;
+      if (d.items && d.items.length > 0) {
+        var h = '<table style="width:100%;border-collapse:collapse"><tr style="background:#f8fafc"><th style="padding:8px;text-align:left;font-size:12px;color:#5a6b85;border-bottom:2px solid #e5e7eb">日期</th><th style="padding:8px;text-align:right;font-size:12px;color:#5a6b85;border-bottom:2px solid #e5e7eb">记录数</th><th style="padding:8px;text-align:right;font-size:12px;color:#5a6b85;border-bottom:2px solid #e5e7eb">同步时间</th></tr>';
+        var total = 0;
+        for (var i = 0; i < d.items.length; i++) {
+          var it = d.items[i];
+          total += it.count;
+          h += '<tr style="border-bottom:1px solid #f0f0f0">';
+          h += '<td style="padding:8px;font-weight:600;color:#1e3a5f">' + it.date + '</td>';
+          h += '<td style="padding:8px;text-align:right">' + it.count + ' 条</td>';
+          h += '<td style="padding:8px;text-align:right;font-size:10px;color:#bbb">' + (it.pulled_at ? it.pulled_at.substr(11,5) : '-') + '</td>';
+          h += '</tr>';
+        }
+        h += '<tr style="background:#f0fdf4;font-weight:700"><td style="padding:8px;color:#16a34a">合计</td><td style="padding:8px;text-align:right;color:#16a34a">' + total + ' 条</td><td style="padding:8px"></td></tr>';
+        h += '</table>';
+        body.innerHTML = h;
+      } else {
+        body.innerHTML = '<div style="text-align:center;padding:40px;color:#999">暂无采集记录</div>';
+      }
+    })
+    .catch(function(e) {
+      var body = document.getElementById('collect-body');
+      if (body) body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626">加载失败: ' + e.message + '</div>';
+    });
+}
+
+function showOrderNumbersModal(page) {
   // 弹框容器
   var overlay = document.getElementById('order-nums-overlay');
   if (!overlay) {
@@ -4039,51 +4294,101 @@ function showOrderNumbersModal(page) {
     document.body.appendChild(overlay);
   }
 
-  overlay.innerHTML = '<div style="background:#fff;border-radius:16px;padding:20px;width:92%;max-width:400px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-weight:700;font-size:15px;color:#1e3a5f">📋 入库记录（来源于数字仓库）</span><button onclick="document.getElementById(\'order-nums-overlay\').remove()" style="border:none;background:none;font-size:20px;color:#999;cursor:pointer">✕</button></div><div id="order-nums-body" style="flex:1;overflow-y:auto;font-size:13px"><div style="text-align:center;padding:40px;color:#999">⏳ 加载中...</div></div></div>';
-  overlay.style.display = 'flex';
+  var oa = (orderData && orderData.order_amounts) ? orderData.order_amounts : {};
+  var amounts = oa.amounts || {};
+  var total = oa.total || 0;
+  var date = oa.action_date || oa.date || '';
 
-  loadOrderNumbersPage(page);
+  var h = '<div style="background:#fff;border-radius:12px;padding:8px;max-width:300px;display:flex;flex-direction:column">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+  h += '<span style="font-weight:700;font-size:13px;color:#1e3a5f">💰 下单金额 ' + date + '</span>';
+  h += '<div style="display:flex;gap:4px;align-items:center">';
+  h += '<button onclick="copyOrderTable()" style="border:1px solid #e5e7eb;border-radius:6px;background:#f0f7ff;padding:2px 8px;font-size:11px;color:#2563eb;cursor:pointer;white-space:nowrap" title="复制全部49行到剪贴板，可粘贴到Excel">📋 复制</button>';
+  h += '<button onclick="document.getElementById(\'order-nums-overlay\').remove()" style="border:none;background:none;font-size:16px;color:#999;cursor:pointer;line-height:1">✕</button>';
+  h += '</div>';
+  h += '</div>';
+  // 乘除操作栏
+  h += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;justify-content:center">';
+  h += '<input id="order-num-factor" type="text" inputmode="numeric" pattern="[0-9]*" value="2" style="width:40px;padding:2px 4px;border:1px solid #e5e7eb;border-radius:4px;font-size:10px;text-align:center">';
+  h += '<button onclick="multiplyOrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer">× 乘</button>';
+  h += '<button onclick="divideOrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#fef2f2;font-size:10px;color:#dc2626;cursor:pointer">÷ 除</button>';
+  h += '<button onclick="trimFromModal()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#fff7ed;font-size:10px;color:#c2410c;cursor:pointer">✂ 减最小</button>';
+  h += '</div>';
+  h += '<table style="border-collapse:collapse;font-size:10px;margin:0 auto;line-height:1">';
+  for (var n = 1; n <= 49; n++) {
+    var amt = amounts[n] || 0;
+    h += '<tr>';
+    h += '<td style="padding:0 6px;border:1px solid #e5e7eb;text-align:center;color:#333">' + n + '</td>';
+    h += '<td style="padding:0 6px;border:1px solid #e5e7eb;text-align:right;color:#333">' + (amt || 0) + '</td>';
+    h += '</tr>';
+  }
+  h += '<tr>';
+  h += '<td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:center;font-weight:700;font-size:10px;color:#333">合计</td>';
+  h += '<td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:right;font-weight:700;font-size:10px;color:#333">' + total + '</td>';
+  h += '</tr>';
+  h += '</table>';
+  h += '</div>';
+
+  overlay.innerHTML = h;
+  overlay.style.display = 'flex';
 }
 
-function loadOrderNumbersPage(page) {
-  fetch(API_BASE + '/api/simulate/order-numbers-list?page=' + page + '&limit=15')
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      var body = document.getElementById('order-nums-body');
-      if (!body) return;
+function getOrderNumFactor() {
+  var inp = document.getElementById('order-num-factor');
+  var v = parseFloat(inp.value);
+  return (isNaN(v) || v <= 0) ? null : v;
+}
 
-      var h = '';
-      if (d.items && d.items.length > 0) {
-        for (var i = 0; i < d.items.length; i++) {
-          var it = d.items[i];
-          h += '<div style="padding:10px 12px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center">';
-          h += '<span><span style="font-weight:600;color:#1e3a5f">' + it.date + '</span><span style="color:#8899b0;margin-left:8px;font-size:11px">' + it.count + ' 条' + '</span></span>';
-          h += '<span style="display:flex;align-items:center;gap:8px">';
-          h += '<span style="font-size:10px;color:#bbb">' + (it.pulled_at ? it.pulled_at.substr(11,5) : '') + '</span>';
-          h += '<button onclick="deleteOrderNumbersByDate(\'' + it.date + '\')" title="删除" style="border:none;background:none;cursor:pointer;font-size:16px;padding:0;line-height:1">🗑</button>';
-          h += '</span>';
-          h += '</div>';
-        }
+function multiplyOrderAmounts() {
+  var factor = getOrderNumFactor();
+  if (!factor) return;
+  var amts = orderData.order_amounts.amounts;
+  var newTotal = 0;
+  for (var n = 1; n <= 49; n++) {
+    if (amts[n] > 0) { amts[n] = Math.round(amts[n] * factor); newTotal += amts[n]; }
+  }
+  orderData.order_amounts.total = newTotal;
+  renderOrderSheet(orderData);
+  showOrderNumbersModal();
+}
 
-        // 分页
-        var totalPages = Math.ceil(d.total / d.limit);
-        if (totalPages > 1) {
-          h += '<div style="display:flex;justify-content:center;gap:6px;padding:12px 0">';
-          for (var p2 = 1; p2 <= totalPages; p2++) {
-            var active = (p2 === page);
-            h += '<button onclick="loadOrderNumbersPage(' + p2 + ')" style="min-width:32px;height:32px;border-radius:8px;border:' + (active ? '2px solid #1e3a5f' : '1px solid #e5e7eb') + ';background:' + (active ? '#1e3a5f' : '#fff') + ';color:' + (active ? '#fff' : '#5a6b85') + ';font-size:12px;font-weight:600;cursor:pointer">' + p2 + '</button>';
-          }
-          h += '</div>';
-        }
-      } else {
-        h = '<div style="text-align:center;padding:40px;color:#999">暂无记录</div>';
-      }
-      body.innerHTML = h;
-    })
-    .catch(function(e) {
-      var body = document.getElementById('order-nums-body');
-      if (body) body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626">加载失败: ' + e.message + '</div>';
-    });
+function divideOrderAmounts() {
+  var factor = getOrderNumFactor();
+  if (!factor) return;
+  var amts = orderData.order_amounts.amounts;
+  var newTotal = 0;
+  for (var n = 1; n <= 49; n++) {
+    if (amts[n] > 0) { amts[n] = Math.round(amts[n] / factor); newTotal += amts[n]; }
+  }
+  orderData.order_amounts.total = newTotal;
+  renderOrderSheet(orderData);
+  showOrderNumbersModal();
+}
+
+function trimFromModal() {
+  trimMinAmounts();
+  showOrderNumbersModal();
+}
+
+function copyOrderTable() {
+  var oa = (orderData && orderData.order_amounts) ? orderData.order_amounts : {};
+  var amounts = oa.amounts || {};
+  var total = oa.total || 0;
+  var lines = [];
+  for (var n = 1; n <= 49; n++) {
+    lines.push(n + '\t' + (amounts[n] || 0));
+  }
+  lines.push('合计\t' + total);
+  navigator.clipboard.writeText(lines.join('\n')).then(function() {
+    // 临时反馈
+    var btns = document.querySelectorAll('[onclick="copyOrderTable()"]');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].textContent = '✅ 已复制';
+      setTimeout(function(b) { b.textContent = '📋 复制'; }, 1500, btns[i]);
+    }
+  }).catch(function() {
+    alert('复制失败，请手动选择');
+  });
 }
 
 var pendingDeleteDate = null;
@@ -4119,7 +4424,8 @@ function doDeleteConfirm() {
     .then(function(res) {
       if (res.ok) {
         showToast('✅ 已删除 ' + date + ': ' + res.deleted + ' 条');
-        loadOrderNumbersPage(orderNumbersPage);
+        var overlay = document.getElementById('order-nums-overlay');
+        if (overlay) overlay.remove();
         initOrderSheet();
       } else {
         showToast('❌ ' + (res.detail || '删除失败'));
@@ -5250,7 +5556,7 @@ function fetchGuide(mode) {
   btn.disabled = true;
   btn.textContent = '⏳ 加载中...';
   
-  fetch(API_BASE + '/api/simulate/daily-guide?mode=' + mode)
+  fetch(API_BASE + '/api/simulate/daily-guide?mode=' + mode + '&max_iter=1')
     .then(r => r.json())
     .then(function(d) {
       renderGuide(d);
@@ -5400,7 +5706,8 @@ function renderGuide(d) {
   var h = '';
   // 今日排位
   h += '<div style="margin-bottom:12px;padding:8px 10px;background:#f0f7ff;border-radius:8px">';
-  h += '<div style="font-size:11px;color:#8899b0;margin-bottom:3px">📅 '+d.date+' 排位（决策明日）</div>';
+  var nextDate = offsetDate(d.date, 1);
+  h += '<div style="font-size:11px;color:#8899b0;margin-bottom:3px">📅 '+nextDate+' 出手（排位日 '+d.date+'）</div>';
   h += '<div style="font-size:12px;font-weight:600">';
   ['一店','二店','三店','四店','五店','六店','集合14','集合16'].forEach(function(s){
     h += s+':<b style="color:#2563eb">'+(d.today_rankings[s]||'?')+'</b> ';
@@ -5639,5 +5946,48 @@ function viewHistory(id, date) {
     });
 }
 </script>
+
+<!-- 投资计划弹框 -->
+<div class="modal-mask hide" id="plan-popup" onclick="if(event.target===this)closePlanPopup()">
+  <div class="modal-box" style="width:95%;max-width:420px;max-height:85vh;overflow-y:auto;padding:16px;border-radius:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 style="margin:0;font-size:16px;color:#1e3a5f">📊 投资计划书</h3>
+      <button onclick="closePlanPopup()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8">✕</button>
+    </div>
+
+    <div style="background:linear-gradient(135deg,#1e3a5f,#2d5a8e);color:#fff;border-radius:12px;padding:14px;text-align:center;margin-bottom:12px">
+      <div style="font-size:12px;opacity:.8">本金 2万 | 日投 2,000 | 每号 29元</div>
+    </div>
+
+    <h4 style="font-size:13px;color:#1e3a5f;margin:12px 0 4px;border-left:3px solid #3b82f6;padding-left:8px">🤖 算法驱动</h4>
+    <div style="background:#f0f3f8;border-radius:8px;padding:12px;font-size:11px;line-height:1.8">
+      <div style="margin-bottom:8px">日投金额由<b>连亏天数</b>动态决定：</div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px;margin:6px 0">
+        <tr style="background:#dbeafe"><td style="padding:4px 8px">正常</td><td style="padding:4px 8px;text-align:right"><b>2,000</b> /天</td><td style="padding:4px 8px;text-align:right">29 元/号</td></tr>
+        <tr style="background:#fef3c7"><td style="padding:4px 8px">连亏 2 天</td><td style="padding:4px 8px;text-align:right"><b>1,000</b> /天</td><td style="padding:4px 8px;text-align:right">14 元/号</td></tr>
+        <tr style="background:#fee2e2"><td style="padding:4px 8px">连亏 3 天</td><td style="padding:4px 8px;text-align:right"><b>500</b> /天</td><td style="padding:4px 8px;text-align:right">7 元/号</td></tr>
+      </table>
+      <div style="margin-top:8px;color:#5a6b85">
+        🔹 下单方向由<b>模拟页正/反坐标</b>自动判定<br>
+        🔹 每店出不出手由<b>排位阀值</b>动态过滤<br>
+        🔹 正一天自动<b>回到 2,000</b> 档
+      </div>
+    </div>
+
+    <h4 style="font-size:13px;color:#dc2626;margin:12px 0 4px;border-left:3px solid #dc2626;padding-left:8px">⛔ 止损</h4>
+    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px;font-size:11px;line-height:1.8">
+      <div>🔸 连亏<b>2天</b> → 日投降到 <b>1,000</b></div>
+      <div>🔸 连亏<b>3天</b> → 日投降到 <b>500</b></div>
+      <div>🔸 余额跌破 <b>1.5万</b> → 降到 1,000/天</div>
+      <div>🔸 累计亏超 <b>5,000</b> → 停1周</div>
+    </div>
+
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;font-size:11px;margin-top:8px;line-height:1.6">
+      每店保本线命中率 <b style="color:#16a34a">53.2%</b>，低于就缩量。<br>
+      回测 <b style="color:#16a34a">59.6%</b>，留 6% 安全垫。
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

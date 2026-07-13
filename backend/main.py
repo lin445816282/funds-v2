@@ -56,6 +56,19 @@ def init_db():
             pulled_at TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(date, collection_id, threshold)
         );
+        CREATE TABLE IF NOT EXISTS order_amounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            amount REAL NOT NULL DEFAULT 0,
+            UNIQUE(date, number)
+        );
+        CREATE TABLE IF NOT EXISTS order_daily_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            result TEXT NOT NULL,
+            created TEXT DEFAULT (datetime('now','localtime'))
+        );
     """)
     conn.commit()
     conn.close()
@@ -503,7 +516,7 @@ async def index_predictions(days: int = 30):
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
 # ═══════════════ 总部出手模拟 ═══════════════
-from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date
+from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, save_order_amounts, get_order_amounts
 
 @app.get("/api/simulate/data")
 async def api_simulate_data(days: int = 90):
@@ -563,6 +576,107 @@ async def api_order_numbers_delete(date: str = ""):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: delete_order_numbers_by_date(date))
 
+# ── 下单金额 ──
+@app.post("/api/simulate/order-amounts")
+async def api_save_order_amounts(data: dict):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: save_order_amounts(
+        data.get("date", ""), data.get("stores", [])
+    ))
+
+@app.get("/api/simulate/order-amounts")
+async def api_get_order_amounts(date: str = None, list_all: bool = False):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: get_order_amounts(date=date, list_all=list_all))
+
+# ═══════ 日盈亏记录 ═══════
+@app.get("/api/simulate/order-daily-results")
+async def api_get_order_daily_results():
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, get_order_daily_results)
+
+@app.post("/api/simulate/order-daily-results")
+async def api_save_order_daily_result(request: Request):
+    body = await request.json()
+    date = body.get("date", "")
+    result = body.get("result", "")
+    if not date or result not in ("win", "loss"):
+        raise HTTPException(400, "date and result (win/loss) required")
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: save_order_daily_result(date, result))
+
+def get_order_daily_results():
+    conn = get_db()
+    rows = conn.execute("SELECT date, result, created FROM order_daily_results ORDER BY date DESC LIMIT 60").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def save_order_daily_result(date, result):
+    conn = get_db()
+    conn.execute("INSERT OR REPLACE INTO order_daily_results (date, result) VALUES (?,?)", (date, result))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+# ═══════ 门店命中率 ═══════
+@app.get("/api/simulate/store-hit-rates")
+async def api_store_hit_rates(days: int = 30):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: get_store_hit_rates(days))
+
+def get_store_hit_rates(days=30):
+    """计算正帮扶/负帮扶累计命中率（所有店汇总，按mode分开）"""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT date, result FROM sim_guides WHERE result IS NOT NULL ORDER BY date DESC LIMIT ?",
+        (days,)
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        return {"positive": None, "negative": None, "threshold": 53.2}
+
+    pos_hits, pos_total = 0, 0
+    neg_hits, neg_total = 0, 0
+
+    for row in rows:
+        try:
+            result = json.loads(row["result"]) if isinstance(row["result"], str) else row["result"]
+        except:
+            continue
+        mode = result.get("mode", "")
+        alg = result.get("algorithms", [{}])[0] if result.get("algorithms") else {}
+        detail = alg.get("detail", [])
+        for d in detail:
+            if d.get("selected"):
+                if mode == "positive":
+                    pos_total += 1
+                    if d.get("qualified"):
+                        pos_hits += 1
+                elif mode == "negative":
+                    neg_total += 1
+                    if d.get("qualified"):
+                        neg_hits += 1
+
+    return {
+        "positive": {
+            "name": "正帮扶",
+            "hits": pos_hits,
+            "total": pos_total,
+            "rate": round(pos_hits / pos_total * 100, 1) if pos_total > 0 else None,
+            "below": (pos_hits / pos_total * 100 < 53.2) if pos_total >= 5 else False
+        } if pos_total > 0 else None,
+        "negative": {
+            "name": "负帮扶",
+            "hits": neg_hits,
+            "total": neg_total,
+            "rate": round(neg_hits / neg_total * 100, 1) if neg_total > 0 else None,
+            "below": (neg_hits / neg_total * 100 < 53.2) if neg_total >= 5 else False
+        } if neg_total > 0 else None,
+        "threshold": 53.2,
+        "days": days
+    }
+
 # ═══════════════ Static + SPA ═══════════════
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 if os.path.isdir(STATIC_DIR):
@@ -589,3 +703,5 @@ if os.path.isdir(STATIC_DIR):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8009)
+
+

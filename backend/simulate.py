@@ -504,6 +504,17 @@ def run_daily_guide(days=90, mode="positive", max_iter=3):
     today_rankings = last_day["rankings"]
     today_date = last_day["date"]
 
+    # ── 验证：仓库 threshold 号码是否就绪 ──
+    import urllib.request
+    try:
+        url = "http://localhost:8016/api/threshold/results?" + urllib.parse.urlencode({"date": today_date})
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            th_data = json.loads(resp.read())
+        if not th_data.get("items"):
+            return {"error": f"仓库{today_date}无threshold号码，请先在数字仓库同步", "ranking_date": today_date}
+    except Exception as e:
+        return {"error": f"仓库验证失败: {e}", "ranking_date": today_date}
+
     algorithms = [
         ("coordinate", "坐标下降"),
         ("uniform", "等权统一"),
@@ -640,11 +651,10 @@ def list_order_numbers(page=1, limit=20):
 
 
 def delete_order_numbers_by_date(date):
-    """删除指定日期的所有入库记录，并清除 sim_guides 缓存"""
+    """删除指定日期的所有入库记录"""
     db = sqlite3.connect(FUNDS_DB)
     cursor = db.execute("DELETE FROM order_numbers WHERE date=?", (date,))
     deleted = cursor.rowcount
-    db.execute("DELETE FROM sim_guides WHERE date=?", (date,))
     db.commit()
     db.close()
     return {"ok": True, "date": date, "deleted": deleted}
@@ -743,6 +753,9 @@ def get_order_sheet(days=90):
                     "votes": f"{c['votes']}/{c['out_of']}",
                     "caps": caps
                 })
+        # 按 STORE_NAMES 顺序（一店→集合16）
+        store_order = {s: i for i, s in enumerate(STORE_NAMES)}
+        stores.sort(key=lambda x: store_order.get(x["store"], 999))
         return stores
 
     # 从缓存读正帮扶
@@ -762,11 +775,14 @@ def get_order_sheet(days=90):
         pos_stores = extract_stores(pos.get("consensus", []))
         neg_stores = extract_stores(neg.get("consensus", []))
         ranking_date = pos["date"]
+        numbers = _load_order_numbers(ranking_date)
+        # 计算各号码累计金额
+        amounts_data = _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date)
         return {
             "date": ranking_date,
             "rankings": pos.get("today_rankings", {}),
             "cached": True,
-            "numbers": _load_order_numbers(ranking_date),
+            "numbers": numbers,
             "positive": {
                 "stores": pos_stores,
                 "total_capital": sum(s["capital"] for s in pos_stores)
@@ -774,7 +790,8 @@ def get_order_sheet(days=90):
             "negative": {
                 "stores": neg_stores,
                 "total_capital": sum(s["capital"] for s in neg_stores)
-            }
+            },
+            "order_amounts": amounts_data
         }
 
     # 缓存无 → 实时计算（轻量：max_iter=1）
@@ -784,11 +801,13 @@ def get_order_sheet(days=90):
     pos_stores = extract_stores(pos.get("consensus", []))
     neg_stores = extract_stores(neg.get("consensus", []))
     ranking_date2 = pos.get("date", "")
+    numbers2 = _load_order_numbers(ranking_date2)
+    amounts_data2 = _build_amounts_data(pos_stores, neg_stores, numbers2, ranking_date2)
     return {
         "date": ranking_date2,
         "rankings": pos.get("today_rankings", {}),
         "cached": False,
-        "numbers": _load_order_numbers(ranking_date2),
+        "numbers": numbers2,
         "positive": {
             "stores": pos_stores,
             "total_capital": sum(s["capital"] for s in pos_stores)
@@ -796,8 +815,48 @@ def get_order_sheet(days=90):
         "negative": {
             "stores": neg_stores,
             "total_capital": sum(s["capital"] for s in neg_stores)
-        }
+        },
+        "order_amounts": amounts_data2
     }
+
+
+def _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date):
+    """根据正反帮扶门店 → 累计1-49号码金额 → 写入 order_amounts"""
+    from datetime import datetime, timedelta
+    action_date = (datetime.strptime(ranking_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    num_amounts = {}
+    # 正帮扶 → Top25
+    for s in pos_stores:
+        store_nums = numbers.get(s["store"], {})
+        top25 = store_nums.get("25", [])
+        if top25 and s["capital"]:
+            for n in top25:
+                num_amounts[n] = num_amounts.get(n, 0) + s["capital"]
+    # 反帮扶 → Bottom24
+    for s in neg_stores:
+        store_nums = numbers.get(s["store"], {})
+        bot24 = store_nums.get("24", [])
+        if bot24 and s["capital"]:
+            for n in bot24:
+                num_amounts[n] = num_amounts.get(n, 0) + s["capital"]
+    
+    # 写入 order_amounts 表
+    db = sqlite3.connect(FUNDS_DB)
+    db.execute("DELETE FROM order_amounts WHERE date=?", (action_date,))
+    for n in range(1, 50):
+        amt = num_amounts.get(n, 0)
+        db.execute(
+            "INSERT INTO order_amounts (date, number, amount) VALUES (?,?,?)",
+            (action_date, n, amt)
+        )
+    db.commit()
+    # 日期序号 = 已有多少天数记录
+    day_index = db.execute("SELECT COUNT(DISTINCT date) FROM order_amounts").fetchone()[0]
+    db.close()
+    
+    total = sum(num_amounts.values())
+    return {"date": ranking_date, "action_date": action_date, "amounts": num_amounts, "day_index": day_index, "total": total}
 
 
 def _save_guide(result):
@@ -1064,3 +1123,80 @@ def _build_consensus(algo_results):
         })
     consensus.sort(key=lambda x: -x["votes"])
     return consensus
+
+
+# ── 下单金额汇总 ──────────────────────────
+def save_order_amounts(date, stores_data):
+    """
+    根据投票结果计算1-49各号码累计金额 → 写入 order_amounts
+    date: 排位日期 → 内部 +1 天存为出手日期
+    stores_data: [{store, capital, numbers: [1,2,...] 或 {25:[...], 24:[...]}}, ...]
+    """
+    from datetime import datetime as dt, timedelta
+    action_date = (dt.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    db = sqlite3.connect(FUNDS_DB)
+    db.execute("DELETE FROM order_amounts WHERE date=?", (action_date,))
+    num_amounts = {}
+    for sd in stores_data:
+        capital = sd.get("capital", 0)
+        numbers = sd.get("numbers", [])
+        if not capital or not numbers:
+            continue
+        # 兼容两种格式：dict {"25":[...], "24":[...]} 或 flat list [1,2,...]
+        flat = []
+        if isinstance(numbers, dict):
+            for v in numbers.values():
+                if isinstance(v, list):
+                    flat.extend(v)
+        elif isinstance(numbers, list):
+            flat = numbers
+        for n in flat:
+            num_amounts[n] = num_amounts.get(n, 0) + capital
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for n in range(1, 50):
+        db.execute(
+            "INSERT INTO order_amounts (date, number, amount, created_at, updated_at) VALUES (?,?,?,?,?)",
+             (action_date, n, num_amounts.get(n, 0), now, now)
+        )
+    db.commit()
+    db.close()
+    return {"ok": True, "date": action_date, "total": sum(num_amounts.values())}
+
+
+def get_order_amounts(date=None, list_all=False):
+    """读取下单金额。list_all=True 返回所有日期列表，含 day_index"""
+    db = sqlite3.connect(FUNDS_DB)
+    db.row_factory = sqlite3.Row
+    if list_all:
+        dates = db.execute("SELECT DISTINCT date FROM order_amounts ORDER BY date").fetchall()
+        result = []
+        for i, row in enumerate(dates):
+            d = row["date"]
+            amounts_rows = db.execute(
+                "SELECT number, amount FROM order_amounts WHERE date=? ORDER BY number", (d,)
+            ).fetchall()
+            amounts = {}
+            for r in amounts_rows:
+                amounts[r["number"]] = r["amount"]
+            # 取该日期最新的一条 created_at
+            ts_row = db.execute(
+                "SELECT created_at FROM order_amounts WHERE date=? AND created_at IS NOT NULL ORDER BY created_at DESC LIMIT 1", (d,)
+            ).fetchone()
+            created_at = ts_row["created_at"] if ts_row else None
+            result.append({"date": d, "day_index": i + 1, "amounts": amounts, "total": sum(amounts.values()), "created_at": created_at})
+        db.close()
+        return {"items": result}
+    if not date:
+        row = db.execute("SELECT date FROM order_amounts ORDER BY date DESC LIMIT 1").fetchone()
+        if not row:
+            db.close()
+            return {"date": None, "amounts": {}}
+        date = row["date"]
+    rows = db.execute(
+        "SELECT number, amount FROM order_amounts WHERE date=? ORDER BY number", (date,)
+    ).fetchall()
+    db.close()
+    amounts = {}
+    for r in rows:
+        amounts[r["number"]] = r["amount"]
+    return {"date": date, "amounts": amounts}
