@@ -4381,16 +4381,47 @@ function showNumDetail(btn) {
   if (!nums.length) return;
   
   var numsStr = nums.join('.');
-  var overlay = document.getElementById('num-detail-overlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'num-detail-overlay';
-    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:99999;display:flex;align-items:center;justify-content:center';
-    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
-    document.body.appendChild(overlay);
-  }
-  overlay.innerHTML = '<div style="background:#fff;border-radius:14px;padding:16px;width:90%;max-width:340px;box-shadow:0 4px 20px rgba(0,0,0,.15)" onclick="event.stopPropagation()"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><span style="font-weight:700;font-size:14px;color:#1e3a5f">🔢 ' + nums.length + '个号码</span><button onclick="document.getElementById('num-detail-overlay').remove()" style="border:none;background:none;font-size:18px;color:#999;cursor:pointer">✕</button></div><div style="background:#f8fafc;border-radius:10px;padding:12px;font-size:14px;line-height:2;color:#1e3a5f;word-break:break-all;font-family:monospace">' + numsStr + '</div><button onclick="navigator.clipboard.writeText('' + numsStr.replace(/'/g, "\'") + '');var b=event.target;b.textContent=\'✅ 已复制\';setTimeout(function(){b.textContent=\'📋 复制\'},1500)" style="width:100%;margin-top:10px;padding:10px;border:none;border-radius:10px;background:#1e3a5f;color:#fff;font-size:14px;font-weight:600;cursor:pointer">📋 复制</button></div>';
-  overlay.style.display = 'flex';
+  // 移除旧弹窗
+  var old = document.getElementById('num-detail-overlay');
+  if (old) old.remove();
+  
+  var overlay = document.createElement('div');
+  overlay.id = 'num-detail-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:99999;display:flex;align-items:center;justify-content:center';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+  
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:14px;padding:16px;width:90%;max-width:340px;box-shadow:0 4px 20px rgba(0,0,0,.15)';
+  box.onclick = function(e) { e.stopPropagation(); };
+  
+  var header = document.createElement('div');
+  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px';
+  header.innerHTML = '<span style="font-weight:700;font-size:14px;color:#1e3a5f">🔢 ' + nums.length + '个号码</span>';
+  var closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  closeBtn.style.cssText = 'border:none;background:none;font-size:18px;color:#999;cursor:pointer';
+  closeBtn.onclick = function() { overlay.remove(); };
+  header.appendChild(closeBtn);
+  box.appendChild(header);
+  
+  var body = document.createElement('div');
+  body.style.cssText = 'background:#f8fafc;border-radius:10px;padding:12px;font-size:14px;line-height:2;color:#1e3a5f;word-break:break-all;font-family:monospace';
+  body.textContent = numsStr;
+  box.appendChild(body);
+  
+  var copyBtn = document.createElement('button');
+  copyBtn.textContent = '📋 复制';
+  copyBtn.style.cssText = 'width:100%;margin-top:10px;padding:10px;border:none;border-radius:10px;background:#1e3a5f;color:#fff;font-size:14px;font-weight:600;cursor:pointer';
+  copyBtn.onclick = function() {
+    navigator.clipboard.writeText(numsStr).then(function() {
+      copyBtn.textContent = '✅ 已复制';
+      setTimeout(function() { copyBtn.textContent = '📋 复制'; }, 1500);
+    });
+  };
+  box.appendChild(copyBtn);
+  
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 }
 
 function showOrderNumbersModal(page) {
