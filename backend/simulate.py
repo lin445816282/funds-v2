@@ -130,14 +130,14 @@ def simulate_one_day(day_data, store_params, prev_rankings, shots_per_day=3):
             "mode": mode, "capital": capital, "qualified": qualified, "selected": False
         })
         if qualified:
-            qualified_list.append((s, capital))
+            qualified_list.append((s, capital, rank if rank is not None else 999, mode))
     
-    # 按capital降序 → 取前3
-    qualified_list.sort(key=lambda x: -x[1])
+    # 排序：配资降序 → 同配资按排位质量（正=排位越低越好，反=排位越高越好）
+    qualified_list.sort(key=lambda x: (-x[1], x[2] if x[3] == "positive" else -x[2]))
     selected = qualified_list[:shots_per_day]
     
     # 标记选中
-    sel_set = set(s for s, _ in selected)
+    sel_set = set(s for s, _, _, _ in selected)
     for q in qual_summary:
         if q["store"] in sel_set:
             q["selected"] = True
@@ -150,7 +150,7 @@ def simulate_one_day(day_data, store_params, prev_rankings, shots_per_day=3):
     shot_details = []
     day_income = day_data.get("income", {})
     today_rankings = day_data.get("rankings", {})
-    for s, cap in selected:
+    for s, cap, _, _ in selected:
         store_mode = store_params.get(s, {}).get("mode", "positive")
         # 命中由当天排位决定：正帮扶排≤25命中，反帮扶排>25命中
         today_rank = today_rankings.get(s)
@@ -774,15 +774,14 @@ def get_order_sheet(days=90):
     def extract_stores(consensus):
         stores = []
         for c in consensus:
-            if c.get("votes", 0) > 0:
-                caps = c.get("caps", {})
-                max_cap = max(caps.values()) if caps else 0
-                stores.append({
-                    "store": c["store"],
-                    "capital": max_cap,
-                    "votes": f"{c['votes']}/{c['out_of']}",
-                    "caps": caps
-                })
+            caps = c.get("caps", {})
+            max_cap = max(caps.values()) if caps else 0
+            stores.append({
+                "store": c["store"],
+                "capital": max_cap,
+                "votes": f"{c['votes']}/{c['out_of']}",
+                "caps": caps
+            })
         # 按 STORE_NAMES 顺序（一店→集合16）
         store_order = {s: i for i, s in enumerate(STORE_NAMES)}
         stores.sort(key=lambda x: store_order.get(x["store"], 999))
@@ -790,11 +789,11 @@ def get_order_sheet(days=90):
 
     # 从缓存读正帮扶
     pos_row = db.execute(
-        "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')='positive' ORDER BY date DESC LIMIT 1"
+        "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')='positive' ORDER BY date DESC, id DESC LIMIT 1"
     ).fetchone()
     # 从缓存读反帮扶
     neg_row = db.execute(
-        "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')='negative' ORDER BY date DESC LIMIT 1"
+        "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')='negative' ORDER BY date DESC, id DESC LIMIT 1"
     ).fetchone()
     db.close()
 
@@ -1116,20 +1115,21 @@ def _predict_orders(rankings, params):
             "qualified": qualified, "selected": False, "reason": reason
         })
         if qualified:
-            qualified_list.append((s, capital))
-
-    qualified_list.sort(key=lambda x: -x[1])
-    selected = qualified_list[:3]
-    sel_set = set(s for s, _ in selected)
-
-    orders = [{"store": s, "capital": cap} for s, cap in selected]
+            qualified_list.append((s, capital, rank if rank is not None else 999, mode))
+    
+    # 排序：配资降序 → 同配资按排位质量（正=排位越低越好，反=排位越高越好）
+    qualified_list.sort(key=lambda x: (-x[1], x[2] if x[3] == "positive" else -x[2]))
+    selected = qualified_list  # 不限前3，全部达标都出手
+    sel_set = set(s for s, _, _, _ in selected)
+    
+    orders = [{"store": s, "capital": cap} for s, cap, _, _ in selected]
 
     for q in qual_summary:
         if q["store"] in sel_set:
             q["selected"] = True
-            q["reason"] += f" → 入选(配资{q['capital']}w前3)"
+            q["reason"] += f" → 入选(配资{q['capital']}w)"
         elif q["qualified"]:
-            q["reason"] += f" 配资{q['capital']}w未入前3"
+            q["reason"] += f" 配资{q['capital']}w未入选"
 
     return orders, qual_summary
 
