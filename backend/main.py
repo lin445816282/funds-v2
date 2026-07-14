@@ -74,16 +74,32 @@ def init_db():
     conn.close()
 
 def log_op(action, store, detail, data=None):
+    """记录操作日志到 funds-v2.db"""
     try:
         conn = get_db()
         conn.execute(
-            "INSERT INTO operation_logs (action, store, detail, data) VALUES (?,?,?,?)",
-            (action, store, detail, json.dumps(data, ensure_ascii=False) if data else None)
+            "INSERT INTO operation_logs (ts, action, store, detail, data) VALUES (?,?,?,?,?)",
+            (datetime.now().isoformat(), action, store, detail, json.dumps(data) if data else "")
         )
         conn.commit()
         conn.close()
     except Exception as e:
         print(f"[log_op err] {e}")
+
+
+def _log_admin_login(ip: str, target: str, success: bool, detail: str = ""):
+    """跨库写管理后台 login_logs 表（stock_agg.db）"""
+    try:
+        import sqlite3 as _sqlite
+        _adb = _sqlite.connect("/home/xiaolin/projects/stock-aggregator/data/stock_agg.db")
+        _adb.execute(
+            "INSERT INTO login_logs (ip, target, success, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+            (ip, target, 1 if success else 0, detail, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        _adb.commit()
+        _adb.close()
+    except Exception:
+        pass
 
 init_db()
 
@@ -131,7 +147,9 @@ def sanitize_cols(updates):
 async def auth_login(request: Request):
     data = await request.json()
     pwd = data.get("password", "")
+    ip = request.client.host if request.client else "unknown"
     if pwd != PASSWORD:
+        _log_admin_login(ip, "funds-v2", False, "密码错误")
         raise HTTPException(status_code=403, detail="密码错误")
     token = secrets.token_hex(32)
     conn = get_db()
@@ -139,6 +157,7 @@ async def auth_login(request: Request):
         conn.execute("INSERT INTO sessions (token, created) VALUES (?,?)",
                      (token, datetime.now().isoformat()))
         conn.commit()
+        _log_admin_login(ip, "funds-v2", True, "")
         return {"ok": True, "token": token}
     finally:
         conn.close()
