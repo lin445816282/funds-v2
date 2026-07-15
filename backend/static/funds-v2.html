@@ -4239,7 +4239,12 @@ function syncOrderNumbers() {
       return Promise.all([posGuide, negGuide]).then(function(results){
         if (results[0].error) { showAlert(results[0].error, '数据未就绪', function(){ btn.disabled = false; btn.textContent = '更新正负下单'; }); return; }
         if (results[1].error) { showAlert(results[1].error, '数据未就绪', function(){ btn.disabled = false; btn.textContent = '更新正负下单'; }); return; }
-        showToast('✅ 已更新 ' + (res.items||res.total_items||0) + ' 条');
+        var newCount = res.items||0;
+        if (newCount > 0) {
+          showToast('✅ 新增 ' + newCount + ' 条');
+        } else {
+          showToast('✅ 数据已是最新（' + (res.collections||0)*2 + '条）');
+        }
         initOrderSheet();
       });
     })
