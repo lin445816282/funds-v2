@@ -544,7 +544,7 @@ async def index_predictions(days: int = 30):
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
 # ═══════════════ 总部出手模拟 ═══════════════
-from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts, save_order_history, get_order_history
+from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts, save_order_history, get_order_history, ack_order_history
 
 @app.get("/api/simulate/data")
 async def api_simulate_data(days: int = 90):
@@ -629,6 +629,28 @@ async def api_get_order_amounts(date: str = None, list_all: bool = False):
 async def api_get_order_history(limit: int = 30):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: get_order_history(limit))
+
+@app.post("/api/simulate/order-history/confirm")
+async def api_confirm_order_history(request: Request):
+    """用户确认当前下单配置 → 写入 order_history"""
+    body = await request.json()
+    date = body.get("date", "")
+    stores = body.get("stores", [])
+    if not date or not stores:
+        raise HTTPException(400, "date and stores required")
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: save_order_history(date, stores))
+
+@app.post("/api/simulate/order-history/ack")
+async def api_ack_order_history(request: Request):
+    """用户确认/撤销某个出手日的下单记录"""
+    body = await request.json()
+    action_date = body.get("action_date", "")
+    acknowledged = body.get("acknowledged", True)
+    if not action_date:
+        raise HTTPException(400, "action_date required")
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: ack_order_history(action_date, acknowledged))
 
 # ═══════ 日盈亏记录 ═══════
 @app.get("/api/simulate/order-daily-results")

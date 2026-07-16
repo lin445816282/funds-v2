@@ -603,7 +603,6 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
       <div class="modal-btns" style="margin-top:12px">
         <button onclick="refreshGuide()" style="flex:1;background:#e8f5e9;color:#2e7d32;font-size:13px">🔄 刷新</button>
         <button onclick="loadGuideHistory()" style="flex:1;background:#f8fafc;color:#3a5070;font-size:13px">📜 历史</button>
-        <button onclick="showOrderHistory()" style="flex:1;background:#fef3c7;color:#b45309;font-size:13px">📋 下单记录</button>
         <button onclick="document.getElementById('guide-modal').classList.add('hide')" style="flex:1;background:#f1f5f9;color:#3a5070">关闭</button>
       </div>
     </div>
@@ -620,6 +619,21 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
       <div class="modal-btns" style="margin-top:12px">
         <button onclick="loadGuideCompare()" style="flex:1;background:#e8f5e9;color:#2e7d32;font-size:13px">🔄 刷新</button>
         <button onclick="document.getElementById('compare-modal').classList.add('hide')" style="flex:1;background:#f1f5f9;color:#3a5070">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 下单记录弹窗 -->
+  <div class="modal-mask hide" id="order-history-modal" onclick="if(event.target===this)this.classList.add('hide')">
+    <div class="modal-box" style="width:95%;max-width:520px;max-height:85vh;overflow-y:auto;padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="margin:0">📋 下单记录 · 纯历史对应表</h3>
+        <span id="order-history-freshness" style="font-size:12px;font-weight:600;color:#1e3a5f"></span>
+      </div>
+      <div id="order-history-content" style="font-size:13px;line-height:1.7;color:#1e3a5f"></div>
+      <div class="modal-btns" style="margin-top:12px">
+        <button onclick="loadOrderHistory()" style="flex:1;background:#e8f5e9;color:#2e7d32;font-size:13px">🔄 刷新</button>
+        <button onclick="document.getElementById('order-history-modal').classList.add('hide')" style="flex:1;background:#f1f5f9;color:#3a5070">关闭</button>
       </div>
     </div>
   </div>
@@ -3849,6 +3863,7 @@ function markDayResult(result) {
 // ═══════════ 下单表 ═══════════
 var orderData = null;
 var trimCount = 0;
+var latestOrderDate = '';
 
 function initOrderSheet() {
   var el = document.getElementById('order-sheet');
@@ -3859,6 +3874,7 @@ function initOrderSheet() {
       .then(r => r.json())
       .then(function(d) {
         orderData = d;
+        latestOrderDate = d.date;
         trimCount = 0;
         renderOrderSheet(d);
       })
@@ -3929,6 +3945,11 @@ function renderOrderSheet(d) {
   h += '<button onclick="syncOrderByDate()" style="padding:2px 8px;border-radius:12px;border:1px solid #3b82f6;background:#eff6ff;font-size:10px;color:#3b82f6;cursor:pointer;font-weight:600">🔄 同步</button>';
   h += '<button onclick="showCollectSummary()" style="padding:2px 8px;border-radius:12px;border:1px solid #16a34a;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer;font-weight:600">📊 采集记录</button>';
   h += '</div></div>';
+
+  // 下单记录按钮块（正负卡片正上方）
+  h += '<div style="background:#fff;border-radius:12px;padding:8px 12px;margin-top:6px;box-shadow:0 1px 3px rgba(0,0,0,.03);text-align:center">';
+  h += '<button onclick="loadOrderHistory()" style="width:100%;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#fef3c7,#fde68a);color:#b45309;font-size:14px;font-weight:700;cursor:pointer">📋 下单记录</button>';
+  h += '</div>';
 
   // 双列：正帮扶 | 反帮扶
   h += '<div style="display:flex;gap:8px;margin-top:8px">';
@@ -4058,6 +4079,51 @@ function renderOrderSheet(d) {
     el.style.border = '';
     el.style.boxShadow = '';
   }
+}
+
+// ═══════ 确认下单配置 → 记入历史 ═══════
+function confirmOrderToHistory() {
+  if (!orderData) return alert('暂无下单数据');
+  var d = orderData;
+  var date = d.date;  // 排位日期
+
+  // 只允许最新排位日期 +1，多一天就拦截
+  var today = new Date().toISOString().slice(0,10);
+  var actionDay = offsetDate(date, 1);  // 出手日 = 排位日+1
+  var actionDate = new Date(actionDay + 'T00:00:00');
+  // 出手日必须 ≤ 今天（不能确认未来），且 = 排位最新日期+1
+  if (actionDay > today) {
+    return alert('❌ 出手日 ' + actionDay + ' 还未到，仅允许最新排位日期 +1 天确认');
+  }
+  // 排位日必须是最新：后台始终返回最新 date，但如果数据已刷新且不是最新则拦截
+  if (d.date !== latestOrderDate && latestOrderDate && d.date < latestOrderDate) {
+    return alert('❌ 排位日 ' + d.date + ' 不是最新（最新: ' + latestOrderDate + '），仅允许最新排位日确认');
+  }
+
+  var stores = [];
+  (d.positive.stores||[]).forEach(function(s) {
+    if (s.capital) stores.push({store: s.store, capital: s.capital, mode: 'positive'});
+  });
+  (d.negative.stores||[]).forEach(function(s) {
+    if (s.capital) stores.push({store: s.store, capital: s.capital, mode: 'negative'});
+  });
+  if (!stores.length) return alert('无门店需确认');
+  fetch(API_BASE + '/api/simulate/order-history/confirm', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({date: date, stores: stores})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(res) {
+    if (res.ok) {
+      showToast('✅ 排位' + date + ' → 出手' + res.action_date + ' · ' + res.stores + '店 · ' + res.total_capital + 'w');
+    } else {
+      alert('确认失败: ' + (res.error||'未知'));
+    }
+  })
+  .catch(function(e) {
+    alert('确认失败: ' + e.message);
+  });
 }
 
 // ═══════ 除最小 ═══════
@@ -5947,42 +6013,138 @@ var _guideAllRows = [];
 var _guideTotal = 0;
 var _guidePageSize = 30;
 
-function showOrderHistory() {
-  var historyDiv = document.getElementById('guide-history');
-  var contentDiv = document.getElementById('guide-content');
-  // 隐藏算法内容，显示下单记录
-  contentDiv.style.display = 'none';
-  historyDiv.innerHTML = '<div style="color:#8899b0;text-align:center">⏳ 加载下单记录...</div>';
-  historyDiv.style.display = 'block';
+function showOrderHistory() { loadOrderHistory(); }  // 兼容旧调用
+function loadOrderHistory() {
+  var modal = document.getElementById('order-history-modal');
+  var container = document.getElementById('order-history-content');
+  container.innerHTML = '<div style="color:#8899b0;text-align:center;padding:20px">⏳ 加载中...</div>';
+  modal.classList.remove('hide');
+
   fetch(API_BASE + '/api/simulate/order-history?limit=100')
-    .then(r => r.json())
+    .then(function(r) { return r.json(); })
     .then(function(data) {
       var rows = data.rows || [];
       if (!rows.length) {
-        historyDiv.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:12px">暂无下单记录<br><span style="font-size:10px">点"下单"会自动记录</span></div>';
+        container.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:20px">暂无下单记录<br><span style="font-size:10px">点"下单"会自动记录</span></div>';
         return;
       }
-      var h = '<div style="font-size:11px;font-weight:700;color:#3a5070;margin-bottom:6px">📋 下单记录 ('+rows.length+'条) · 独立存档</div>';
+
+      var dateMin = rows[rows.length-1].date;
+      var dateMax = rows[0].date;
+      var rangeStr = dateMin.substr(5) + '至' + dateMax.substr(5);
+      // 最新记录
+      var latestActionDate = rows[0].action_date || '';
+      var latestDate = rows[0].date || '';
+      var freshness = document.getElementById('order-history-freshness');
+      freshness.textContent = '📅 ' + latestActionDate.substr(5) + ' | ' + rows.length + '天';
+
+      // 汇总
+      var totalCap = 0, posTotal = 0, negTotal = 0, posCount = 0, negCount = 0;
+      rows.forEach(function(r) {
+        totalCap += r.total_capital || 0;
+        (r.stores||[]).forEach(function(s) {
+          if (s.mode === 'negative') { negTotal += s.capital || 0; negCount++; }
+          else { posTotal += s.capital || 0; posCount++; }
+        });
+      });
+
+      // 汇总卡片
+      var summary = '<div style="background:linear-gradient(135deg,#f0f7ff,#fef2f2);border-radius:12px;padding:12px;margin-bottom:12px">';
+      summary += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:12px;font-weight:700;color:#1e3a5f">📊 历史实盘对应表</span><span style="font-size:11px;color:#667">' + rangeStr + '</span></div>';
+      summary += '<table style="width:100%;font-size:11px;border-collapse:collapse">';
+      summary += '<tr><td></td><td style="text-align:center;color:#2563eb;font-weight:600">🟢 正帮扶</td><td style="text-align:center;color:#dc2626;font-weight:600">🔴 反帮扶</td></tr>';
+      summary += '<tr><td>累计投入</td><td style="text-align:center;color:#2563eb;font-weight:700">' + posTotal.toLocaleString() + '</td><td style="text-align:center;color:#dc2626;font-weight:700">' + negTotal.toLocaleString() + '</td></tr>';
+      summary += '<tr><td>出场次数</td><td style="text-align:center;color:#2563eb">' + posCount + '</td><td style="text-align:center;color:#dc2626">' + negCount + '</td></tr>';
+      summary += '<tr><td>总计</td><td colspan="2" style="text-align:center;font-weight:700;color:#1e3a5f">' + totalCap.toLocaleString() + '</td></tr>';
+      summary += '</table></div>';
+
+      // 缩写函数
+      function abbr(store) {
+        var map = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','集合14':'14','集合16':'16'};
+        return map[store] || store;
+      }
+
+      // store range 渲染（仿对比样式）
+      function renderStoreRow(stores, modeColor) {
+        var order = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
+        var cmap = {};
+        (stores||[]).forEach(function(s){ cmap[s.store] = s.capital || 0; });
+        var top = '', bot = '';
+        order.forEach(function(s) {
+          top += '<span style="display:inline-block;width:12.5%;text-align:center;font-size:8px;color:#8899b0">' + abbr(s) + '</span>';
+          var c = cmap[s] || 0;
+          var col = c > 0 ? modeColor : '#ccc';
+          bot += '<span style="display:inline-block;width:12.5%;text-align:center;font-weight:700;font-size:9px;color:' + col + '">' + (c||'') + '</span>';
+        });
+        return '<div style="line-height:1.3;overflow-x:auto">' + top + '<br>' + bot + '</div>';
+      }
+
+      var h = '';
       rows.forEach(function(r) {
         var stores = r.stores || [];
-        var storesHtml = stores.map(function(s) {
-          var m = s.mode === 'negative' ? '🔴' : '🟢';
-          return '<span style="display:inline-block;margin:1px 2px;padding:1px 6px;background:#f1f5f9;border-radius:8px;font-size:10px">'+m+s.store+' '+s.capital+'w</span>';
-        }).join('');
+        var posStores = stores.filter(function(s){ return s.mode !== 'negative'; });
+        var negStores = stores.filter(function(s){ return s.mode === 'negative'; });
+        var pc = posStores.reduce(function(sum,s){return sum+(s.capital||0);},0);
+        var nc = negStores.reduce(function(sum,s){return sum+(s.capital||0);},0);
+        var tt = r.total_capital || 0;
+
         h += '<div style="padding:8px 10px;margin-bottom:4px;background:#f8fafc;border-radius:8px">';
-        h += '<div style="display:flex;justify-content:space-between;align-items:center">';
-        h += '<span style="font-size:12px;font-weight:700">'+r.date+'</span>';
-        h += '<span style="font-size:9px;color:#8899b0">'+r.created_at.slice(0,16)+'</span>';
+        h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">';
+        h += '<div style="display:flex;align-items:center;gap:6px">';
+        h += '<span style="font-weight:700;font-size:13px">📅 出手 ' + r.action_date + '</span>';
+        var acked = r.acknowledged === 1 || r.acknowledged === true;
+        h += '<button id="ack-' + r.action_date.replace(/-/g,'') + '" onclick="ackOrderHistory(\'' + r.action_date + '\')" style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;' + (acked ? 'background:#e5e7eb;color:#9ca3af;border:1px solid #d1d5db' : 'background:#fef3c7;color:#b45309;border:1px solid #f59e0b') + '">' + (acked ? '✓ 已确认' : '确认') + '</button>';
         h += '</div>';
-        h += '<div style="margin-top:4px">'+storesHtml+'</div>';
-        h += '<div style="font-size:10px;color:#b45309;margin-top:2px">合计 '+r.total_capital+'w · 出手日 '+r.action_date+'</div>';
+        h += '<span style="font-size:10px;color:#94a3b8">排位 ' + r.date + '</span>';
+        h += '<span style="font-size:10px;color:#8899b0">合计' + tt.toLocaleString() + 'w</span>';
+        h += '</div>';
+        h += '<div style="font-size:9px;color:#94a3b8;margin-bottom:2px">存入: ' + (r.created_at||'').replace('T',' ').slice(0,16) + '</div>';
+        if (posStores.length) {
+          h += '<div style="font-size:10px;margin-bottom:2px">';
+          h += '<span>🟢正: <b style="color:#2563eb">' + pc + '</b></span>';
+          h += renderStoreRow(posStores, '#2563eb');
+          h += '</div>';
+        }
+        if (negStores.length) {
+          h += '<div style="font-size:10px">';
+          h += '<span>🔴反: <b style="color:#dc2626">' + nc + '</b></span>';
+          h += renderStoreRow(negStores, '#dc2626');
+          h += '</div>';
+        }
         h += '</div>';
       });
-      historyDiv.innerHTML = h;
+
+      container.innerHTML = summary + h;
     })
     .catch(function(e) {
-      historyDiv.innerHTML = '<div style="color:#e53e3e">加载失败: '+e.message+'</div>';
+      container.innerHTML = '<div style="color:#e53e3e;text-align:center">加载失败: ' + e.message + '</div>';
     });
+}
+
+function ackOrderHistory(actionDate) {
+  var btn = document.getElementById('ack-' + actionDate.replace(/-/g,''));
+  var currentlyAcked = btn && btn.textContent === '✓ 已确认';
+  var newAck = !currentlyAcked;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  fetch(API_BASE + '/api/simulate/order-history/ack', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action_date: actionDate, acknowledged: newAck})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(res) {
+    if (res.ok) {
+      showToast(newAck ? '✅ 已确认出手 ' + actionDate : '↩ 撤销确认 ' + actionDate);
+      loadOrderHistory();
+    } else {
+      alert('操作失败');
+      if (btn) { btn.disabled = false; btn.textContent = currentlyAcked ? '✓ 已确认' : '确认'; }
+    }
+  })
+  .catch(function(e) {
+    alert('网络错误: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = currentlyAcked ? '✓ 已确认' : '确认'; }
+  });
 }
 
 function loadGuideHistory() {

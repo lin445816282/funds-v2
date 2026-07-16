@@ -407,7 +407,15 @@ def get_simulate_data(days=90):
 # ═══════════════ API：跑优化 ═══════════════
 def run_optimize(days=90, mode="positive", algorithm="coordinate"):
     data = load_data(days)
-    params, result = optimize(data, mode, algorithm)
+    
+    # 训练与预测分离：优化只用 D-1 前数据，避免偷看最新一天
+    last_day = data[-1] if data else None
+    train_data = [d for d in data if d["date"] != last_day["date"]] if last_day else data
+    params, _ = optimize(train_data, mode, algorithm)
+    
+    # 用完整数据跑模拟（参数未经最新日训练，但回测覆盖全量）
+    stop_neg2 = (algorithm == "stop_neg2")
+    result = simulate_full(params, data, stop_on_neg2=stop_neg2)
     
     # 计算每店真实贡献（从全量模拟的daily记录中统计）
     store_contrib = {s: {"shots":0, "hits":0, "profit":0} for s in STORE_NAMES}
@@ -504,6 +512,10 @@ def run_daily_guide(days=90, mode="positive", max_iter=3):
     today_rankings = last_day["rankings"]
     today_date = last_day["date"]
 
+    # ── 关键：优化只用 D-1 之前的数据，D 本身不参与训练（避免数据泄露）──
+    # train_data 排除最新一天（today_date），该天排位数据只用于 _predict_orders 做预测输入
+    train_data = [d for d in data if d.get("date") != today_date]
+
     # ── 验证：仓库 threshold 号码是否就绪 ──
     import urllib.request
     try:
@@ -524,7 +536,7 @@ def run_daily_guide(days=90, mode="positive", max_iter=3):
 
     algo_results = []
     for algo_key, algo_name in algorithms:
-        params, result = optimize(data, mode, algo_key, max_iter)
+        params, result = optimize(train_data, mode, algo_key, max_iter)
         orders, detail = _predict_orders(today_rankings, params)
         algo_results.append({
             "name": algo_name, "key": algo_key,
@@ -1309,10 +1321,10 @@ def save_order_history(date, stores_data):
         capital = sd.get("capital", 0)
         if not capital:
             continue
-        # 推断模式：有 numbers dict 则按 key 判断，否则用 mode 字段
+        # 推断模式：有非空 numbers dict 则按 key 判断，否则用 mode 字段
         nums = sd.get("numbers", {})
-        if isinstance(nums, dict):
-            store_mode = "positive" if "25" in nums else ("negative" if "24" in nums else "positive")
+        if isinstance(nums, dict) and nums and ("25" in nums or "24" in nums):
+            store_mode = "positive" if "25" in nums else "negative"
         else:
             store_mode = sd.get("mode", "positive")
         stores.append({
@@ -1353,6 +1365,20 @@ def get_order_history(limit=30):
             "mode": r["mode"],
             "stores": stores,
             "total_capital": r["total_capital"],
+            "acknowledged": r["acknowledged"] if "acknowledged" in r.keys() else 0,
             "created_at": r["created_at"],
         })
     return {"rows": result, "total": len(result)}
+
+
+def ack_order_history(action_date, acknowledged):
+    """确认/撤销某个出手日的下单记录"""
+    db = sqlite3.connect(FUNDS_DB)
+    db.execute(
+        "UPDATE order_history SET acknowledged=? WHERE action_date=?",
+        (1 if acknowledged else 0, action_date)
+    )
+    db.commit()
+    updated = db.total_changes
+    db.close()
+    return {"ok": True, "action_date": action_date, "acknowledged": bool(acknowledged), "updated": updated}
