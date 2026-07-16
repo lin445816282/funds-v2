@@ -520,7 +520,7 @@ def run_daily_guide(days=90, mode="positive", max_iter=3):
     import urllib.request
     try:
         url = "http://localhost:8016/api/threshold/results?" + urllib.parse.urlencode({"date": today_date})
-        with urllib.request.urlopen(url, timeout=10) as resp:
+        with urllib.request.urlopen(url, timeout=3) as resp:
             th_data = json.loads(resp.read())
         if not th_data.get("items"):
             return {"error": f"仓库{today_date}无threshold号码，请先在数字仓库同步", "ranking_date": today_date}
@@ -566,7 +566,7 @@ def _pull_one_date(date_str):
     import urllib.request, urllib.parse
     url = "http://localhost:8016/api/threshold/results?" + urllib.parse.urlencode({"date": date_str})
     try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
+        with urllib.request.urlopen(url, timeout=5) as resp:
             data = json.loads(resp.read())
     except Exception as e:
         return None, None, str(e)

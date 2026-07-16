@@ -3877,6 +3877,8 @@ function initOrderSheet() {
         latestOrderDate = d.date;
         trimCount = 0;
         renderOrderSheet(d);
+        // 自动存下单历史（与显示同步，无需手动点"更新下单金额"）
+        updateOrderAmounts();
       })
       .catch(function(e) {
         el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">加载失败: '+e.message+'</div>';
@@ -4208,8 +4210,8 @@ function updateOrderAmounts() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({date: d.date, stores: stores})
-  }).then(function(r) { return r.json(); }).then(function() {
-    initOrderSheet(); // 刷新显示
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    showToast('✅ 已保存');  // 不再调 initOrderSheet 避免死循环（initOrderSheet 已自动调用本函数）
   }).catch(function(e) { alert('更新失败: '+e); });
 }
 
