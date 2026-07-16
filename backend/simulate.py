@@ -1254,6 +1254,8 @@ def save_order_amounts(date, stores_data):
         )
     db.commit()
     db.close()
+    # 同时写入下单历史（独立表）
+    save_order_history(date, stores_data)
     return {"ok": True, "date": action_date, "total": sum(num_amounts.values())}
 
 
@@ -1294,3 +1296,63 @@ def get_order_amounts(date=None, list_all=False):
     for r in rows:
         amounts[r["number"]] = r["amount"]
     return {"date": date, "amounts": amounts}
+
+
+# ── 下单历史（独立表，不受算法重跑影响）──────────
+def save_order_history(date, stores_data):
+    """把下单时的门店快照写入 order_history，永久存档"""
+    from datetime import datetime as dt, timedelta
+    action_date = (dt.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    stores = []
+    total = 0
+    for sd in stores_data:
+        capital = sd.get("capital", 0)
+        if not capital:
+            continue
+        # 推断模式：有 numbers dict 则按 key 判断，否则用 mode 字段
+        nums = sd.get("numbers", {})
+        if isinstance(nums, dict):
+            store_mode = "positive" if "25" in nums else ("negative" if "24" in nums else "positive")
+        else:
+            store_mode = sd.get("mode", "positive")
+        stores.append({
+            "store": sd.get("store", ""),
+            "capital": capital,
+            "mode": store_mode,
+        })
+        total += capital
+    if not stores:
+        return {"ok": False, "error": "无有效门店"}
+    db = sqlite3.connect(FUNDS_DB)
+    # 同一日期覆盖（与 order_amounts 保持一致）
+    db.execute("DELETE FROM order_history WHERE date=?", (date,))
+    db.execute(
+        "INSERT INTO order_history (date, action_date, mode, stores_json, total_capital) VALUES (?,?,?,?,?)",
+        (date, action_date, "full", json.dumps(stores, ensure_ascii=False), total)
+    )
+    db.commit()
+    db.close()
+    return {"ok": True, "date": date, "action_date": action_date, "stores": len(stores), "total_capital": total}
+
+
+def get_order_history(limit=30):
+    """读取下单历史（独立表）"""
+    db = sqlite3.connect(FUNDS_DB)
+    db.row_factory = sqlite3.Row
+    rows = db.execute(
+        "SELECT * FROM order_history ORDER BY date DESC, id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    db.close()
+    result = []
+    for r in rows:
+        stores = json.loads(r["stores_json"])
+        result.append({
+            "id": r["id"],
+            "date": r["date"],
+            "action_date": r["action_date"],
+            "mode": r["mode"],
+            "stores": stores,
+            "total_capital": r["total_capital"],
+            "created_at": r["created_at"],
+        })
+    return {"rows": result, "total": len(result)}

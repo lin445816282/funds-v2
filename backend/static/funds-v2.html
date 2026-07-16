@@ -603,6 +603,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
       <div class="modal-btns" style="margin-top:12px">
         <button onclick="refreshGuide()" style="flex:1;background:#e8f5e9;color:#2e7d32;font-size:13px">🔄 刷新</button>
         <button onclick="loadGuideHistory()" style="flex:1;background:#f8fafc;color:#3a5070;font-size:13px">📜 历史</button>
+        <button onclick="showOrderHistory()" style="flex:1;background:#fef3c7;color:#b45309;font-size:13px">📋 下单记录</button>
         <button onclick="document.getElementById('guide-modal').classList.add('hide')" style="flex:1;background:#f1f5f9;color:#3a5070">关闭</button>
       </div>
     </div>
@@ -5945,6 +5946,44 @@ var _guidePage = 0;
 var _guideAllRows = [];
 var _guideTotal = 0;
 var _guidePageSize = 30;
+
+function showOrderHistory() {
+  var historyDiv = document.getElementById('guide-history');
+  var contentDiv = document.getElementById('guide-content');
+  // 隐藏算法内容，显示下单记录
+  contentDiv.style.display = 'none';
+  historyDiv.innerHTML = '<div style="color:#8899b0;text-align:center">⏳ 加载下单记录...</div>';
+  historyDiv.style.display = 'block';
+  fetch(API_BASE + '/api/simulate/order-history?limit=100')
+    .then(r => r.json())
+    .then(function(data) {
+      var rows = data.rows || [];
+      if (!rows.length) {
+        historyDiv.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:12px">暂无下单记录<br><span style="font-size:10px">点"下单"会自动记录</span></div>';
+        return;
+      }
+      var h = '<div style="font-size:11px;font-weight:700;color:#3a5070;margin-bottom:6px">📋 下单记录 ('+rows.length+'条) · 独立存档</div>';
+      rows.forEach(function(r) {
+        var stores = r.stores || [];
+        var storesHtml = stores.map(function(s) {
+          var m = s.mode === 'negative' ? '🔴' : '🟢';
+          return '<span style="display:inline-block;margin:1px 2px;padding:1px 6px;background:#f1f5f9;border-radius:8px;font-size:10px">'+m+s.store+' '+s.capital+'w</span>';
+        }).join('');
+        h += '<div style="padding:8px 10px;margin-bottom:4px;background:#f8fafc;border-radius:8px">';
+        h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+        h += '<span style="font-size:12px;font-weight:700">'+r.date+'</span>';
+        h += '<span style="font-size:9px;color:#8899b0">'+r.created_at.slice(0,16)+'</span>';
+        h += '</div>';
+        h += '<div style="margin-top:4px">'+storesHtml+'</div>';
+        h += '<div style="font-size:10px;color:#b45309;margin-top:2px">合计 '+r.total_capital+'w · 出手日 '+r.action_date+'</div>';
+        h += '</div>';
+      });
+      historyDiv.innerHTML = h;
+    })
+    .catch(function(e) {
+      historyDiv.innerHTML = '<div style="color:#e53e3e">加载失败: '+e.message+'</div>';
+    });
+}
 
 function loadGuideHistory() {
   var historyDiv = document.getElementById('guide-history');

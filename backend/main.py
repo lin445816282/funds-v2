@@ -69,6 +69,15 @@ def init_db():
             result TEXT NOT NULL,
             created TEXT DEFAULT (datetime('now','localtime'))
         );
+        CREATE TABLE IF NOT EXISTS order_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            action_date TEXT NOT NULL,
+            mode TEXT NOT NULL DEFAULT 'full',
+            stores_json TEXT NOT NULL,
+            total_capital INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
     """)
     conn.commit()
     conn.close()
@@ -535,7 +544,7 @@ async def index_predictions(days: int = 30):
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
 # ═══════════════ 总部出手模拟 ═══════════════
-from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts
+from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts, save_order_history, get_order_history
 
 @app.get("/api/simulate/data")
 async def api_simulate_data(days: int = 90):
@@ -614,6 +623,12 @@ async def api_save_order_amounts(data: dict):
 async def api_get_order_amounts(date: str = None, list_all: bool = False):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: get_order_amounts(date=date, list_all=list_all))
+
+# ── 下单历史（独立表）──
+@app.get("/api/simulate/order-history")
+async def api_get_order_history(limit: int = 30):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: get_order_history(limit))
 
 # ═══════ 日盈亏记录 ═══════
 @app.get("/api/simulate/order-daily-results")
