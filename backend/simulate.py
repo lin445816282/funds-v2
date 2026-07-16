@@ -1083,6 +1083,68 @@ def get_guide_history(limit=20, mode=None, offset=0):
 
     # 再反转回最新在前
     all_results.reverse()
+    
+    # 全量模式：合并同一日期的正反帮扶记录
+    if mode is None:
+        merged_results = []
+        date_groups = {}
+        for item in all_results:
+            d = item["date"]
+            date_groups.setdefault(d, []).append(item)
+        for d, items in date_groups.items():
+            if len(items) == 2:
+                # 合并正反：stores取并集去重，capital/profit求和
+                # 确保 a 是累计值较小的（先被处理的），用于反推 prev 状态
+                items.sort(key=lambda x: x.get("total", {}).get("capital", 0))
+                a, b = items
+                a_sum = a["day_summary"]
+                b_sum = b["day_summary"]
+                all_stores = list(dict.fromkeys(a_sum["stores"] + b_sum["stores"]))
+                all_details = a_sum.get("store_details", []) + b_sum.get("store_details", [])
+                # 去重 store_details
+                seen_stores = set()
+                unique_details = []
+                for sd in all_details:
+                    if sd["store"] not in seen_stores:
+                        seen_stores.add(sd["store"])
+                        unique_details.append(sd)
+                merged_caps = {}
+                merged_caps.update(a_sum.get("store_capitals", {}))
+                merged_caps.update(b_sum.get("store_capitals", {}))
+                merged_earned = {}
+                merged_earned.update(a_sum.get("earned", {}))
+                merged_earned.update(b_sum.get("earned", {}))
+                merged_lost = {}
+                merged_lost.update(a_sum.get("lost", {}))
+                merged_lost.update(b_sum.get("lost", {}))
+                merged_result = items[0]  # 用第一项的result/rankings
+                merged_result["day_summary"] = {
+                    "profit": a_sum["profit"] + b_sum["profit"],
+                    "capital": a_sum["capital"] + b_sum["capital"],
+                    "stores": all_stores,
+                    "top_store": all_stores[0] if all_stores else None,
+                    "earned": merged_earned,
+                    "lost": merged_lost,
+                    "store_details": unique_details,
+                    "store_capitals": merged_caps,
+                    "merged": True,
+                }
+                a_total = a.get("total", {})
+                b_total = b.get("total", {})
+                # 累计 = 当天之前的状态 + 正反两边的当天贡献
+                prev_capital = a_total.get("capital", 0) - a_sum["capital"]
+                prev_profit = a_total.get("profit", 0) - a_sum["profit"]
+                merged_result["total"] = {
+                    "days": max(a_total.get("days", 0), b_total.get("days", 0)),
+                    "capital": prev_capital + a_sum["capital"] + b_sum["capital"],
+                    "profit": prev_profit + a_sum["profit"] + b_sum["profit"],
+                }
+                merged_results.append(merged_result)
+            else:
+                merged_results.extend(items)
+        merged_results.sort(key=lambda x: x["date"], reverse=True)
+        return {"rows": merged_results[:limit], "total": len(merged_results)}
+
     return {"rows": all_results, "total": total}
 
 
