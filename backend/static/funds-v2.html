@@ -3877,8 +3877,8 @@ function initOrderSheet() {
         latestOrderDate = d.date;
         trimCount = 0;
         renderOrderSheet(d);
-        // 自动存下单历史（与显示同步，无需手动点"更新下单金额"）
-        updateOrderAmounts();
+        // 自动同步 order_amounts（静默，不弹 toast）
+        updateOrderAmounts(true);
       })
       .catch(function(e) {
         el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">加载失败: '+e.message+'</div>';
@@ -4065,7 +4065,7 @@ function renderOrderSheet(d) {
   }
   h += '</div></div>';
 
-  h += '<div style="text-align:center;margin-top:8px;display:flex;gap:8px;justify-content:center"><button onclick="updateOrderAmounts()" style="padding:10px 24px;border-radius:12px;border:1px solid #2563eb;background:#eff6ff;color:#1e40af;font-size:14px;font-weight:600;cursor:pointer">📊 更新下单金额</button><button onclick="showOrderNumbersModal()" style="padding:10px 24px;border-radius:12px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;font-size:14px;font-weight:600;cursor:pointer">📋 列表</button><button onclick="trimMinAmounts()" style="padding:10px 24px;border-radius:12px;border:1px solid #dc2626;background:#fef2f2;color:#dc2626;font-size:14px;font-weight:600;cursor:pointer">✂️ 除最小</button></div>';
+  h += '<div style="text-align:center;margin-top:8px;display:flex;gap:8px;justify-content:center"><button onclick="confirmOrderToHistory()" style="padding:10px 24px;border-radius:12px;border:2px solid #d97706;background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;font-size:14px;font-weight:700;cursor:pointer">✅ 确认排位</button><button onclick="updateOrderAmounts()" style="padding:10px 24px;border-radius:12px;border:1px solid #2563eb;background:#eff6ff;color:#1e40af;font-size:14px;font-weight:600;cursor:pointer">📊 更新下单金额</button><button onclick="showOrderNumbersModal()" style="padding:10px 24px;border-radius:12px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;font-size:14px;font-weight:600;cursor:pointer">📋 列表</button><button onclick="trimMinAmounts()" style="padding:10px 24px;border-radius:12px;border:1px solid #dc2626;background:#fef2f2;color:#dc2626;font-size:14px;font-weight:600;cursor:pointer">✂️ 除最小</button></div>';
 
   el.innerHTML = h;
 
@@ -4192,7 +4192,7 @@ function doTrimCore(minAmt) {
 }
 
 // ═══════ 下单金额更新 ═══════
-function updateOrderAmounts() {
+function updateOrderAmounts(silent) {
   // collect current store data from the DOM cards
   var stores = [];
   var posCards = document.querySelectorAll('#orderTab .store-card .positive-store');
@@ -4201,17 +4201,17 @@ function updateOrderAmounts() {
   var d = orderData;
   if (!d) return alert('暂无数据，请先刷新');
   (d.positive.stores||[]).forEach(function(s) {
-    if (s.capital) stores.push({store: s.store, capital: s.capital, numbers: (d.numbers||{})[s.store]||{}});
+    if (s.capital) stores.push({store: s.store, capital: s.capital, mode: 'positive', numbers: (d.numbers||{})[s.store]||{}});
   });
   (d.negative.stores||[]).forEach(function(s) {
-    if (s.capital) stores.push({store: s.store, capital: s.capital, numbers: (d.numbers||{})[s.store]||{}});
+    if (s.capital) stores.push({store: s.store, capital: s.capital, mode: 'negative', numbers: (d.numbers||{})[s.store]||{}});
   });
-  fetch('/api/simulate/order-amounts', {
+  fetch(API_BASE + '/api/simulate/order-amounts', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({date: d.date, stores: stores})
   }).then(function(r) { return r.json(); }).then(function(res) {
-    showToast('✅ 已保存');  // 不再调 initOrderSheet 避免死循环（initOrderSheet 已自动调用本函数）
+    if (!silent) showToast('✅ 已保存');  // 手动点击才弹，自动同步静默
   }).catch(function(e) { alert('更新失败: '+e); });
 }
 

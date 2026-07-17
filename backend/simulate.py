@@ -1321,12 +1321,22 @@ def save_order_history(date, stores_data):
         capital = sd.get("capital", 0)
         if not capital:
             continue
-        # 推断模式：有非空 numbers dict 则按 key 判断，否则用 mode 字段
-        nums = sd.get("numbers", {})
-        if isinstance(nums, dict) and nums and ("25" in nums or "24" in nums):
-            store_mode = "positive" if "25" in nums else "negative"
-        else:
-            store_mode = sd.get("mode", "positive")
+        # 模式判定：优先用显式 mode 字段，否则从 numbers dict 推断
+        store_mode = sd.get("mode", "")
+        if not store_mode:
+            nums = sd.get("numbers", {})
+            if isinstance(nums, dict) and nums:
+                # 推断：只有24没有25→negative，有25没有24→positive，都有→按订单表上下文
+                has25 = "25" in nums
+                has24 = "24" in nums
+                if has25 and not has24:
+                    store_mode = "positive"
+                elif has24 and not has25:
+                    store_mode = "negative"
+                else:
+                    store_mode = "positive"  # 两者都有无法推断，默认正
+            else:
+                store_mode = "positive"
         stores.append({
             "store": sd.get("store", ""),
             "capital": capital,
