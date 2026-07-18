@@ -1266,8 +1266,8 @@ def save_order_amounts(date, stores_data):
         )
     db.commit()
     db.close()
-    # 同时写入下单历史（独立表）
-    save_order_history(date, stores_data)
+    # 同时写入下单历史（独立表），直接传金额避免回退查询日期不匹配
+    save_order_history(date, stores_data, amounts=num_amounts)
     return {"ok": True, "date": action_date, "total": sum(num_amounts.values())}
 
 
@@ -1311,8 +1311,9 @@ def get_order_amounts(date=None, list_all=False):
 
 
 # ── 下单历史（独立表，不受算法重跑影响）──────────
-def save_order_history(date, stores_data):
-    """把下单时的门店快照写入 order_history，永久存档"""
+def save_order_history(date, stores_data, amounts=None):
+    """把下单时的门店快照写入 order_history，永久存档。
+    同时快照：下单金额、抽签号、当日各店排位"""
     from datetime import datetime as dt, timedelta
     action_date = (dt.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
     stores = []
@@ -1321,12 +1322,10 @@ def save_order_history(date, stores_data):
         capital = sd.get("capital", 0)
         if not capital:
             continue
-        # 模式判定：优先用显式 mode 字段，否则从 numbers dict 推断
         store_mode = sd.get("mode", "")
         if not store_mode:
             nums = sd.get("numbers", {})
             if isinstance(nums, dict) and nums:
-                # 推断：只有24没有25→negative，有25没有24→positive，都有→按订单表上下文
                 has25 = "25" in nums
                 has24 = "24" in nums
                 if has25 and not has24:
@@ -1334,7 +1333,7 @@ def save_order_history(date, stores_data):
                 elif has24 and not has25:
                     store_mode = "negative"
                 else:
-                    store_mode = "positive"  # 两者都有无法推断，默认正
+                    store_mode = "positive"
             else:
                 store_mode = "positive"
         stores.append({
@@ -1345,29 +1344,246 @@ def save_order_history(date, stores_data):
         total += capital
     if not stores:
         return {"ok": False, "error": "无有效门店"}
+
+    # 快照1：下单金额
+    amounts_snapshot = {}
+    if amounts and isinstance(amounts, dict):
+        amounts_snapshot = {str(k): v for k, v in amounts.items() if v}
+    else:
+        # 从 order_amounts 表读取（date=排位日，即action_date出手日前一天）
+        try:
+            db0 = sqlite3.connect(FUNDS_DB)
+            rows = db0.execute(
+                "SELECT number, amount FROM order_amounts WHERE date=? AND amount>0 ORDER BY number",
+                (date,)
+            ).fetchall()
+            amounts_snapshot = {str(r[0]): r[1] for r in rows}
+            db0.close()
+        except:
+            pass
+
+    # 快照2：抽签号（出手日当天）
+    draw_number = 0
+    try:
+        wh = sqlite3.connect(WH_DB)
+        wh.row_factory = sqlite3.Row
+        r = wh.execute(
+            "SELECT draw_number FROM analysis_daily WHERE project_id=19 AND date=?",
+            (action_date,)
+        ).fetchone()
+        if r:
+            draw_number = r["draw_number"]
+        wh.close()
+    except:
+        pass
+
+    # 快照3：排位数据（排位日各店 ranking）
+    rankings = {}
+    try:
+        db2 = sqlite3.connect(FUNDS_DB)
+        rows = db2.execute(
+            "SELECT store, amount FROM records WHERE date=? AND category=?",
+            (date, RANKING_CAT)
+        ).fetchall()
+        for row in rows:
+            rankings[row[0]] = row[1]
+        db2.close()
+    except:
+        pass
+
     db = sqlite3.connect(FUNDS_DB)
-    # 同一日期覆盖（与 order_amounts 保持一致）
     db.execute("DELETE FROM order_history WHERE date=?", (date,))
     db.execute(
-        "INSERT INTO order_history (date, action_date, mode, stores_json, total_capital) VALUES (?,?,?,?,?)",
-        (date, action_date, "full", json.dumps(stores, ensure_ascii=False), total)
+        """INSERT INTO order_history 
+           (date, action_date, mode, stores_json, total_capital,
+            amounts_json, draw_number, rankings_json, acknowledged)
+           VALUES (?,?,?,?,?,?,?,?,1)""",
+        (date, action_date, "full", json.dumps(stores, ensure_ascii=False), total,
+         json.dumps(amounts_snapshot, ensure_ascii=False), draw_number,
+         json.dumps(rankings, ensure_ascii=False))
     )
     db.commit()
     db.close()
-    return {"ok": True, "date": date, "action_date": action_date, "stores": len(stores), "total_capital": total}
+    return {"ok": True, "date": date, "action_date": action_date,
+            "stores": len(stores), "total_capital": total,
+            "draw_number": draw_number}
 
 
 def get_order_history(limit=30):
-    """读取下单历史（独立表）"""
+    """读取下单历史（独立表），含命中率计算 + 实际结果（从 sim_guides）"""
     db = sqlite3.connect(FUNDS_DB)
     db.row_factory = sqlite3.Row
     rows = db.execute(
         "SELECT * FROM order_history ORDER BY date DESC, id DESC LIMIT ?", (limit,)
     ).fetchall()
     db.close()
+
+    # 批量加载 sim_guides 实际结果（按 date=排位日 匹配）
+    dates = list(set(r["date"] for r in rows))
+    guide_map = {}  # date -> {positive: day_summary, negative: day_summary}
+    if dates:
+        db = sqlite3.connect(FUNDS_DB)
+        db.row_factory = sqlite3.Row
+        placeholders = ",".join(["?" for _ in dates])
+        g_rows = db.execute(
+            f"SELECT id, date, rankings, result FROM sim_guides WHERE date IN ({placeholders}) ORDER BY id DESC",
+            dates
+        ).fetchall()
+        db.close()
+
+        # 按(date, mode)去重取最新
+        seen = set()
+        store_amounts = {}  # date -> {store: amount} 用于盈亏计算
+        if g_rows:
+            # 批量查实际盈亏
+            g_dates = list(set(r["date"] for r in g_rows))
+            db2 = sqlite3.connect(FUNDS_DB)
+            db2.row_factory = sqlite3.Row
+            p2 = ",".join(["?" for _ in g_dates])
+            income_rows = db2.execute(
+                f"SELECT date, store, amount FROM records WHERE date IN ({p2}) AND category='income'",
+                g_dates
+            ).fetchall()
+            db2.close()
+            for ir in income_rows:
+                store_amounts.setdefault(ir["date"], {})[ir["store"]] = ir["amount"]
+
+        for gr in g_rows:
+            try:
+                res = json.loads(gr["result"])
+            except:
+                res = {}
+            rankings = json.loads(gr["rankings"] or "{}")
+            em = res.get("mode")
+            if em is None:
+                # 旧数据推断mode
+                consensus = res.get("consensus", [])
+                voted = [c for c in consensus if c.get("votes", 0) > 0]
+                gt25 = sum(1 for c in voted if rankings.get(c["store"], 0) > 25)
+                em = "negative" if gt25 > len(voted) / 2 else "positive"
+            key = (gr["date"], em)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            # 构建 day_summary（同 get_guide_history 逻辑）
+            consensus = res.get("consensus", [])
+            voted = [c for c in consensus if c.get("votes", 0) > 0]
+            day_income = store_amounts.get(gr["date"], {})
+            store_caps = {}
+            store_dets = []
+            day_capital = 0
+            day_profit = 0
+            for c in voted:
+                s = c["store"]
+                caps = c.get("caps", {})
+                max_cap = max(caps.values()) if caps else 0
+                store_caps[s] = max_cap
+                day_capital += max_cap
+                if max_cap > 0:
+                    rank = rankings.get(s)
+                    if rank is not None:
+                        base_hit = (rank <= 25)
+                        hit = base_hit if em == "positive" else not base_hit
+                    else:
+                        hit = False
+                    hm = HIT_MULT.get(em, 22)
+                    mm = MISS_MULT.get(em, 25)
+                    net = max_cap * hm if hit else -max_cap * mm
+                    store_dets.append({
+                        "store": s, "capital": max_cap, "rank": rank,
+                        "hit": hit, "net": net,
+                    })
+                    day_profit += net
+            ds = {
+                "capital": day_capital,
+                "profit": day_profit,
+                "store_capitals": store_caps,
+                "store_details": store_dets,
+            }
+            guide_map.setdefault(gr["date"], {})[em] = ds
+
+    # 批量加载 order_numbers → 计算动态金额（正店用th=25, 反店用th=24）
+    num_map = {}  # date -> {number: total_amount}
+    if dates:
+        db3 = sqlite3.connect(FUNDS_DB)
+        db3.row_factory = sqlite3.Row
+        p3 = ",".join(["?" for _ in dates])
+        on_rows = db3.execute(
+            f"SELECT date, collection_id, threshold, numbers_json FROM order_numbers WHERE date IN ({p3})",
+            dates
+        ).fetchall()
+        db3.close()
+        # 按日期+collection_id归组: date -> cid -> {25: [...], 24: [...]}
+        date_cid_nums = {}
+        for onr in on_rows:
+            d = onr["date"]
+            cid = onr["collection_id"]
+            th = onr["threshold"]
+            store = COLLECTION_TO_STORE.get(cid)
+            if not store:
+                continue
+            try:
+                nums = json.loads(onr["numbers_json"] or "[]")
+            except:
+                nums = []
+            date_cid_nums.setdefault(d, {}).setdefault(store, {})[str(th)] = nums
+        for d in dates:
+            gd = guide_map.get(d, {})
+            pos_caps = (gd.get("positive") or {}).get("store_capitals", {})
+            neg_caps = (gd.get("negative") or {}).get("store_capitals", {})
+            store_nums = date_cid_nums.get(d, {})
+            amts = {}
+            # 正店→用25号
+            for store, cap in pos_caps.items():
+                if not cap:
+                    continue
+                nums25 = (store_nums.get(store) or {}).get("25", [])
+                for n in nums25:
+                    amts[n] = amts.get(n, 0) + cap
+            # 反店→用24号
+            for store, cap in neg_caps.items():
+                if not cap:
+                    continue
+                nums24 = (store_nums.get(store) or {}).get("24", [])
+                for n in nums24:
+                    amts[n] = amts.get(n, 0) + cap
+            num_map[d] = amts
+
     result = []
+    pos_hits = pos_total = neg_hits = neg_total = 0
     for r in rows:
-        stores = json.loads(r["stores_json"])
+        stores = json.loads(r["stores_json"] or "[]")
+        rankings = {}
+        try:
+            rankings = json.loads(r["rankings_json"] or "{}")
+        except:
+            pass
+        amounts = {}
+        try:
+            amounts = json.loads(r["amounts_json"] or "{}")
+        except:
+            pass
+        # 命中判定：正帮扶 ranking≤25 中，反帮扶 ranking>25 中
+        store_hits = {}
+        for s in stores:
+            rk = rankings.get(s["store"])
+            if rk is not None:
+                if s.get("mode") == "negative":
+                    hit = rk > 25
+                    neg_total += 1
+                    if hit:
+                        neg_hits += 1
+                else:
+                    hit = rk <= 25
+                    pos_total += 1
+                    if hit:
+                        pos_hits += 1
+                store_hits[s["store"]] = hit
+
+        # 附加实际结果（来自 sim_guides）
+        guide_data = guide_map.get(r["date"], {})
+
         result.append({
             "id": r["id"],
             "date": r["date"],
@@ -1377,8 +1593,21 @@ def get_order_history(limit=30):
             "total_capital": r["total_capital"],
             "acknowledged": r["acknowledged"] if "acknowledged" in r.keys() else 0,
             "created_at": r["created_at"],
+            "draw_number": r["draw_number"] or 0,
+            "rankings": rankings,
+            "amounts": amounts,
+            "store_hits": store_hits,
+            "guide_positive": guide_data.get("positive"),
+            "guide_negative": guide_data.get("negative"),
+            "computed_amounts": num_map.get(r["date"], {}),
         })
-    return {"rows": result, "total": len(result)}
+    hit_rate = {
+        "positive": {"hits": pos_hits, "total": pos_total,
+                      "rate": round(pos_hits/pos_total*100,1) if pos_total>0 else 0},
+        "negative": {"hits": neg_hits, "total": neg_total,
+                      "rate": round(neg_hits/neg_total*100,1) if neg_total>0 else 0},
+    }
+    return {"rows": result, "total": len(result), "hit_rate": hit_rate}
 
 
 def ack_order_history(action_date, acknowledged):

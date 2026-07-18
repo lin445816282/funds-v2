@@ -78,6 +78,13 @@ def init_db():
             total_capital INTEGER NOT NULL DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        CREATE TABLE IF NOT EXISTS draw_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            day_seq INTEGER NOT NULL,
+            draw_number INTEGER NOT NULL,
+            synced_at TEXT DEFAULT (datetime('now','localtime'))
+        );
     """)
     conn.commit()
     conn.close()
@@ -636,10 +643,11 @@ async def api_confirm_order_history(request: Request):
     body = await request.json()
     date = body.get("date", "")
     stores = body.get("stores", [])
+    amounts = body.get("amounts", None)
     if not date or not stores:
         raise HTTPException(400, "date and stores required")
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, lambda: save_order_history(date, stores))
+    return await loop.run_in_executor(_executor, lambda: save_order_history(date, stores, amounts))
 
 @app.post("/api/simulate/order-history/ack")
 async def api_ack_order_history(request: Request):
@@ -651,6 +659,91 @@ async def api_ack_order_history(request: Request):
         raise HTTPException(400, "action_date required")
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: ack_order_history(action_date, acknowledged))
+
+# ═══════ 抽签记录（从 warehouse 同步）═══════
+@app.get("/api/draw-records")
+async def api_draw_records(page: int = 1, page_size: int = 30):
+    conn = get_db()
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM draw_records").fetchone()[0]
+        rows = conn.execute(
+            "SELECT * FROM draw_records ORDER BY date DESC LIMIT ? OFFSET ?",
+            (page_size, (page-1)*page_size)
+        ).fetchall()
+        # 批量查排位
+        dates = [r["date"] for r in rows]
+        rankings_map = {}
+        if dates:
+            placeholders = ",".join(["?"]*len(dates))
+            rk_rows = conn.execute(
+                f"SELECT date, store, amount FROM records WHERE date IN ({placeholders}) AND category='cat_1783487972049'",
+                dates
+            ).fetchall()
+            for rk in rk_rows:
+                rankings_map.setdefault(rk["date"], {})[rk["store"]] = rk["amount"]
+        records = []
+        for r in rows:
+            d = dict(r)
+            d["rankings"] = rankings_map.get(r["date"], {})
+            records.append(d)
+        return {"rows": records, "total": total, "page": page, "page_size": page_size}
+    finally:
+        conn.close()
+
+@app.post("/api/draw-records/sync")
+async def api_draw_records_sync():
+    """从 warehouse 同步抽签记录"""
+    try:
+        wh = sqlite3.connect("/home/xiaolin/projects/number-warehouse/backend/data/warehouse.db")
+        wh.row_factory = sqlite3.Row
+        wh_rows = wh.execute("SELECT date, day_seq, draw_number FROM records ORDER BY date").fetchall()
+        wh.close()
+    except Exception as e:
+        raise HTTPException(500, f"读取warehouse失败: {e}")
+
+    conn = get_db()
+    added = 0
+    try:
+        for r in wh_rows:
+            existing = conn.execute("SELECT id FROM draw_records WHERE date=?", (r["date"],)).fetchone()
+            if not existing:
+                conn.execute(
+                    "INSERT INTO draw_records (date, day_seq, draw_number) VALUES (?,?,?)",
+                    (r["date"], r["day_seq"], r["draw_number"])
+                )
+                added += 1
+        conn.commit()
+        return {"ok": True, "added": added, "total_warehouse": len(wh_rows)}
+    finally:
+        conn.close()
+
+@app.post("/api/draw-records")
+async def api_create_draw_record(request: Request):
+    """新增/更新一条抽签记录（warehouse 推送用）"""
+    body = await request.json()
+    date = body.get("date", "")
+    day_seq = body.get("day_seq", 0)
+    draw_number = body.get("draw_number", 0)
+    if not date:
+        raise HTTPException(400, "date required")
+    conn = get_db()
+    try:
+        conn.execute("INSERT OR REPLACE INTO draw_records (date, day_seq, draw_number) VALUES (?,?,?)",
+                     (date, day_seq, draw_number))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+@app.delete("/api/draw-records/{rid}")
+async def api_delete_draw_record(rid: int):
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM draw_records WHERE id=?", (rid,))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
 
 # ═══════ 日盈亏记录 ═══════
 @app.get("/api/simulate/order-daily-results")
