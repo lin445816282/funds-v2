@@ -3883,8 +3883,8 @@ function initOrderSheet() {
   var el = document.getElementById('order-sheet');
   el.innerHTML = '<div class="empty">⏳ 加载中...</div>';
   // 先加载亏损记录，再加载下单数据
-  loadLossResults().then(function() {
-    fetch(API_BASE + '/api/simulate/order-sheet?days=30')
+  return loadLossResults().then(function() {
+    return fetch(API_BASE + '/api/simulate/order-sheet?days=30')
       .then(r => r.json())
       .then(function(d) {
         orderData = d;
@@ -3893,9 +3893,11 @@ function initOrderSheet() {
         renderOrderSheet(d);
         // 自动同步 order_amounts（静默，不弹 toast）
         updateOrderAmounts(true);
+        return d;  // 返回数据供调用方使用
       })
       .catch(function(e) {
         el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">加载失败: '+e.message+'</div>';
+        throw e;
       });
   });
 }
@@ -4106,7 +4108,6 @@ function confirmOrderToHistory() {
   // 只允许最新排位日期 +1，多一天就拦截
   var today = new Date().toISOString().slice(0,10);
   var actionDay = offsetDate(date, 1);  // 出手日 = 排位日+1
-  var actionDate = new Date(actionDay + 'T00:00:00');
   // 出手日必须 ≤ 今天（不能确认未来），且 = 排位最新日期+1
   if (actionDay > today) {
     return alert('❌ 出手日 ' + actionDay + ' 还未到，仅允许最新排位日期 +1 天确认');
@@ -4127,7 +4128,7 @@ function confirmOrderToHistory() {
   fetch(API_BASE + '/api/simulate/order-history/confirm', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({date: date, stores: stores, amounts: d.order_amounts ? d.order_amounts.amounts : null})
+    body: JSON.stringify({date: actionDay, stores: stores, amounts: d.order_amounts ? d.order_amounts.amounts : null})
   })
   .then(function(r) { return r.json(); })
   .then(function(res) {
@@ -4334,7 +4335,9 @@ function syncOrderNumbers() {
         } else {
           showToast('✅ 数据已是最新（' + (res.collections||0)*2 + '条）');
         }
-        initOrderSheet();
+        initOrderSheet().then(function() {
+          confirmOrderToHistory();
+        });
       });
     })
     .catch(function(e){
@@ -4371,9 +4374,9 @@ function syncAllOrders() {
   if (!btn || btn.disabled) return;
   btn.disabled = true;
   btn.textContent = '⏳ 全量同步...';
-  // 拉7月1号~今天
+  // 拉全部数据（auto=查仓库最早日期~今天）
   var today = new Date().toISOString().slice(0,10);
-  var url = API_BASE + '/api/simulate/pull-numbers?from_date=2026-07-01&to_date=' + today;
+  var url = API_BASE + '/api/simulate/pull-numbers?from_date=auto&to_date=' + today;
   fetch(url, {method:'POST'})
     .then(r => r.json())
     .then(function(res){
@@ -5791,12 +5794,14 @@ function fetchGuide(mode) {
 }
 
 // ═══════ 全局 storeRange（用于正负帮扶对比和下单历史）═══════
-function storeRange(ds) {
+function storeRange(ds, hits, hasDraw) {
   if (!ds || !ds.store_capitals) return '—';
   var caps = ds.store_capitals;
   var details = ds.store_details || [];
   var hitMap = {};
   details.forEach(function(d){ hitMap[d.store] = d.hit; });
+  // hits 覆盖（下单历史用行动日真实命中）
+  if (hits) { for (var k in hits) { hitMap[k] = hits[k]; } }
   var order = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
   var names = ['一','二','三','四','五','六','14','16'];
   var top = '', bot = '';
@@ -5805,8 +5810,8 @@ function storeRange(ds) {
     var hit = hitMap[s];
     top += '<span style="display:inline-block;width:12.5%;text-align:center;font-size:8px;color:#8899b0">' + names[i] + '</span>';
     var label = c;
-    if (c > 0) label = hit ? c + '(+)' : c + '(-)';
-    var col = c > 0 ? (hit ? '#16a34a' : '#dc2626') : '#ccc';
+    if (hasDraw && c > 0 && hit !== undefined) label = hit ? c + '(+)' : c + '(-)';
+    var col = c > 0 ? (hasDraw && hit ? '#16a34a' : (hasDraw && hit === false ? '#dc2626' : '#1e3a5f')) : '#ccc';
     bot += '<span style="display:inline-block;width:12.5%;text-align:center;font-weight:700;font-size:9px;color:' + col + '">' + label + '</span>';
   });
   return '<div style="line-height:1.3;overflow-x:auto">' + top + '<br>' + bot + '</div>';
@@ -5897,11 +5902,11 @@ function loadGuideCompare() {
       h += '</div>';
       h += '<div style="font-size:10px;margin-bottom:2px">';
       h += '<span>🟢正: <b style="color:#2563eb">' + (pc||0) + '</b></span>';
-      h += storeRange(pds);
+      h += storeRange(pds, null, true);
       h += '</div>';
       h += '<div style="font-size:10px">';
       h += '<span>🔴反: <b style="color:#dc2626">' + (nc||0) + '</b></span>';
-      h += storeRange(nds);
+      h += storeRange(nds, null, true);
       h += '</div>';
       h += '</div>';
     });
@@ -6037,14 +6042,18 @@ var _guideAllRows = [];
 var _guideTotal = 0;
 var _guidePageSize = 30;
 
-function showOrderHistory() { loadOrderHistory(); }  // 兼容旧调用
-function loadOrderHistory() {
+function showOrderHistory() { loadOrderHistory(1); }  // 兼容旧调用
+var _ohPage = 1, _ohPageSize = 50;
+function loadOrderHistory(page) {
+  if (page === undefined) page = _ohPage;
+  else _ohPage = page;
+  var offset = (_ohPage - 1) * _ohPageSize;
   var modal = document.getElementById('order-history-modal');
   var container = document.getElementById('order-history-content');
   container.innerHTML = '<div style="color:#8899b0;text-align:center;padding:20px">⏳ 加载中...</div>';
   modal.classList.remove('hide');
 
-  fetch(API_BASE + '/api/simulate/order-history?limit=100')
+  fetch(API_BASE + '/api/simulate/order-history?limit=' + _ohPageSize + '&offset=' + offset)
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var rows = data.rows || [];
@@ -6106,8 +6115,10 @@ function loadOrderHistory() {
       rows.forEach(function(r) {
         var stores = r.stores || [];
         var rankings = r.rankings || {};
-        var amounts = r.computed_amounts || r.amounts || {};
+        var amounts = r.amounts || r.computed_amounts || {};
         var storeHits = r.store_hits || {};
+        var storeHitsPos = r.store_hits_pos || {};
+        var storeHitsNeg = r.store_hits_neg || {};
         var gp = r.guide_positive, gn = r.guide_negative;
         var pc = (gp && gp.capital) ? gp.capital : stores.filter(function(s){return s.mode!=='negative';}).reduce(function(sum,s){return sum+(s.capital||0);},0);
         var nc = (gn && gn.capital) ? gn.capital : stores.filter(function(s){return s.mode==='negative';}).reduce(function(sum,s){return sum+(s.capital||0);},0);
@@ -6126,12 +6137,18 @@ function loadOrderHistory() {
         h += '<div style="padding:8px 10px;margin-bottom:4px;background:#f8fafc;border-radius:8px;cursor:pointer" onclick="var d=document.getElementById(\''+detailId+'\');d.style.display=d.style.display===\'none\'?\'block\':\'none\'">';
         h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">';
         h += '<div style="display:flex;align-items:center;gap:6px">';
-        h += '<span style="font-weight:700;font-size:13px">📅 出手 ' + r.action_date + '</span>';
+        h += '<span style="font-weight:700;font-size:13px">📅 ' + r.action_date + '</span>';
         var acked = r.acknowledged === 1 || r.acknowledged === true;
         h += '<button id="ack-' + r.action_date.replace(/-/g,'') + '" onclick="event.stopPropagation();ackOrderHistory(\'' + r.action_date + '\')" style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;' + (acked ? 'background:#e5e7eb;color:#9ca3af;border:1px solid #d1d5db' : 'background:#fef3c7;color:#b45309;border:1px solid #f59e0b') + '">' + (acked ? '✓ 已确认' : '确认') + '</button>';
         h += '</div>';
-        h += '<span style="font-size:10px;color:#94a3b8">排位 ' + r.date + '</span>';
         h += '<span style="font-size:10px;color:#8899b0">合计' + tt.toLocaleString() + '</span>';
+        // 实际盈亏（用户配置 × 真实排位结果）—— 有抽签号就显示
+        if (drawNum) {
+          var op = r.own_profit || 0;
+          var opColor = op > 0 ? '#16a34a' : op < 0 ? '#dc2626' : '#8899b0';
+          var opSign = op > 0 ? '+' : '';
+          h += '<span style="font-size:11px;font-weight:700;color:'+opColor+'">' + opSign + op.toLocaleString() + '</span>';
+        }
         h += '</div>';
         // 摘要行：抽签号+排位+覆盖（始终可见）
         h += '<div style="font-size:9px;color:#6b7280;display:flex;justify-content:space-between">';
@@ -6140,43 +6157,147 @@ function loadOrderHistory() {
           if (drawRank) h += ' · 金额排<b style="color:#2563eb">' + drawRank + '位</b>';
           h += '</span>';
         } else {
-          h += '<span style="color:#94a3b8">未记录抽签号</span>';
+          h += '<span style="color:#94a3b8">🎯 待开奖</span>';
         }
         h += '<span style="color:#94a3b8">覆盖' + (amtKeys.length||0) + '/49号 · ' + (r.created_at||'').replace('T',' ').slice(0,16) + ' ▼</span>';
         h += '</div>';
 
-        // 展开区（初始隐藏）
-        h += '<div id="'+detailId+'" style="display:none;margin-top:4px">';
-        // 7x7网格
-        if (amtKeys.length) {
-          h += '<div style="margin:2px 0;font-size:7px;color:#94a3b8">49号金额分布（各店资本×采集号码, 金框=抽签号）</div>';
-          h += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:1px;font-size:7px;text-align:center">';
-          for (var n = 1; n <= 49; n++) {
-            var amt = amounts[n] || 0;
-            var isDraw = n === drawNum;
-            var bg = amt > 0 ? (amt > 1000 ? '#dbeafe' : amt > 300 ? '#e0e7ff' : '#f0f4ff') : '#fafafa';
-            if (isDraw) bg = '#fef3c7';
-            var fg = isDraw ? '#b45309' : (amt > 0 ? '#1e3a5f' : '#ccc');
-            var title = amt > 0 ? (n+'号: '+amt) : (n+'号: 无');
-            var cellText = amt > 0 ? '<span style="font-size:5px;display:block;line-height:1">'+n+'</span><span style="font-size:7px">'+amt+'</span>' : '<span style="color:#ccc">'+n+'</span>';
-            h += '<span title="'+title+'" style="background:'+bg+';padding:1px 2px;border-radius:2px;'+(isDraw?'border:2px solid #f59e0b;':'')+'color:'+fg+';line-height:1.1">'+cellText+'</span>';
-          }
+        // 展开区（初始隐藏）—— 7×7网格 + 公式排位
+        h += '<div id="'+detailId+'" style="display:none;margin-top:4px;background:#fff;border-radius:10px;padding:8px;box-shadow:0 1px 2px rgba(0,0,0,.04)">';
+
+        // 公式+排位（右上角浮动）
+        if (drawNum && amtKeys.length) {
+          var profit = r.own_profit || 0;
+          var cap = r.own_capital || 0;
+          var drawAmt = amounts[String(drawNum)] || 0;
+          var pSign = profit>=0?'+':'';
+          var pColor = profit>0?'#16a34a':profit<0?'#dc2626':'#8899b0';
+          var rColor = drawRank<=10?'#16a34a':drawRank<=25?'#e67e22':'#dc2626';
+          h += '<div style="text-align:right;margin-bottom:4px">';
+          h += '<span style="font-size:10px;color:#8899b0">' + drawAmt + '×47−' + cap.toFixed(0) + '=</span>';
+          h += '<span style="font-size:14px;font-weight:800;color:'+pColor+'">' + pSign + profit.toFixed(0) + '</span>';
+          h += '<span style="font-size:9px;color:'+rColor+';margin-left:6px;font-weight:700">🏆金额排<b style="font-size:12px">#'+drawRank+'</b></span>';
           h += '</div>';
         }
-        h += '</div></div>';
+
+        // 49网格
+        var maxAmt2 = 0;
+        for (var k2 in amounts) { if (amounts[k2] > maxAmt2) maxAmt2 = amounts[k2]; }
+        h += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">';
+        for (var n2=1; n2<=49; n2++) {
+          var amt2 = amounts[n2] || 0;
+          var isDraw2 = n2 === drawNum;
+          var intensity = maxAmt2>0 ? amt2/maxAmt2 : 0;
+          var bgCell, fgCell;
+          if (isDraw2) { bgCell = '#fef3c7'; fgCell = '#b45309'; }
+          else if (amt2>0) {
+            var rr = Math.round(239-intensity*80), gg = Math.round(242-intensity*80), bb = Math.round(255-intensity*30);
+            bgCell = 'rgb('+rr+','+gg+','+bb+')';
+            fgCell = '#2563eb';
+          } else { bgCell = '#f8fafc'; fgCell = '#ccc'; }
+          h += '<div style="text-align:center;padding:3px 1px;background:'+bgCell+';border-radius:3px;font-size:9px;color:'+fgCell+';border:1px solid #e5e7eb;line-height:1.1;'+(isDraw2?'border:2px solid #f59e0b;':'')+'">';
+          h += '<span style="font-size:8px">'+n2+'</span>';
+          if (amt2>0) h += '<span style="display:block;font-size:9px;font-weight:700">'+amt2+'</span>';
+          h += '</div>';
+        }
+        h += '</div>';
         // 门店行（分正反两行，仿正负帮扶对比格式）
+        var storeHits = r.store_hits || {};
+        var hasDrawOH = (r.draw_number || 0) > 0;
+        // 门店兜底：无指南数据时从 r.stores 直接提取——复用双行布局
+        function storeFallback(stores, mode, hasDraw) {
+          var capMap = {};
+          var hitMap = {};
+          (stores || []).forEach(function(s) {
+            if (typeof s === 'object' && s.mode === mode) {
+              var abbr = s.store.replace('集合','').replace('店','');
+              capMap[abbr] = s.capital || 0;
+              hitMap[abbr] = s.hit;
+            }
+          });
+          var order = ['一','二','三','四','五','六','14','16'];
+          var top = '', bot = '';
+          var w = '12.5%';
+          var colDefault = mode==='positive'?'#2563eb':'#dc2626';
+          var any = false;
+          order.forEach(function(n) {
+            var c = capMap[n] || 0;
+            if (c) any = true;
+            top += '<span style="display:inline-block;width:'+w+';text-align:center;font-size:8px;color:#8899b0">'+n+'</span>';
+            var label = c||0;
+            var hitVal = hitMap[n];
+            if (hasDraw && c > 0 && hitVal !== undefined) label = hitVal ? c+'(+)' : c+'(-)';
+            var col = c>0 ? colDefault : '#ccc';
+            bot += '<span style="display:inline-block;width:'+w+';text-align:center;font-weight:700;font-size:9px;color:'+col+'">'+label+'</span>';
+          });
+          if (!any) return '—';
+          return '<div style="line-height:1.3;overflow-x:auto">'+top+'<br>'+bot+'</div>';
+        }
         h += '<div style="font-size:10px;margin-top:2px">';
         h += '<span style="font-size:9px">🟢正: <b style="color:#2563eb">' + pc + '</b></span>';
-        h += storeRange(gp);
+        var posRange = storeRange(gp, storeHitsPos, hasDrawOH);
+        if (posRange === '—') posRange = storeFallback(r.stores, 'positive', hasDrawOH);
+        h += posRange;
         h += '</div>';
         h += '<div style="font-size:10px">';
         h += '<span style="font-size:9px">🔴反: <b style="color:#dc2626">' + nc + '</b></span>';
-        h += storeRange(gn);
+        var negRange = storeRange(gn, storeHitsNeg, hasDrawOH);
+        if (negRange === '—') negRange = storeFallback(r.stores, 'negative', hasDrawOH);
+        h += negRange;
         h += '</div>';
-        h += '</div>';
+        // 实际配置盈亏（用户自己的资本 × 真实排位）—— 按条件逐店计算
+        var ownHits = r.store_hits || {};
+        var ownStores = r.stores || [];
+        var hasOwn = ownStores.some(function(s){ return (s.capital||0) > 0; });
+        var hasDraw = (r.draw_number || 0) > 0;
+        if (hasOwn && hasDraw) {
+          var totalStoreProfit = 0;
+          var storeParts = [];
+          ownStores.forEach(function(s){
+            var c = s.capital || 0;
+            if (c <= 0) return;
+            var hit = ownHits[s.store];
+            var rk = (r.rankings||{})[s.store];
+            var em = s.mode === 'negative' ? 'negative' : 'positive';
+            var net = hit ? c*22 : -c*25;
+            if (em === 'negative') net = hit ? c*23 : -c*24;
+            totalStoreProfit += net;
+            var clr = net>0 ? '#16a34a' : '#dc2626';
+            var sign = net>0 ? '+' : '';
+            var abbr = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','集合14':'14','集合16':'16'}[s.store]||s.store;
+            var cond = em === 'negative' ? '反' : '正';
+            var hitLabel = hit ? '✅' : '❌';
+            storeParts.push('<span style="margin:0 2px;white-space:nowrap">'+hitLabel+cond+abbr+':'+(rk||'?')+'→<span style="color:'+clr+';font-weight:700">'+sign+net+'</span></span>');
+          });
+          var tclr = totalStoreProfit>0 ? '#16a34a' : totalStoreProfit<0 ? '#dc2626' : '#8899b0';
+          var tsign = totalStoreProfit>0 ? '+' : '';
+          h += '<div style="font-size:9px;margin-top:4px;padding:6px 8px;background:#fefce8;border-radius:4px;border:1px dashed #eab308">';
+          h += '<div style="font-weight:700;color:#b45309;margin-bottom:2px">💰 按条件逐店盈亏 · 合计<span style="color:'+tclr+'"> '+tsign+totalStoreProfit+'</span></div>';
+          h += storeParts.join(' ');
+          h += '</div>';
+        }
+        h += '</div>'; // 关闭展开区
+        h += '</div>'; // 关闭父容器(日期行)
       });
 
-      container.innerHTML = hh + summary + h;
+      var totalPages = Math.ceil((data.total || rows.length) / _ohPageSize);
+      var pager = '';
+      if (totalPages > 1) {
+        pager += '<div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:12px;padding:10px;background:#f8fafc;border-radius:10px">';
+        if (_ohPage > 1) {
+          pager += '<button onclick="event.stopPropagation();loadOrderHistory(' + (_ohPage - 1) + ')" style="padding:6px 16px;border-radius:8px;border:1px solid #3b82f6;background:#eff6ff;color:#2563eb;font-size:13px;font-weight:600;cursor:pointer">◀ 上一页</button>';
+        } else {
+          pager += '<button disabled style="padding:6px 16px;border-radius:8px;border:1px solid #e5e7eb;background:#f9fafb;color:#d1d5db;font-size:13px">◀ 上一页</button>';
+        }
+        pager += '<span style="font-size:13px;color:#64748b;font-weight:600">第 <b style="color:#1e3a5f">' + _ohPage + '</b> / ' + totalPages + ' 页</span>';
+        if (_ohPage < totalPages) {
+          pager += '<button onclick="event.stopPropagation();loadOrderHistory(' + (_ohPage + 1) + ')" style="padding:6px 16px;border-radius:8px;border:1px solid #3b82f6;background:#eff6ff;color:#2563eb;font-size:13px;font-weight:600;cursor:pointer">下一页 ▶</button>';
+        } else {
+          pager += '<button disabled style="padding:6px 16px;border-radius:8px;border:1px solid #e5e7eb;background:#f9fafb;color:#d1d5db;font-size:13px">下一页 ▶</button>';
+        }
+        pager += '</div>';
+      }
+      container.innerHTML = hh + summary + h + pager;
     })
     .catch(function(e) {
       container.innerHTML = '<div style="color:#e53e3e;text-align:center">加载失败: ' + e.message + '</div>';
@@ -6233,35 +6354,16 @@ function showHistoryRankings() {
         var detailId = 'rk-detail-' + r.action_date.replace(/-/g,'');
 
         h += '<div style="padding:6px 8px;margin-bottom:4px;background:#f8fafc;border-radius:6px;font-size:10px;cursor:pointer" onclick="var d=document.getElementById(\''+detailId+'\');d.style.display=d.style.display===\'none\'?\'block\':\'none\'">';
-        // 标题行
-        h += '<div style="display:flex;justify-content:space-between;margin-bottom:2px">';
-        h += '<span style="font-weight:700;color:#1e3a5f">📅 ' + r.action_date + '</span>';
-        h += '<span style="color:#888">排位 ' + r.date + '</span>';
-        h += '<span>抽签<b style="color:#e67e22">' + (draw||'?') + '</b></span>';
-        h += '</div>';
-        // 门店排位行
-        var order = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
-        var parts = [];
-        order.forEach(function(s) {
-          var rk = rankings[s];
-          if (rk === undefined) return;
-          var store = stores.find(function(st){return st.store===s;});
-          var mode = store ? store.mode : '';
-          var isNeg = mode === 'negative';
-          var hit = isNeg ? (rk > 25) : (rk <= 25);
-          var bg = hit ? '#f0fdf4' : '#fef2f2';
-          var fg = hit ? '#16a34a' : '#dc2626';
-          var abbr = ({'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','集合14':'14','集合16':'16'})[s]||s;
-          parts.push('<span style="display:inline-block;margin:1px;padding:1px 3px;border-radius:4px;background:'+bg+';color:'+fg+'">'+abbr+' '+rk+'</span>');
-        });
-        h += '<div>' + parts.join('') + '</div>';
-        // 金额排位摘要
-        if (draw) {
-          h += '<div style="margin-top:2px;font-size:9px;color:#6b7280;display:flex;justify-content:space-between;border-top:1px dashed #dce4f0;padding-top:2px">';
-          h += '<span>💰 金额排<b style="color:#2563eb">' + (drawRank||'?') + '</b>位</span>';
-          h += '<span>覆盖' + (amtKeys.length||0) + '/49号 ▼</span>';
-          h += '</div>';
+        // 标题行：日期+抽签号+金额排位（突出）
+        h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;padding:4px 6px;background:#eef2ff;border-radius:6px">';
+        h += '<span style="font-weight:700;font-size:11px;color:#1e3a5f">📅 ' + r.action_date + '</span>';
+        h += '<span style="font-size:10px">🎲 <b style="color:#e67e22">' + (draw||'?') + '</b></span>';
+        if (draw && drawRank) {
+          var rankColor = drawRank <= 10 ? '#16a34a' : drawRank <= 20 ? '#e67e22' : '#dc2626';
+          var rankBg = drawRank <= 10 ? '#f0fdf4' : drawRank <= 20 ? '#fef9e7' : '#fef2f2';
+          h += '<span style="font-size:12px;font-weight:700;padding:2px 8px;border-radius:10px;background:'+rankBg+';color:'+rankColor+'">💰 金额排第 <b style="font-size:14px">' + drawRank + '</b> 位</span>';
         }
+        h += '</div>';
         // 展开区：7x7网格
         h += '<div id="'+detailId+'" style="display:none;margin-top:3px">';
         if (amtKeys.length) {
@@ -6444,19 +6546,6 @@ function loadDrawRecords(page) {
         h += '<div><span style="font-weight:600;color:#1e3a5f">' + r.date + '</span>';
         h += '<span style="color:#8899b0;margin-left:8px">#' + r.day_seq + '</span>';
         h += '<span style="margin-left:8px">抽签 <b style="color:#e67e22">' + r.draw_number + '</b></span></div>';
-        // 排位简表
-        if (Object.keys(rankings).length) {
-          var rkStr = storeOrder.map(function(s) {
-            var v = rankings[s];
-            if (v !== undefined) {
-              var abbr = abbrMap[s];
-              var hit = v <= 25;
-              return '<span style="display:inline-block;margin:0 2px;padding:1px 3px;border-radius:3px;font-size:9px;background:'+(hit?'#f0fdf4':'#fef2f2')+';color:'+(hit?'#16a34a':'#dc2626')+'">'+abbr+' '+v+'</span>';
-            }
-            return '';
-          }).join('');
-          h += '<div style="margin-top:2px">' + rkStr + '</div>';
-        }
         h += '</div>';
         h += '</div>';
       });

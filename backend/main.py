@@ -633,9 +633,9 @@ async def api_get_order_amounts(date: str = None, list_all: bool = False):
 
 # ── 下单历史（独立表）──
 @app.get("/api/simulate/order-history")
-async def api_get_order_history(limit: int = 30):
+async def api_get_order_history(limit: int = 30, offset: int = 0):
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, lambda: get_order_history(limit))
+    return await loop.run_in_executor(_executor, lambda: get_order_history(limit, offset))
 
 @app.post("/api/simulate/order-history/confirm")
 async def api_confirm_order_history(request: Request):
