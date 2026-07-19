@@ -6340,6 +6340,41 @@ function showHistoryRankings() {
       var h = '<div id="rankings-detail" style="background:#fff;border-radius:12px;padding:12px;margin-bottom:8px">';
       h += '<div style="font-weight:700;font-size:13px;color:#1e3a5f;margin-bottom:8px">📊 各出手日排位详情</div>';
       h += '<div style="font-size:10px;color:#8899b0;margin-bottom:6px">正≤25命中 | 反>25命中 | 金额排=抽签号在49号下注额中的名次</div>';
+      // ── 排位筛选器 ──
+      var allRanks = [];
+      rows.forEach(function(rr) {
+        var d = rr.draw_number || 0;
+        var am = rr.amounts || {};
+        var ak = Object.keys(am);
+        if (ak.length && d) {
+          var sb2 = ak.slice().sort(function(a,b){ return am[b] - am[a]; });
+          var rk2 = sb2.indexOf(String(d)) + 1;
+          if (rk2 > 0) allRanks.push(rk2);
+        }
+      });
+      var totalRanked = allRanks.length;
+      h += '<div id="rank-filter-bar" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">';
+      h += '<span style="font-size:11px;font-weight:600;color:#5a6b85">排位≤</span>';
+      h += '<select id="rank-threshold" onchange="updateRankStats()" style="padding:4px 8px;border-radius:6px;border:1px solid #cdd7e5;font-size:13px;font-weight:700;background:#f8fafc;color:#1e3a5f">';
+      for (var nn = 1; nn <= 49; nn++) {
+        h += '<option value="'+nn+'"'+(nn===25?' selected':'')+'>'+nn+'</option>';
+      }
+      h += '</select>';
+      h += '<span id="rank-stats" style="font-size:11px;color:#8899b0"></span>';
+      h += '</div>';
+      // stats 更新函数（挂在 window 上供 onchange 调用）
+      window.updateRankStats = function() {
+        var sel = parseInt(document.getElementById('rank-threshold').value);
+        var cnt = 0;
+        for (var i = 0; i < allRanks.length; i++) {
+          if (allRanks[i] <= sel) cnt++;
+        }
+        var pct = totalRanked ? (cnt/totalRanked*100).toFixed(1) : '0';
+        var sp = document.getElementById('rank-stats');
+        if (sp) sp.innerHTML = '≤'+sel+'位: <b style="color:#1e3a5f">'+cnt+'</b>/'+totalRanked+'次 · <b style="color:#2563eb">'+pct+'%</b>';
+      };
+      // 初始触发
+      setTimeout(function(){ if(typeof updateRankStats==='function')updateRankStats(); }, 50);
       rows.forEach(function(r) {
         var rankings = r.rankings || {};
         var stores = r.stores || [];
