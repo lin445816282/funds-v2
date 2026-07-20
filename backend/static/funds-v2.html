@@ -502,6 +502,17 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     </div>
   </div>
 
+  <!-- 历史排位弹窗 -->
+  <div class="modal-mask hide" id="rankings-mask" onclick="closeRankingsPopup()">
+    <div class="modal-box" onclick="event.stopPropagation()" style="width:94%;max-width:440px;max-height:85vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;position:sticky;top:0;background:#fff;z-index:2;padding-bottom:8px;border-bottom:1px solid #eef2f7">
+        <h3 style="margin:0;font-size:15px">📊 各出手日排位详情</h3>
+        <span onclick="closeRankingsPopup()" style="font-size:22px;color:#8899b0;cursor:pointer;line-height:1">&times;</span>
+      </div>
+      <div id="rankings-body"></div>
+    </div>
+  </div>
+
   <!-- 数据详情弹窗 -->
   <div class="modal-mask hide" id="data-modal" onclick="closeDataModal()">
     <div class="modal-box" onclick="event.stopPropagation()" style="width:90%;max-width:400px;max-height:80vh;overflow-y:auto">
@@ -6083,7 +6094,7 @@ function loadOrderHistory(page) {
       var hr = data.hit_rate || {};
       var hh = '<div style="background:linear-gradient(135deg,#f0fdf4,#fef3c7);border-radius:12px;padding:12px;margin-bottom:12px">';
       hh += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:12px;font-weight:700;color:#1e3a5f">🎯 命中率</span>';
-      hh += '<button onclick="showHistoryRankings()" style="padding:3px 10px;border-radius:6px;border:1px solid #3b82f6;background:#eff6ff;color:#2563eb;font-size:11px;font-weight:600;cursor:pointer" @click.stop>📊 历史排位</button>';
+      hh += '<button onclick="event.stopPropagation();toggleHistoryRankings()" style="padding:3px 10px;border-radius:6px;border:1px solid #3b82f6;background:#eff6ff;color:#2563eb;font-size:11px;font-weight:600;cursor:pointer" @click.stop>📊 历史排位</button>';
       hh += '</div>';
       hh += '<table style="width:100%;font-size:11px;border-collapse:collapse">';
       hh += '<tr><td></td><td style="text-align:center;color:#2563eb;font-weight:600">🟢 正帮扶</td><td style="text-align:center;color:#dc2626;font-weight:600">🔴 反帮扶</td></tr>';
@@ -6142,7 +6153,13 @@ function loadOrderHistory(page) {
         h += '<button id="ack-' + r.action_date.replace(/-/g,'') + '" onclick="event.stopPropagation();ackOrderHistory(\'' + r.action_date + '\')" style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;cursor:pointer;' + (acked ? 'background:#e5e7eb;color:#9ca3af;border:1px solid #d1d5db' : 'background:#fef3c7;color:#b45309;border:1px solid #f59e0b') + '">' + (acked ? '✓ 已确认' : '确认') + '</button>';
         h += '</div>';
         h += '<span style="font-size:10px;color:#8899b0">合计' + tt.toLocaleString() + '</span>';
-        // 实际盈亏（用户配置 × 真实排位结果）—— 有抽签号就显示
+        // 当天金额总计
+        var amtTotal = 0;
+        for (var k in amounts) { amtTotal += amounts[k]; }
+        if (amtTotal > 0) {
+          h += '<span style="font-size:10px;font-weight:700;color:#1e3a5f">💰' + amtTotal.toLocaleString() + '</span>';
+        }
+        // 实际盈亏
         if (drawNum) {
           var op = r.own_profit || 0;
           var opColor = op > 0 ? '#16a34a' : op < 0 ? '#dc2626' : '#8899b0';
@@ -6330,9 +6347,18 @@ function ackOrderHistory(actionDate) {
   });
 }
 
+function toggleHistoryRankings() {
+  var inlineDiv = document.getElementById('ranking-inline');
+  if (inlineDiv && inlineDiv.style.display === 'block') {
+    closeRankingsPopup();
+  } else {
+    showHistoryRankings();
+  }
+}
+
 function showHistoryRankings() {
   /* 显示下单记录中各日期的排位详情 + 49号金额分布 */
-  fetch(API_BASE + '/api/simulate/order-history?limit=100')
+  fetch(API_BASE + '/api/simulate/order-history?limit=300')
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var rows = data.rows || [];
@@ -6353,6 +6379,7 @@ function showHistoryRankings() {
         }
       });
       var totalRanked = allRanks.length;
+      var totalPeriods = rows.length;
       h += '<div id="rank-filter-bar" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">';
       h += '<span style="font-size:11px;font-weight:600;color:#5a6b85">排位≤</span>';
       h += '<select id="rank-threshold" onchange="updateRankStats()" style="padding:4px 8px;border-radius:6px;border:1px solid #cdd7e5;font-size:13px;font-weight:700;background:#f8fafc;color:#1e3a5f">';
@@ -6362,19 +6389,16 @@ function showHistoryRankings() {
       h += '</select>';
       h += '<span id="rank-stats" style="font-size:11px;color:#8899b0"></span>';
       h += '</div>';
-      // stats 更新函数（挂在 window 上供 onchange 调用）
       window.updateRankStats = function() {
         var sel = parseInt(document.getElementById('rank-threshold').value);
         var cnt = 0;
         for (var i = 0; i < allRanks.length; i++) {
           if (allRanks[i] <= sel) cnt++;
         }
-        var pct = totalRanked ? (cnt/totalRanked*100).toFixed(1) : '0';
+        var pct = totalPeriods ? (cnt/totalPeriods*100).toFixed(1) : '0';
         var sp = document.getElementById('rank-stats');
-        if (sp) sp.innerHTML = '≤'+sel+'位: <b style="color:#1e3a5f">'+cnt+'</b>/'+totalRanked+'次 · <b style="color:#2563eb">'+pct+'%</b>';
+        if (sp) sp.innerHTML = '≤'+sel+'位: <b style="color:#1e3a5f">'+cnt+'</b>/'+totalPeriods+'期 · <b style="color:#2563eb">'+pct+'%</b>';
       };
-      // 初始触发
-      setTimeout(function(){ if(typeof updateRankStats==='function')updateRankStats(); }, 50);
       rows.forEach(function(r) {
         var rankings = r.rankings || {};
         var stores = r.stores || [];
@@ -6418,11 +6442,24 @@ function showHistoryRankings() {
         h += '</div></div>';
       });
       h += '</div>';
-      var container = document.getElementById('order-history-content');
-      var existing = document.getElementById('rankings-detail');
-      if (existing) existing.remove();
-      container.insertAdjacentHTML('afterbegin', h);
+      // 渲染到 guide-history 上方
+      var inlineDiv = document.getElementById('ranking-inline');
+      if (!inlineDiv) {
+        inlineDiv = document.createElement('div');
+        inlineDiv.id = 'ranking-inline';
+        var gh = document.getElementById('guide-history');
+        gh.parentNode.insertBefore(inlineDiv, gh);
+      }
+      inlineDiv.innerHTML = h;
+      inlineDiv.style.display = 'block';
+      // 初始触发统计
+      setTimeout(function(){ if(typeof updateRankStats==='function')updateRankStats(); }, 100);
     });
+}
+
+function closeRankingsPopup() {
+  var inlineDiv = document.getElementById('ranking-inline');
+  if (inlineDiv) inlineDiv.style.display = 'none';
 }
 
 function loadGuideHistory() {

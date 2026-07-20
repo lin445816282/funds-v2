@@ -788,10 +788,21 @@ def _load_order_numbers(ranking_date=None):
     return result
 
 
-def get_order_sheet(days=90):
+def _get_latest_numbers_date():
+    """返回 order_numbers 表最新日期，无则返回 None"""
+    db = sqlite3.connect(FUNDS_DB)
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT date FROM order_numbers ORDER BY date DESC LIMIT 1").fetchone()
+    db.close()
+    return row["date"] if row else None
+
+
+def get_order_sheet(days=90, target_date=None):
     """合并正反帮扶指南 → 下单表（门店列表 + 1-49空网格）
     优先从 sim_guides 缓存读取，避免重新计算。
+    target_date: 指定目标日期，用最新共识 + 该日号码计算金额（不存DB）。
     """
+    from datetime import datetime as dt_module
     db = sqlite3.connect(FUNDS_DB)
     db.row_factory = sqlite3.Row
 
@@ -806,36 +817,44 @@ def get_order_sheet(days=90):
                 "votes": f"{c['votes']}/{c['out_of']}",
                 "caps": caps
             })
-        # 按 STORE_NAMES 顺序（一店→集合16）
         store_order = {s: i for i, s in enumerate(STORE_NAMES)}
         stores.sort(key=lambda x: store_order.get(x["store"], 999))
         return stores
 
-    # 从缓存读正帮扶
+    # 从缓存读最新正反帮扶
     pos_row = db.execute(
         "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')='positive' ORDER BY date DESC, id DESC LIMIT 1"
     ).fetchone()
-    # 从缓存读反帮扶
     neg_row = db.execute(
         "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')='negative' ORDER BY date DESC, id DESC LIMIT 1"
     ).fetchone()
     db.close()
 
-    # 优先用缓存
     if pos_row and neg_row:
         pos = json.loads(pos_row["result"])
         neg = json.loads(neg_row["result"])
         pos_stores = extract_stores(pos.get("consensus", []))
         neg_stores = extract_stores(neg.get("consensus", []))
         ranking_date = pos["date"]
-        action_date = ranking_date
+        # 自动检测：号码最新日期 > 共识日期 → 用新号码日期（如7-20号码已采集但共识还在7-19）
+        action_date = target_date if target_date else ranking_date
+        if not target_date:
+            nums_latest = _get_latest_numbers_date()
+            if nums_latest and nums_latest > ranking_date:
+                action_date = nums_latest
         numbers = _load_order_numbers(action_date)
-        # 优先读 order_amounts 存档表，没有才实时计算
-        amounts_data = _load_amounts_from_db(action_date, ranking_date)
-        if not amounts_data:
-            amounts_data = _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date)
+        # 号码日期 > 共识日期时，优先从 order_history 取实际下单金额
+        if action_date != ranking_date:
+            amounts_data = _load_amounts_from_order_history(action_date)
+            if not amounts_data:
+                amounts_data = _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date)
+        else:
+            amounts_data = _load_amounts_from_db(action_date, ranking_date)
+            if not amounts_data:
+                amounts_data = _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date)
         return {
-            "date": ranking_date,
+            "date": action_date,
+            "guide_date": ranking_date,
             "rankings": pos.get("today_rankings", {}),
             "cached": True,
             "numbers": numbers,
@@ -850,20 +869,24 @@ def get_order_sheet(days=90):
             "order_amounts": amounts_data
         }
 
-    # 缓存无 → 实时计算（轻量：max_iter=1）
+    # 缓存无 → 实时计算
     print("[order-sheet] 无缓存，实时计算中...")
     pos = run_daily_guide(days, "positive", max_iter=1)
     neg = run_daily_guide(days, "negative", max_iter=1)
     pos_stores = extract_stores(pos.get("consensus", []))
     neg_stores = extract_stores(neg.get("consensus", []))
     ranking_date2 = pos.get("date", "")
-    action_date2 = ranking_date2 if ranking_date2 else ""
+    action_date2 = target_date if target_date else ranking_date2
     numbers2 = _load_order_numbers(action_date2)
-    amounts_data2 = _load_amounts_from_db(action_date2, ranking_date2)
-    if not amounts_data2:
+    if target_date:
         amounts_data2 = _build_amounts_data(pos_stores, neg_stores, numbers2, ranking_date2)
+    else:
+        amounts_data2 = _load_amounts_from_db(action_date2, ranking_date2)
+        if not amounts_data2:
+            amounts_data2 = _build_amounts_data(pos_stores, neg_stores, numbers2, ranking_date2)
     return {
-        "date": ranking_date2,
+        "date": target_date if target_date else ranking_date2,
+        "guide_date": ranking_date2 if ranking_date2 else "",
         "rankings": pos.get("today_rankings", {}),
         "cached": False,
         "numbers": numbers2,
@@ -896,6 +919,25 @@ def _load_amounts_from_db(action_date, ranking_date):
         amounts[r["number"]] = r["amount"]
     total = sum(amounts.values())
     return {"date": ranking_date, "action_date": action_date, "amounts": amounts, "day_index": day_index, "total": total}
+
+
+def _load_amounts_from_order_history(action_date):
+    """从 order_history 的 amounts_json 读取已下单金额。返回格式同 _build_amounts_data"""
+    db = sqlite3.connect(FUNDS_DB)
+    db.row_factory = sqlite3.Row
+    row = db.execute(
+        "SELECT amounts_json FROM order_history WHERE action_date=? AND amounts_json IS NOT NULL ORDER BY id DESC LIMIT 1",
+        (action_date,)
+    ).fetchone()
+    db.close()
+    if not row or not row["amounts_json"]:
+        return None
+    try:
+        amounts = json.loads(row["amounts_json"])
+    except:
+        return None
+    total = sum(amounts.values())
+    return {"date": action_date, "action_date": action_date, "amounts": amounts, "day_index": 0, "total": total}
 
 
 def _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date):

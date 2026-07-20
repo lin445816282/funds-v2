@@ -588,9 +588,9 @@ async def api_guide_history(limit: int = 30, mode: str = None, offset: int = 0):
     return await loop.run_in_executor(_executor, lambda: get_guide_history(limit, mode, offset))
 
 @app.get("/api/simulate/order-sheet")
-async def api_order_sheet(days: int = 90):
+async def api_order_sheet(days: int = 90, date: str = None):
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, lambda: get_order_sheet(days))
+    return await loop.run_in_executor(_executor, lambda: get_order_sheet(days, target_date=date))
 
 @app.post("/api/simulate/pull-numbers")
 async def api_pull_numbers(date: str = None, from_date: str = None, to_date: str = None):
