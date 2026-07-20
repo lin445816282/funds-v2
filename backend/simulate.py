@@ -852,9 +852,11 @@ def get_order_sheet(days=90, target_date=None):
             amounts_data = _load_amounts_from_db(action_date, ranking_date)
             if not amounts_data:
                 amounts_data = _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date)
+        numbers_date = action_date if action_date != ranking_date else None
         return {
-            "date": action_date,
+            "date": ranking_date,
             "guide_date": ranking_date,
+            "numbers_date": numbers_date,
             "rankings": pos.get("today_rankings", {}),
             "cached": True,
             "numbers": numbers,
@@ -884,9 +886,11 @@ def get_order_sheet(days=90, target_date=None):
         amounts_data2 = _load_amounts_from_db(action_date2, ranking_date2)
         if not amounts_data2:
             amounts_data2 = _build_amounts_data(pos_stores, neg_stores, numbers2, ranking_date2)
+    numbers_date2 = action_date2 if not target_date and action_date2 != ranking_date2 else (target_date if target_date else None)
     return {
-        "date": target_date if target_date else ranking_date2,
+        "date": ranking_date2 if ranking_date2 else action_date2,
         "guide_date": ranking_date2 if ranking_date2 else "",
+        "numbers_date": numbers_date2,
         "rankings": pos.get("today_rankings", {}),
         "cached": False,
         "numbers": numbers2,

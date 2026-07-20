@@ -762,10 +762,53 @@ async def api_save_order_daily_result(request: Request):
     return await loop.run_in_executor(_executor, lambda: save_order_daily_result(date, result))
 
 def get_order_daily_results():
+    """从 order_history 读取真实开奖数据，自动计算赢/亏（rank≤25=win），
+    同时合并 order_daily_results 中的手动覆盖。"""
+    import json as _json
     conn = get_db()
-    rows = conn.execute("SELECT date, result, created FROM order_daily_results ORDER BY date DESC LIMIT 60").fetchall()
+    # 1. 读取 order_history（真实数据源）
+    oh_rows = conn.execute("""
+        SELECT action_date as date, draw_number, amounts_json, created_at as created
+        FROM order_history 
+        WHERE draw_number > 0 AND amounts_json IS NOT NULL
+        ORDER BY action_date DESC LIMIT 60
+    """).fetchall()
+    
+    # 2. 读取手动标记（order_daily_results 中 'win'/'loss' 的条目）
+    manual_rows = conn.execute("""
+        SELECT date, result, created FROM order_daily_results 
+        WHERE result IN ('win','loss')
+        ORDER BY date DESC
+    """).fetchall()
+    manual_map = {r["date"]: r["result"] for r in manual_rows}
+    
+    results = []
+    for r in oh_rows:
+        date = r["date"]
+        if date in manual_map:
+            # 手动覆盖优先
+            results.append({"date": date, "result": manual_map[date], "created": r["created"]})
+        else:
+            # 自动计算：从 amounts 算 draw_number 的排位
+            try:
+                amounts = _json.loads(r["amounts_json"])
+                draw = str(r["draw_number"])
+                draw_amt = amounts.get(draw, 0)
+                # 计算排位：比它大的有几个
+                rank = sum(1 for v in amounts.values() if v > draw_amt) + 1
+                result = "win" if rank <= 25 else "loss"
+                # 同时保存到 order_daily_results 供后续快速读取
+                conn.execute(
+                    "INSERT OR REPLACE INTO order_daily_results (date, result) VALUES (?,?)",
+                    (date, _json.dumps({"draw_number": r["draw_number"], "rank": rank}))
+                )
+            except:
+                result = "loss"
+            results.append({"date": date, "result": result, "created": r["created"]})
+    
+    conn.commit()
     conn.close()
-    return [dict(r) for r in rows]
+    return results
 
 def save_order_daily_result(date, result):
     conn = get_db()
