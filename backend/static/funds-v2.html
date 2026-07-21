@@ -600,6 +600,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
         <button class="btn-clear" onclick="runDailyGuide()" id="sim-guide-btn">📋 下单指南</button>
         <button class="btn-clear" onclick="runDailyGuideNegative()" id="sim-guide-neg-btn" style="background:#fef2f2;color:#dc2626">📋 反帮扶</button>
       </div>
+      <div style="text-align:center;font-size:10px;color:#8899b0;margin-top:2px">优化轮数: 10（坐标下降默认精度）</div>
       <div class="btn-row" style="margin-top:4px">
         <button class="btn-save" onclick="loadGuideCompare()" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;flex:1">⚖️ 正负帮扶对比</button>
       </div>
@@ -3924,12 +3925,14 @@ var orderData = null;
 var trimCount = 0;
 var latestOrderDate = '';
 
-function initOrderSheet() {
+function initOrderSheet(guideDate, writeDate) {
   var el = document.getElementById('order-sheet');
   el.innerHTML = '<div class="empty">⏳ 加载中...</div>';
   // 先加载亏损记录，再加载下单数据
   return loadLossResults().then(function() {
-    return fetch(API_BASE + '/api/simulate/order-sheet?days=30')
+    var url = API_BASE + '/api/simulate/order-sheet?days=30';
+    if (guideDate) url += '&guide_date=' + encodeURIComponent(guideDate);
+    return fetch(url)
       .then(r => r.json())
       .then(function(d) {
         orderData = d;
@@ -3937,7 +3940,12 @@ function initOrderSheet() {
         trimCount = 0;
         renderOrderSheet(d);
         // 自动同步 order_amounts（静默，不弹 toast）
-        updateOrderAmounts(true);
+        // writeDate: 指定写入日期（如历史日期用 syncDate，非 guide_date）
+        // 只有指定 writeDate 时才自动保存（历史日期不会自动覆盖 order_amounts）
+        if (writeDate) {
+          orderData._write_date = writeDate;
+          updateOrderAmounts(true);
+        }
         return d;  // 返回数据供调用方使用
       })
       .catch(function(e) {
@@ -3956,16 +3964,14 @@ function renderOrderSheet(d) {
   var numMatched = (d.numbers||{}).matched;
   var latestDataDate = (d.numbers||{}).date || '';
   var syncStatus = numMatched ? '✅ 已同步 ' + latestDataDate : '⚠️ 未同步';
-  var nextDate = offsetDate(d.date, 1);
-  orderSheetDate = nextDate;
-  var dateTag = nextDate ? ' · ' + nextDate.substr(5) : '';  // MM-DD 出手日期
+  orderSheetDate = d.date;
+  var dateTag = d.date ? ' · ' + d.date.substr(5) : '';  // MM-DD 出手日
   h += '<div style="background:#fff;border-radius:14px;padding:12px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.03);text-align:center">';
   h += '<div style="display:flex;justify-content:center;gap:20px;font-size:13px;color:#5a6b85;margin-bottom:8px">';
-  h += '<span>最新排位日期 <b style="color:#1e3a5f">'+d.date+'</b></span>';
+  h += '<span>出手日期 <b style="color:#1e3a5f">'+d.date+'</b></span>';
   if (d.numbers_date && d.numbers_date !== d.date) {
     h += '<span>号码日期 <b style="color:#3b82f6">'+d.numbers_date+'</b></span>';
   }
-  h += '<span>出手日期 <b style="color:#1e3a5f">'+nextDate+'</b></span>';
   h += '</div>';
 
   // 投资计划卡片（右上）
@@ -4005,14 +4011,14 @@ function renderOrderSheet(d) {
     h += '</div>';
   }
   h += '<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">';
-  h += '<input type="date" id="order-date-input" value="'+nextDate+'" style="width:130px;padding:6px 8px;border-radius:8px;border:1px solid #cdd7e5;font-size:13px;color:#1e3a5f;text-align:center;background:#f8fafc">';
+  h += '<input type="date" id="order-date-input" value="'+d.date+'" style="width:130px;padding:6px 8px;border-radius:8px;border:1px solid #cdd7e5;font-size:13px;color:#1e3a5f;text-align:center;background:#f8fafc">';
   h += '<button onclick="syncOrderNumbers()" id="sync-order-btn" style="padding:6px 12px;border-radius:8px;border:none;background:#3b82f6;color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">更新正负下单</button>';
   h += '<button onclick="showOrderNumbersModal()" id="order-view-btn" style="padding:6px 12px;border-radius:8px;border:1px solid #cdd7e5;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;'+(numMatched?'background:#f8fafc;color:#3a5070':'background:#e5e7eb;color:#9ca3af;cursor:default')+'"'+(numMatched?'':' disabled')+'>列表</button>';
   h += '</div>';
   h += '<div style="font-size:10px;color:'+(pulledAt?'#16a34a':'#dc2626')+'">号码同步 '+syncStatus+'</div>';
 
   h += '<button onclick="syncAllOrders()" style="padding:2px 8px;border-radius:12px;border:1px solid #cdd7e5;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer">📅 全量</button>';
-  h += '<input type="date" id="order-sync-date" value="'+nextDate+'" style="width:108px;padding:2px 6px;border-radius:12px;border:1px solid #cdd7e5;font-size:10px;color:#5a6b85;background:#f8fafc">';
+  h += '<input type="date" id="order-sync-date" value="'+d.date+'" style="width:108px;padding:2px 6px;border-radius:12px;border:1px solid #cdd7e5;font-size:10px;color:#5a6b85;background:#f8fafc">';
   h += '<button onclick="syncOrderByDate()" style="padding:2px 8px;border-radius:12px;border:1px solid #3b82f6;background:#eff6ff;font-size:10px;color:#3b82f6;cursor:pointer;font-weight:600">🔄 同步</button>';
   h += '<button onclick="showCollectSummary()" style="padding:2px 8px;border-radius:12px;border:1px solid #16a34a;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer;font-weight:600">📊 采集记录</button>';
   h += '</div></div>';
@@ -4153,19 +4159,19 @@ function renderOrderSheet(d) {
 }
 
 // ═══════ 确认下单配置 → 记入历史 ═══════
-function confirmOrderToHistory() {
+// overrideDate: 出手日期，由日期输入框传入；不传则默认排位日+1
+function confirmOrderToHistory(overrideDate) {
   if (!orderData) return alert('暂无下单数据');
   var d = orderData;
   var date = d.date;  // 排位日期
+  var actionDay = overrideDate || offsetDate(date, 1);  // 出手日：输入框优先，其次排位+1
 
-  // 只允许最新排位日期 +1，多一天就拦截
   var today = new Date().toISOString().slice(0,10);
-  var actionDay = offsetDate(date, 1);  // 出手日 = 排位日+1
-  // 出手日必须 ≤ 今天（不能确认未来），且 = 排位最新日期+1
-  if (actionDay > today) {
-    return alert('❌ 出手日 ' + actionDay + ' 还未到，仅允许最新排位日期 +1 天确认');
+  // 排位日必须已到达（排位数据就绪即可确认，无需等出手日）
+  if (date > today) {
+    return alert('❌ 排位日 ' + date + ' 还未到达，数据未就绪');
   }
-  // 排位日必须是最新：后台始终返回最新 date，但如果数据已刷新且不是最新则拦截
+  // 排位日必须是最新
   if (d.date !== latestOrderDate && latestOrderDate && d.date < latestOrderDate) {
     return alert('❌ 排位日 ' + d.date + ' 不是最新（最新: ' + latestOrderDate + '），仅允许最新排位日确认');
   }
@@ -4283,7 +4289,7 @@ function updateOrderAmounts(silent) {
   fetch(API_BASE + '/api/simulate/order-amounts', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({date: d.date, stores: stores})
+    body: JSON.stringify({date: d._write_date || d.date, stores: stores})
   }).then(function(r) { return r.json(); }).then(function(res) {
     if (!silent) showToast('✅ 已保存');  // 手动点击才弹，自动同步静默
   }).catch(function(e) { alert('更新失败: '+e); });
@@ -4363,7 +4369,7 @@ function syncOrderNumbers() {
   var dateInput = document.getElementById('order-date-input');
   var syncDate = dateInput ? dateInput.value : orderSheetDate;
 
-  // 步骤1：先拉取号码，无数据直接终止（不更新指南）
+  // 只拉号码 → 刷新下单页（下单数据从 sim_guides 缓存读，兜底用目标日期窗口无前视偏差）
   var url = API_BASE + '/api/simulate/pull-numbers';
   if (syncDate) url += '?date=' + encodeURIComponent(syncDate);
   fetch(url, {method:'POST'}).then(r => r.json())
@@ -4375,22 +4381,16 @@ function syncOrderNumbers() {
         });
         return;
       }
-      // 步骤2：号码有了，并行更新正反指南
-      btn.textContent = '⏳ 更新指南...';
-      var posGuide = fetch(API_BASE + '/api/simulate/daily-guide?mode=positive&max_iter=1').then(r => r.json());
-      var negGuide = fetch(API_BASE + '/api/simulate/daily-guide?mode=negative&max_iter=1').then(r => r.json());
-      return Promise.all([posGuide, negGuide]).then(function(results){
-        if (results[0].error) { showAlert(results[0].error, '数据未就绪', function(){ btn.disabled = false; btn.textContent = '更新正负下单'; }); return; }
-        if (results[1].error) { showAlert(results[1].error, '数据未就绪', function(){ btn.disabled = false; btn.textContent = '更新正负下单'; }); return; }
-        var newCount = res.items||0;
-        if (newCount > 0) {
-          showToast('✅ 新增 ' + newCount + ' 条');
-        } else {
-          showToast('✅ 数据已是最新（' + (res.collections||0)*2 + '条）');
-        }
-        initOrderSheet().then(function() {
-          confirmOrderToHistory();
-        });
+      var newCount = res.items||0;
+      if (newCount > 0) {
+        showToast('✅ 新增 ' + newCount + ' 条');
+      } else {
+        showToast('✅ 数据已是最新（' + (res.collections||0)*2 + '条）');
+      }
+      btn.textContent = '更新正负下单';
+      btn.disabled = false;
+      initOrderSheet(syncDate, syncDate).then(function() {
+        confirmOrderToHistory(syncDate);
       });
     })
     .catch(function(e){
@@ -4410,7 +4410,7 @@ function syncOrderByDate() {
     .then(function(res){
       if (res.ok) {
         showToast('✅ 同步完成: ' + syncDate + ' (' + (res.items||0) + '条)');
-        initOrderSheet();
+        initOrderSheet(syncDate, syncDate);
       } else {
         showToast('❌ ' + (res.error || '同步失败'));
       }
@@ -5559,6 +5559,14 @@ if (localStorage.getItem('funds_v2')) {
 })();
 
 // ═══════════ 总部出手模拟 ═══════════
+function switchGuideModeUI(mode) {
+  if (mode && (mode === 'positive' || mode === 'negative')) {
+    simMode = mode;
+    _lastGuideMode = mode;
+    document.getElementById('sim-mode-label').textContent = mode === 'positive' ? '正帮扶（排位≤阈值出手）' : '反帮扶（排位>阈值出手）';
+  }
+}
+
 var simMode = 'positive';
 var simData = null;        // 缓存数据
 var simLastResult = null;  // 最后结果
@@ -5831,7 +5839,7 @@ function fetchGuide(mode) {
   btn.disabled = true;
   btn.textContent = '⏳ 加载中...';
   
-  fetch(API_BASE + '/api/simulate/daily-guide?mode=' + mode + '&max_iter=1')
+  fetch(API_BASE + '/api/simulate/daily-guide?mode=' + mode)
     .then(r => r.json())
     .then(function(d) {
       renderGuide(d);
@@ -5863,7 +5871,7 @@ function storeRange(ds, hits, hasDraw) {
     var hit = hitMap[s];
     top += '<span style="display:inline-block;width:12.5%;text-align:center;font-size:8px;color:#8899b0">' + names[i] + '</span>';
     var label = c;
-    if (hasDraw && c > 0 && hit !== undefined) label = hit ? c + '(+)' : c + '(-)';
+    if (hasDraw && c > 0 && hit != null) label = hit ? c + '(+)' : c + '(-)';
     var col = c > 0 ? (hasDraw && hit ? '#16a34a' : (hasDraw && hit === false ? '#dc2626' : '#1e3a5f')) : '#ccc';
     bot += '<span style="display:inline-block;width:12.5%;text-align:center;font-weight:700;font-size:9px;color:' + col + '">' + label + '</span>';
   });
@@ -5996,7 +6004,8 @@ function renderGuide(d) {
   h += '<div style="font-size:11px;color:#8899b0;margin-bottom:3px">📅 '+nextDate+' 出手（排位日 '+d.date+'）</div>';
   h += '<div style="font-size:12px;font-weight:600">';
   ['一店','二店','三店','四店','五店','六店','集合14','集合16'].forEach(function(s){
-    h += s+':<b style="color:#2563eb">'+(d.today_rankings[s]||'?')+'</b> ';
+    var rankings = d.pred_rankings || d.today_rankings || {};
+    h += s+':<b style="color:#2563eb">'+(rankings[s]||'?')+'</b> ';
   });
   h += '</div></div>';
 
@@ -6089,7 +6098,6 @@ function refreshGuide() {
       alert('刷新失败: ' + e.message);
     });
 }
-var _lastGuideMode = 'positive';
 var _guidePage = 0;
 var _guideAllRows = [];
 var _guideTotal = 0;
@@ -6686,7 +6694,7 @@ function viewHistory(id, date) {
   fetch(API_BASE + '/api/simulate/guide-history?limit=50')
     .then(r => r.json())
     .then(function(rows) {
-      var found = rows.find(function(r){ return r.id == id; });
+      var found = (rows.rows || rows).find(function(r){ return r.id == id; });
       if (found) {
         window._guideCache[id] = found.result;
         renderGuide(found.result);

@@ -578,7 +578,7 @@ async def api_simulate_manual(request: Request):
     ))
 
 @app.get("/api/simulate/daily-guide")
-async def api_daily_guide(days: int = 90, mode: str = "positive", max_iter: int = 3):
+async def api_daily_guide(days: int = 90, mode: str = "positive", max_iter: int = 10):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: run_daily_guide(days, mode, max_iter))
 
@@ -588,9 +588,9 @@ async def api_guide_history(limit: int = 30, mode: str = None, offset: int = 0):
     return await loop.run_in_executor(_executor, lambda: get_guide_history(limit, mode, offset))
 
 @app.get("/api/simulate/order-sheet")
-async def api_order_sheet(days: int = 90, date: str = None):
+async def api_order_sheet(days: int = 90, date: str = None, guide_date: str = None):
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, lambda: get_order_sheet(days, target_date=date))
+    return await loop.run_in_executor(_executor, lambda: get_order_sheet(days, target_date=date, guide_date=guide_date))
 
 @app.post("/api/simulate/pull-numbers")
 async def api_pull_numbers(date: str = None, from_date: str = None, to_date: str = None):
