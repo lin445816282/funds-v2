@@ -1692,8 +1692,6 @@ def get_order_history(limit=30, offset=0):
     row_guide_map = {}  # row_id -> guide_date (or None)
     for r in rows:
         gd = r["history_date"] or r["date"]
-        # 下单指南用前一日排位，所以 actual_guide_date = gd - 1天
-        gd = (datetime.strptime(gd, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
         row_guide_map[r["id"]] = gd
         guide_dates.append(gd)
     unique_guide_dates = list(set(guide_dates))
