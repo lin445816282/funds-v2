@@ -12,6 +12,7 @@ WH_DB = "/home/xiaolin/projects/number-warehouse/backend/data/warehouse.db"
 # ── 常量 ────────────────────────────────────
 CAPITAL_OPTIONS = [10, 20, 40]       # 配资档位（万）
 THRESHOLD_OPTIONS = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45]
+NEG_THRESHOLD_OPTIONS = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45]
 MODE_OPTIONS = ["positive", "negative"]
 STORE_NAMES = ["一店","二店","三店","四店","五店","六店","集合14","集合16"]
 RANKING_CAT = "cat_1783487972049"
@@ -245,7 +246,7 @@ def simulate_full(store_params, data, shots_per_day=3, stop_on_neg2=False):
 
 
 # ═══════════════ 外层优化 ═══════════════
-def optimize(data, mode="positive", algorithm="coordinate", max_iter=3):
+def optimize(data, mode="positive", algorithm="coordinate", max_iter=10):
     """优化8店参数，支持4种算法（精简版：阈值10档，迭代3轮）"""
     if algorithm == "uniform":
         return _uniform_optimize(data, mode)
@@ -257,10 +258,11 @@ def optimize(data, mode="positive", algorithm="coordinate", max_iter=3):
         return _coordinate_optimize(data, mode, max_iter, stop_on_neg2=False)
 
 
-def _coordinate_optimize(data, mode, max_iter=3, stop_on_neg2=False):
+def _coordinate_optimize(data, mode, max_iter=10, stop_on_neg2=False):
     """坐标下降 + 5个均匀起点 → 取最优（确定性）"""
-    # 5个均匀分布起点：(阈,资)
-    starters = [(5,10),(15,20),(25,40),(35,20),(45,10)]
+    # 5个均匀分布起点：(阈,资)，反帮扶去掉1/5
+    starters = [(10,10),(15,20),(25,40),(35,20),(45,10)] if mode == "negative" else [(5,10),(15,20),(25,40),(35,20),(45,10)]
+    thresholds = NEG_THRESHOLD_OPTIONS if mode == "negative" else THRESHOLD_OPTIONS
     best_params = None
     best_result = None
     best_profit = -float("inf")
@@ -280,7 +282,7 @@ def _coordinate_optimize(data, mode, max_iter=3, stop_on_neg2=False):
                 best_store_profit = cur_best
                 
                 # 遍历该店的组合（10阈值×3配资×锁定模式）
-                for t in THRESHOLD_OPTIONS:
+                for t in thresholds:
                     for c in CAPITAL_OPTIONS:
                         store_params[s] = {"threshold": t, "capital": c, "mode": mode}
                         result = _sim_with_opt(store_params, data, stop_on_neg2)
@@ -306,12 +308,13 @@ def _coordinate_optimize(data, mode, max_iter=3, stop_on_neg2=False):
 
 def _uniform_optimize(data, mode):
     """等权参数：暴力搜最优后逐店微调阈值（±相邻档），保留个体差异空间"""
+    thresholds = NEG_THRESHOLD_OPTIONS if mode == "negative" else THRESHOLD_OPTIONS
     best_params = None
     best_result = None
     best_profit = -float("inf")
     
     # 阶段1：暴力搜统一参数（10×3=30种，锁定模式）
-    for t in THRESHOLD_OPTIONS:
+    for t in thresholds:
         for c in CAPITAL_OPTIONS:
             sp = {s: {"threshold": t, "capital": c, "mode": mode} for s in STORE_NAMES}
             result = simulate_full(sp, data)
@@ -341,10 +344,11 @@ def _uniform_optimize(data, mode):
     return best_params, best_result
 
 
-def _positive_only_optimize(data, mode, max_iter=3):
+def _positive_only_optimize(data, mode, max_iter=10):
     """仅指定模式：固定5个分布均匀起点 → 坐标下降 → 取最优（确定性）"""
-    # 5个均匀分布起点：(阈,资) = (5,10),(15,20),(25,40),(35,20),(45,10)
-    starters = [(5,10),(15,20),(25,40),(35,20),(45,10)]
+    # 5个均匀分布起点：(阈,资)，反帮扶去掉1/5
+    thresholds = NEG_THRESHOLD_OPTIONS if mode == "negative" else THRESHOLD_OPTIONS
+    starters = [(10,10),(15,20),(25,40),(35,20),(45,10)] if mode == "negative" else [(5,10),(15,20),(25,40),(35,20),(45,10)]
     best_params = None
     best_result = None
     best_profit = -float("inf")
@@ -363,7 +367,7 @@ def _positive_only_optimize(data, mode, max_iter=3):
                 best_for_store = store_params[s].copy()
                 best_store_profit = cur_best
                 
-                for t in THRESHOLD_OPTIONS:
+                for t in thresholds:
                     for c in CAPITAL_OPTIONS:
                         store_params[s] = {"threshold": t, "capital": c, "mode": mode}
                         result = simulate_full(store_params, data)
@@ -491,7 +495,7 @@ def store_params_to_dict(sp):
 
 
 # ═══════════════ API：每日下单指南 ═══════════════
-def run_daily_guide(days=90, mode="positive", max_iter=3):
+def run_daily_guide(days=90, mode="positive", max_iter=10):
     """跑4组优化 + 取最新排位 + 逐店判定 → 投票汇总
     mode: "positive"=正帮扶（排位≤阈值出手）, "negative"=反帮扶（排位>阈值出手）
     max_iter: 坐标下降迭代轮数（3=全精度, 1=快速）
@@ -500,7 +504,7 @@ def run_daily_guide(days=90, mode="positive", max_iter=3):
     if not data:
         return {"error": "无数据"}
 
-    # 找最新有排位数据的日子
+    # 找最新有排位日 → 用当日排位预测次日出手
     last_day = None
     for d in reversed(data):
         if d.get("rankings"):
@@ -513,7 +517,6 @@ def run_daily_guide(days=90, mode="positive", max_iter=3):
     today_date = last_day["date"]
 
     # ── 关键：优化只用 D-1 之前的数据，D 本身不参与训练（避免数据泄露）──
-    # train_data 排除最新一天（today_date），该天排位数据只用于 _predict_orders 做预测输入
     train_data = [d for d in data if d.get("date") != today_date]
 
     # ── 验证：仓库 threshold 号码是否就绪 ──
@@ -557,6 +560,59 @@ def run_daily_guide(days=90, mode="positive", max_iter=3):
     }
 
     # 保存历史
+    _save_guide(result)
+    return result
+
+
+def run_daily_guide_for_date(bet_date, mode="positive", max_iter=10):
+    """按指定下注日生成指南：排位来自 bet_date-1 的前一个有排位日，评估用 bet_date"""
+    data = load_data(90)
+    if not data:
+        return {"error": "无数据"}
+
+    # 找 bet_date 前最近的有排位日
+    pred_day = None
+    for d in reversed(data):
+        if d.get("date") < bet_date and d.get("rankings"):
+            pred_day = d
+            break
+    if not pred_day:
+        return {"error": f"{bet_date}无前一日排位数据"}
+
+    pred_rankings = pred_day["rankings"]
+
+    # 训练用 bet_date 之前的数据
+    train_data = [d for d in data if d.get("date") < bet_date]
+
+    algorithms = [
+        ("coordinate", "坐标下降"),
+        ("uniform", "等权统一"),
+        ("positive_only", "仅正向出手"),
+        ("stop_neg2", "连亏止损"),
+    ]
+
+    algo_results = []
+    for algo_key, algo_name in algorithms:
+        params, result_opt = optimize(train_data, mode, algo_key, max_iter)
+        orders, detail = _predict_orders(pred_rankings, params)
+        algo_results.append({
+            "name": algo_name, "key": algo_key,
+            "profit": result_opt["total_profit"],
+            "params": {s: params[s] for s in STORE_NAMES},
+            "orders": orders,
+            "detail": detail,
+        })
+
+    consensus = _build_consensus(algo_results)
+
+    result = {
+        "date": bet_date,
+        "mode": mode,
+        "pred_rankings": pred_rankings,
+        "algorithms": algo_results,
+        "consensus": consensus,
+    }
+
     _save_guide(result)
     return result
 
@@ -755,15 +811,9 @@ def _load_order_numbers(ranking_date=None):
         (target_date,)
     ).fetchall()
 
-    # 取 order_numbers 表最新日期（而非 sim_guides 缓存的 ranking_date）
-    latest_row = db.execute(
-        "SELECT date FROM order_numbers ORDER BY date DESC LIMIT 1"
-    ).fetchone()
-    latest_db_date = latest_row["date"] if latest_row else target_date
-
     db.close()
 
-    result = {"date": latest_db_date}
+    result = {"date": target_date}
     if ranking_date and ranking_date == target_date:
         result["matched"] = True
     pulled_at = None
@@ -797,14 +847,28 @@ def _get_latest_numbers_date():
     return row["date"] if row else None
 
 
-def get_order_sheet(days=90, target_date=None):
+def get_order_sheet(days=90, target_date=None, guide_date=None):
     """合并正反帮扶指南 → 下单表（门店列表 + 1-49空网格）
     优先从 sim_guides 缓存读取，避免重新计算。
-    target_date: 指定目标日期，用最新共识 + 该日号码计算金额（不存DB）。
+    target_date: 指定目标日期，用最新共识 + 该日号码计算金额（不存 DB）。
+    guide_date: 指定指南日期，默认用最新。
     """
     from datetime import datetime as dt_module
     db = sqlite3.connect(FUNDS_DB)
     db.row_factory = sqlite3.Row
+
+    def _get_guide(mode):
+        """获取指定 mode 的 sim_guide，指定 guide_date 时精确匹配不回落"""
+        if guide_date:
+            row = db.execute(
+                "SELECT date, rankings, result FROM sim_guides WHERE date=? AND json_extract(result, '$.mode')=? ORDER BY id DESC LIMIT 1",
+                (guide_date, mode)
+            ).fetchone()
+            return row  # 找到返回，找不到返回 None → 触发实时计算
+        return db.execute(
+            "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')=? ORDER BY date DESC, id DESC LIMIT 1",
+            (mode,)
+        ).fetchone()
 
     def extract_stores(consensus):
         stores = []
@@ -821,13 +885,9 @@ def get_order_sheet(days=90, target_date=None):
         stores.sort(key=lambda x: store_order.get(x["store"], 999))
         return stores
 
-    # 从缓存读最新正反帮扶
-    pos_row = db.execute(
-        "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')='positive' ORDER BY date DESC, id DESC LIMIT 1"
-    ).fetchone()
-    neg_row = db.execute(
-        "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')='negative' ORDER BY date DESC, id DESC LIMIT 1"
-    ).fetchone()
+    # 从缓存读正反帮扶（优先 guide_date，回退最新）
+    pos_row = _get_guide("positive")
+    neg_row = _get_guide("negative")
     db.close()
 
     if pos_row and neg_row:
@@ -836,12 +896,7 @@ def get_order_sheet(days=90, target_date=None):
         pos_stores = extract_stores(pos.get("consensus", []))
         neg_stores = extract_stores(neg.get("consensus", []))
         ranking_date = pos["date"]
-        # 自动检测：号码最新日期 > 共识日期 → 用新号码日期（如7-20号码已采集但共识还在7-19）
         action_date = target_date if target_date else ranking_date
-        if not target_date:
-            nums_latest = _get_latest_numbers_date()
-            if nums_latest and nums_latest > ranking_date:
-                action_date = nums_latest
         numbers = _load_order_numbers(action_date)
         # 号码日期 > 共识日期时，优先从 order_history 取实际下单金额
         if action_date != ranking_date:
@@ -857,7 +912,7 @@ def get_order_sheet(days=90, target_date=None):
             "date": ranking_date,
             "guide_date": ranking_date,
             "numbers_date": numbers_date,
-            "rankings": pos.get("today_rankings", {}),
+            "rankings": pos.get("pred_rankings") or pos.get("today_rankings", {}),
             "cached": True,
             "numbers": numbers,
             "positive": {
@@ -871,10 +926,11 @@ def get_order_sheet(days=90, target_date=None):
             "order_amounts": amounts_data
         }
 
-    # 缓存无 → 实时计算
+    # 缓存无 → 实时计算（用目标日期窗口避免前视偏差）
     print("[order-sheet] 无缓存，实时计算中...")
-    pos = run_daily_guide(days, "positive", max_iter=1)
-    neg = run_daily_guide(days, "negative", max_iter=1)
+    bet_date = target_date if target_date else guide_date if guide_date else None
+    pos = run_daily_guide_for_date(bet_date, "positive", max_iter=10) if bet_date else run_daily_guide(days, "positive", max_iter=10)
+    neg = run_daily_guide_for_date(bet_date, "negative", max_iter=10) if bet_date else run_daily_guide(days, "negative", max_iter=10)
     pos_stores = extract_stores(pos.get("consensus", []))
     neg_stores = extract_stores(neg.get("consensus", []))
     ranking_date2 = pos.get("date", "")
@@ -891,7 +947,7 @@ def get_order_sheet(days=90, target_date=None):
         "date": ranking_date2 if ranking_date2 else action_date2,
         "guide_date": ranking_date2 if ranking_date2 else "",
         "numbers_date": numbers_date2,
-        "rankings": pos.get("today_rankings", {}),
+        "rankings": pos.get("pred_rankings") or pos.get("today_rankings", {}),
         "cached": False,
         "numbers": numbers2,
         "positive": {
@@ -984,17 +1040,25 @@ def _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date):
 
 
 def _save_guide(result):
-    """保存到 sim_guides 表"""
+    """保存到 sim_guides 表 — 自动去重：先删同日期+同mode旧记录再插入"""
     try:
         db = sqlite3.connect(FUNDS_DB)
+        rankings = result.get("pred_rankings") or result.get("today_rankings", {})
+        mode = result.get("mode", "")
+        date = result["date"]
+        # 去重：删掉同一日期+同一mode的旧记录
+        db.execute(
+            "DELETE FROM sim_guides WHERE date=? AND json_extract(result, '$.mode')=?",
+            (date, mode)
+        )
         db.execute(
             "INSERT INTO sim_guides (date, rankings, result) VALUES (?, ?, ?)",
-            (result["date"], json.dumps(result["today_rankings"]), json.dumps(result, ensure_ascii=False))
+            (date, json.dumps(rankings), json.dumps(result, ensure_ascii=False))
         )
         db.commit()
         db.close()
-    except Exception:
-        pass  # 保存失败不影响主流程
+    except Exception as e:
+        print(f"[_save_guide] 保存失败: {e}")
 
 
 def get_guide_history(limit=20, mode=None, offset=0):
@@ -1041,31 +1105,61 @@ def get_guide_history(limit=20, mode=None, offset=0):
     deduped = deduped[offset:offset+limit]
     dates = [r["date"] for r in deduped]
 
-    # 批量查当天各店实际盈亏 + draw
-    store_amounts = {}  # date -> {store: amount}
-    draws = {}  # date -> draw_number
-    if dates:
+    # 评估日期 = 下注日（sim_guides.date就是下注日，排位来自前一日）
+    guide_to_eval = {d: d for d in dates}  # guide_date -> eval_date = 同一天
+    eval_dates = dates
+
+    # 批量查各店实际盈亏 + draw + 排位（都用评估日期=下注日）
+    store_amounts = {}  # guide_date -> {store: amount}
+    draws = {}  # guide_date -> draw_number（下注日的抽签，决定盈亏）
+    eval_rankings = {}  # guide_date -> {store: rank}（用评估日的排位做命中判定）
+    if eval_dates:
         db = sqlite3.connect(FUNDS_DB)
         db.row_factory = sqlite3.Row
-        placeholders = ",".join(["?" for _ in dates])
+        placeholders = ",".join(["?" for _ in eval_dates])
         rows = db.execute(
             f"SELECT date, store, amount FROM records WHERE date IN ({placeholders}) AND category='income'",
-            dates
+            eval_dates
         ).fetchall()
         db.close()
         for r in rows:
-            store_amounts.setdefault(r["date"], {})[r["store"]] = r["amount"]
+            eval_date = r["date"]
+            for gd, ed in guide_to_eval.items():
+                if ed == eval_date:
+                    store_amounts.setdefault(gd, {})[r["store"]] = r["amount"]
 
-        # 查draw
+        # 加载评估日的排位数据（用于命中判定）— 从 sim_guides.rankings 取（pred_rankings=前一日），不取当天实际排位
+        db2 = sqlite3.connect(FUNDS_DB)
+        db2.row_factory = sqlite3.Row
+        rank_rows = db2.execute(
+            f"SELECT date, rankings FROM sim_guides WHERE date IN ({placeholders}) ORDER BY id DESC",
+            eval_dates
+        ).fetchall()
+        db2.close()
+        for rr in rank_rows:
+            eval_date = rr["date"]
+            for gd, ed in guide_to_eval.items():
+                if ed == eval_date and gd not in eval_rankings:
+                    try:
+                        eval_rankings[gd] = json.loads(rr["rankings"] or "{}")
+                    except:
+                        eval_rankings[gd] = {}
+
+        # draw 用评估日（下注日）的抽签，无数据时fallback到指南日
         wh = sqlite3.connect(WH_DB)
         wh.row_factory = sqlite3.Row
+        all_draw_dates = list(set(eval_dates + dates))
+        dp = ",".join(["?" for _ in all_draw_dates])
         rows_d = wh.execute(
-            f"SELECT date, draw_number FROM analysis_daily WHERE project_id=19 AND date IN ({placeholders})",
-            dates
+            f"SELECT date, draw_number FROM analysis_daily WHERE project_id=19 AND date IN ({dp})",
+            all_draw_dates
         ).fetchall()
         wh.close()
+        draw_lookup = {}
         for r in rows_d:
-            draws[r["date"]] = r["draw_number"]
+            draw_lookup[r["date"]] = r["draw_number"]
+        for gd, ed in guide_to_eval.items():
+            draws[gd] = draw_lookup.get(ed) or draw_lookup.get(gd)
 
     # 反转成从旧到新，计算累计
     sorted_asc = list(reversed(deduped))
@@ -1085,8 +1179,8 @@ def get_guide_history(limit=20, mode=None, offset=0):
         consensus = res.get("consensus", [])
         voted = [c for c in consensus if c.get("votes", 0) > 0]
 
-        # 加载排位数据（命中判定用）
-        rankings = json.loads(r["rankings"])
+        # 加载排位数据（命中判定用）— 用评估日的排位，fallback到指南日排位
+        rankings = eval_rankings.get(r["date"]) or json.loads(r["rankings"])
 
         # 推断每店mode（兼容旧数据没有global mode字段）
         global_mode = res.get("mode")
@@ -1119,23 +1213,33 @@ def get_guide_history(limit=20, mode=None, offset=0):
             day_capital += max_cap
             if max_cap > 0:
                 # 命中由排位决定：正帮扶排≤25命中，反帮扶排>25命中
+                # ⚠️ 无抽签号时无法判断命中，标记为pending
                 store_mode = store_mode_map.get(s, res.get("mode", "positive"))
                 rank = rankings.get(s)
-                if rank is not None:
+                draw_num = draws.get(r["date"])
+                if draw_num is not None and rank is not None:
                     base_hit = (rank <= 25)
                     hit = base_hit if store_mode == "positive" else not base_hit
                 else:
-                    hit = False
+                    hit = None  # 无抽签 → 待定
                 # 正帮扶买25号(中+22,亏-25)，反帮扶买24号(中+23,亏-24)
                 hm = HIT_MULT.get(store_mode, 22)
                 mm = MISS_MULT.get(store_mode, 25)
-                net = max_cap * hm if hit else -max_cap * mm
+                if hit is None:
+                    net = 0  # 无抽签，无法计算盈亏
+                    formula_text = f"待开奖 ×{max_cap}"
+                elif hit:
+                    net = max_cap * hm
+                    formula_text = f"{max_cap}×{hm}={net:+}"
+                else:
+                    net = -max_cap * mm
+                    formula_text = f"-{max_cap}×{mm}={net}"
                 store_details.append({
                     "store": s,
                     "capital": max_cap,
                     "rank": rank,
                     "hit": hit,
-                    "formula": f"{max_cap}×{hm}={net:+}" if hit else f"-{max_cap}×{mm}={net}",
+                    "formula": formula_text,
                     "net": net,
                 })
 
@@ -1157,6 +1261,10 @@ def get_guide_history(limit=20, mode=None, offset=0):
             "rankings": json.loads(r["rankings"]),
             "result": res,
             "created_at": r["created_at"],
+            "draw": draws.get(r["date"]),
+            "capital": day_capital,
+            "profit": day_profit,
+            "hit_rate": round(sum(1 for sd in store_details if sd["hit"] is True) / max(sum(1 for sd in store_details if sd["hit"] is not None), 1), 2) if any(sd["hit"] is not None for sd in store_details) else None,
             "day_summary": {
                 "profit": day_profit,
                 "capital": day_capital,
@@ -1176,6 +1284,12 @@ def get_guide_history(limit=20, mode=None, offset=0):
 
     # 再反转回最新在前
     all_results.reverse()
+    # 过滤：移除评估日无实际数据的指南（7-20排位不能用于7-20自己）
+    # 必须有 earned 或 lost 数据才算有效评估 ← 但保留最新日期（当天刚生成还没收入数据）
+    latest_date = all_results[0]["date"] if all_results else None
+    all_results = [r for r in all_results
+                   if r["day_summary"].get("earned") or r["day_summary"].get("lost")
+                   or r["date"] == latest_date]
     return {"rows": all_results, "total": total}
 
 
@@ -1253,42 +1367,72 @@ def _build_consensus(algo_results):
 # ── 下单金额汇总 ──────────────────────────
 def save_order_amounts(date, stores_data):
     """
-    根据投票结果计算1-49各号码累计金额 → 写入 order_amounts
-    date: 排位日期 → 内部 +1 天存为出手日期
-    stores_data: [{store, capital, numbers: [1,2,...] 或 {25:[...], 24:[...]}}, ...]
+    根据门店配置 + order_numbers 表计算1-49各号码累计金额 → 写入 order_amounts
+    date: 出手日期（action_date）
+    stores_data: [{store, capital, mode}, ...] — 仅用于读取cap和mode，号码从order_numbers表读
     """
     from datetime import datetime as dt, timedelta
+    
+    # 门店名 → collection_id 映射（order_numbers表用collection_id存储）
+    STORE_CID = {
+        '一店': '-23', '二店': '-24', '三店': '-25', '四店': '-26',
+        '五店': '-28', '六店': '-29', '集合14': '14', '集合16': '16'
+    }
+    
     action_date = date
     db = sqlite3.connect(FUNDS_DB)
+    db.row_factory = sqlite3.Row
+    
+    # 从 order_numbers 表读取当天的号码（正帮→Top25, 反帮→Top24）
+    on_rows = db.execute(
+        "SELECT collection_id, threshold, numbers_json FROM order_numbers WHERE date=?",
+        (action_date,)
+    ).fetchall()
+    
+    # 构建 store -> {25: set, 24: set}
+    store_numbers = {}
+    for r in on_rows:
+        cid = str(r['collection_id'])
+        name = None
+        for n, c in STORE_CID.items():
+            if c == cid:
+                name = n
+                break
+        if not name:
+            continue
+        store_numbers.setdefault(name, {})
+        store_numbers[name][r['threshold']] = set(json.loads(r['numbers_json']))
+    
     db.execute("DELETE FROM order_amounts WHERE date=?", (action_date,))
     num_amounts = {}
+    
     for sd in stores_data:
         capital = sd.get("capital", 0)
-        numbers = sd.get("numbers", [])
         mode = sd.get("mode", "")
-        if not capital or not numbers:
+        store_name = sd.get("store", "")
+        if not capital or not store_name:
             continue
-        # 按 mode 取对应号码：正帮扶→Top25，反帮扶→Bottom24
-        flat = []
-        if isinstance(numbers, dict):
-            if mode == "negative":
-                v24 = numbers.get("24")
-                if isinstance(v24, list):
-                    flat = v24
-            else:
-                # positive 或未知 → 取25
-                v25 = numbers.get("25")
-                if isinstance(v25, list):
-                    flat = v25
-                # 如果没有"25"键但有"24"（兼容旧格式），也取
+        
+        # 正帮→Top25(th=25), 反帮→Top24(th=24)
+        th = 25 if mode == 'positive' else 24
+        nums = store_numbers.get(store_name, {}).get(th, set())
+        
+        # 如果前端传了numbers且order_numbers没有，fallback到前端数据
+        if not nums:
+            numbers = sd.get("numbers", [])
+            flat = []
+            if isinstance(numbers, dict):
+                key = "24" if mode == "negative" else "25"
+                flat = numbers.get(key, [])
                 if not flat:
-                    v24 = numbers.get("24")
-                    if isinstance(v24, list):
-                        flat = v24
-        elif isinstance(numbers, list):
-            flat = numbers
-        for n in flat:
+                    flat = numbers.get("24" if mode != "negative" else "25", [])
+            elif isinstance(numbers, list):
+                flat = numbers
+            nums = set(flat)
+        
+        for n in nums:
             num_amounts[n] = num_amounts.get(n, 0) + capital
+    
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for n in range(1, 50):
         db.execute(
@@ -1297,9 +1441,56 @@ def save_order_amounts(date, stores_data):
         )
     db.commit()
     db.close()
-    # 同时写入下单历史（独立表），直接传金额避免回退查询日期不匹配
-    save_order_history(date, stores_data, amounts=num_amounts)
+    # 如果该日期已有历史记录，自动同步 amounts_json + stores_json + own_capital/profit
+    _sync_amounts_to_history(action_date, num_amounts, stores_data)
     return {"ok": True, "date": action_date, "total": sum(num_amounts.values())}
+
+
+def _sync_amounts_to_history(action_date, num_amounts, stores_data=None):
+    """更新正负下单后，自动同步历史记录中的1-49金额 + 门店快照"""
+    import json as _json
+    try:
+        db2 = sqlite3.connect(FUNDS_DB)
+        db2.row_factory = sqlite3.Row
+        row = db2.execute(
+            "SELECT id, draw_number FROM order_history WHERE action_date=? LIMIT 1",
+            (action_date,)
+        ).fetchone()
+        if not row:
+            db2.close()
+            return
+        amounts_json = _json.dumps(
+            {str(k): v for k, v in num_amounts.items()}, ensure_ascii=False)
+        total_bet = sum(num_amounts.values())
+        draw_number = row["draw_number"] or 0
+        if draw_number > 0:
+            draw_amt = num_amounts.get(draw_number, 0)
+            own_profit = round(draw_amt * 47 - total_bet, 2)
+            own_capital = round(total_bet, 2)
+        else:
+            own_profit = None
+            own_capital = None
+        
+        # 同步门店快照（避免 stores 旧 amounts 新）
+        if stores_data:
+            stores_json = _json.dumps(
+                [{"store": s["store"], "capital": s["capital"], "mode": s.get("mode", "")}
+                 for s in stores_data if s.get("capital")],
+                ensure_ascii=False)
+            total_cap = sum(s["capital"] for s in stores_data if s.get("capital"))
+            db2.execute(
+                "UPDATE order_history SET amounts_json=?, own_profit=?, own_capital=?, stores_json=?, total_capital=? WHERE id=?",
+                (amounts_json, own_profit, own_capital, stores_json, total_cap, row["id"])
+            )
+        else:
+            db2.execute(
+                "UPDATE order_history SET amounts_json=?, own_profit=?, own_capital=? WHERE id=?",
+                (amounts_json, own_profit, own_capital, row["id"])
+            )
+        db2.commit()
+        db2.close()
+    except:
+        pass
 
 
 def get_order_amounts(date=None, list_all=False):
@@ -1342,6 +1533,47 @@ def get_order_amounts(date=None, list_all=False):
 
 
 # ── 下单历史（独立表，不受算法重跑影响）──────────
+def _compute_from_order_numbers(action_date, stores):
+    """从 order_numbers 重新计算该日期的 1-49 金额。
+    stores: [{store, capital, mode}, ...] 来自 save_order_history 的 stores_data"""
+    import json as _json
+    try:
+        db = sqlite3.connect(FUNDS_DB)
+        db.row_factory = sqlite3.Row
+        rows = db.execute(
+            "SELECT collection_id, threshold, numbers_json FROM order_numbers WHERE date=?",
+            (action_date,)
+        ).fetchall()
+        db.close()
+        if not rows:
+            return {}
+        # 构建 store → {25: [...], 24: [...]}
+        store_nums = {}
+        for r in rows:
+            store = COLLECTION_TO_STORE.get(r["collection_id"])
+            if not store:
+                continue
+            if store not in store_nums:
+                store_nums[store] = {}
+            store_nums[store][str(r["threshold"])] = _json.loads(r["numbers_json"])
+        # 计算
+        num_amounts = {}
+        for s in stores:
+            cap = s.get("capital", 0)
+            if not cap:
+                continue
+            nums_data = store_nums.get(s["store"], {})
+            if s.get("mode") == "negative":
+                guides = nums_data.get("24", [])
+            else:
+                guides = nums_data.get("25", [])
+            for n in guides:
+                num_amounts[n] = num_amounts.get(n, 0) + cap
+        return {str(k): v for k, v in num_amounts.items()}
+    except:
+        return {}
+
+
 def save_order_history(date, stores_data, amounts=None):
     """把下单时的门店快照写入 order_history，永久存档。
     同时快照：下单金额、抽签号、当日各店排位"""
@@ -1376,19 +1608,22 @@ def save_order_history(date, stores_data, amounts=None):
     if not stores:
         return {"ok": False, "error": "无有效门店"}
 
-    # 快照1：下单金额 — 优先从 order_amounts 表读取（action_date）兜底用传参
-    amounts_snapshot = {}
-    try:
-        db0 = sqlite3.connect(FUNDS_DB)
-        rows = db0.execute(
-            "SELECT number, amount FROM order_amounts WHERE date=? AND amount>0 ORDER BY number",
-            (action_date,)
-        ).fetchall()
-        if rows:
-            amounts_snapshot = {str(r[0]): r[1] for r in rows}
-        db0.close()
-    except:
-        pass
+    # 快照1：下单金额 — 优先从 order_numbers 计算（保证与当前 stores 配置一致）
+    amounts_snapshot = _compute_from_order_numbers(action_date, stores)
+    # 兜底：order_amounts 表（用户手动更新下单金额后的缓存）
+    if not amounts_snapshot:
+        try:
+            db0 = sqlite3.connect(FUNDS_DB)
+            rows = db0.execute(
+                "SELECT number, amount FROM order_amounts WHERE date=? AND amount>0 ORDER BY number",
+                (action_date,)
+            ).fetchall()
+            if rows:
+                amounts_snapshot = {str(r[0]): r[1] for r in rows}
+            db0.close()
+        except:
+            pass
+    # 最后兜底：传参
     if not amounts_snapshot and amounts and isinstance(amounts, dict):
         amounts_snapshot = {str(k): v for k, v in amounts.items() if v}
 
@@ -1457,6 +1692,8 @@ def get_order_history(limit=30, offset=0):
     row_guide_map = {}  # row_id -> guide_date (or None)
     for r in rows:
         gd = r["history_date"] or r["date"]
+        # 下单指南用前一日排位，所以 actual_guide_date = gd - 1天
+        gd = (datetime.strptime(gd, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
         row_guide_map[r["id"]] = gd
         guide_dates.append(gd)
     unique_guide_dates = list(set(guide_dates))
@@ -1663,8 +1900,8 @@ def get_order_history(limit=30, offset=0):
                             pos_hits += 1
                     store_hits[s["store"]] = hit
 
-        # 附加实际结果（来自 sim_guides — 优先用 history_date 匹配模拟日期）
-        guide_date = r["history_date"] or r["date"]
+        # 附加实际结果（来自 sim_guides — 用修正后的 guide_date）
+        guide_date = row_guide_map.get(r["id"]) or r["history_date"] or r["date"]
         guide_data = guide_map.get(guide_date, {})
 
         result.append({
