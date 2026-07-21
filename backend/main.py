@@ -590,7 +590,8 @@ async def api_guide_history(limit: int = 30, mode: str = None, offset: int = 0):
 @app.get("/api/simulate/order-sheet")
 async def api_order_sheet(days: int = 90, date: str = None, guide_date: str = None):
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, lambda: get_order_sheet(days, target_date=date, guide_date=guide_date))
+    result = await loop.run_in_executor(_executor, lambda: get_order_sheet(days, target_date=date, guide_date=guide_date))
+    return JSONResponse(content=result, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.post("/api/simulate/pull-numbers")
 async def api_pull_numbers(date: str = None, from_date: str = None, to_date: str = None):
@@ -635,7 +636,8 @@ async def api_get_order_amounts(date: str = None, list_all: bool = False):
 @app.get("/api/simulate/order-history")
 async def api_get_order_history(limit: int = 30, offset: int = 0):
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, lambda: get_order_history(limit, offset))
+    result = await loop.run_in_executor(_executor, lambda: get_order_history(limit, offset))
+    return JSONResponse(content=result, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.post("/api/simulate/order-history/confirm")
 async def api_confirm_order_history(request: Request):

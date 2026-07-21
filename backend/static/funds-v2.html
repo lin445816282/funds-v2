@@ -3930,7 +3930,7 @@ function initOrderSheet(guideDate, writeDate) {
   el.innerHTML = '<div class="empty">⏳ 加载中...</div>';
   // 先加载亏损记录，再加载下单数据
   return loadLossResults().then(function() {
-    var url = API_BASE + '/api/simulate/order-sheet?days=30';
+    var url = API_BASE + '/api/simulate/order-sheet?days=30&_t=' + Date.now();
     if (guideDate) url += '&guide_date=' + encodeURIComponent(guideDate);
     return fetch(url)
       .then(r => r.json())
@@ -6114,7 +6114,7 @@ function loadOrderHistory(page) {
   container.innerHTML = '<div style="color:#8899b0;text-align:center;padding:20px">⏳ 加载中...</div>';
   modal.classList.remove('hide');
 
-  fetch(API_BASE + '/api/simulate/order-history?limit=' + _ohPageSize + '&offset=' + offset)
+  fetch(API_BASE + '/api/simulate/order-history?limit=' + _ohPageSize + '&offset=' + offset + '&_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var rows = data.rows || [];
