@@ -486,11 +486,15 @@ async def external_push(request: Request):
         rec_count = 0
         if "records" in data:
             for r in data["records"]:
-                existing = conn.execute("SELECT id FROM records WHERE id=?", (r["id"],)).fetchone()
+                # 用 UNIQUE(date,store,category) 去重，不依赖外部id（仓库传字符串id与INTEGER PK冲突）
+                existing = conn.execute(
+                    "SELECT id FROM records WHERE date=? AND store=? AND category=?",
+                    (str(r["date"]), str(r["store"]), str(r["category"]))
+                ).fetchone()
                 if not existing:
                     conn.execute(
-                        "INSERT INTO records (id, store, date, category, amount, note) VALUES (?,?,?,?,?,?)",
-                        (r["id"], str(r["store"]), str(r["date"]), str(r["category"]),
+                        "INSERT INTO records (store, date, category, amount, note) VALUES (?,?,?,?,?)",
+                        (str(r["store"]), str(r["date"]), str(r["category"]),
                          float(r.get("amount",0)), str(r.get("note","")))
                     )
                     rec_count += 1
