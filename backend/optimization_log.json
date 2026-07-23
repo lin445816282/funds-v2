@@ -1,0 +1,6 @@
+[
+  {
+    "date": "2026-07-23",
+    "content": "1.【等权统一（uniform）】正帮阈值最小从1→5（POS_THRESHOLD_OPTIONS），杜绝'永不出手'退化\n2.【等权统一（uniform）】Phase2 从±10微调→逐店全量独立优化（threshold×capital），允许从统一最优大幅偏离\n3. 效果：uniform 达标 0→3家，正帮共识 1→4家，一店/六店 0票→全票 4/4"
+  }
+]

@@ -1182,7 +1182,7 @@ function ensureSpecialRules() {
 
 function syncFromAPI() {
   if (!apiToken) return false;
-  var xhr = authSync('/api/funds/data');
+  var xhr = authSync('/api/funds/data?since=2000-01-01');
   if (xhr.status === 200) {
     var data = JSON.parse(xhr.responseText);
     if (!data.stores || !data.stores.length) return false;
@@ -1360,7 +1360,7 @@ function loadLocalOnly() {
 function syncFromAPIAsync(callback) {
   if (!apiToken) { callback(false); return; }
   var xhr = new XMLHttpRequest();
-  xhr.open('GET', API_BASE + '/api/funds/data', true);
+  xhr.open('GET', API_BASE + '/api/funds/data?since=2000-01-01', true);
   xhr.setRequestHeader('Content-Type', 'application/json');
   xhr.setRequestHeader('Authorization', 'Bearer ' + apiToken);
   xhr.onload = function(){
@@ -1847,120 +1847,58 @@ function getOscToWarn(store, streakDays, accumCount, direction) {
     dayMap[r.date] = (dayMap[r.date]||0) + r.amount;
   });
   var dates = Object.keys(dayMap).sort();
-  if (dates.length < streakDays + accumCount) return null;
-  
-  var isLoss = direction === 'l2p'; // true=先亏后正, false=先盈后负
-  var state = 'normal';     // normal / in_streak / after_streak / triggered
-  var streakRun = 0;        // 连续同号天数
-  var accum = 0;            // 累计计数
-  var triggerDate = null, streakEndDate = null;
-  
-  for (var i = 0; i < dates.length; i++) {
-    var net = dayMap[dates[i]];
-    var isTarget = isLoss ? (net < 0) : (net > 0);  // 是否属于连续段
-    var isAccum = isLoss ? (net >= 0) : (net <= 0);  // 是否属于累计段
-    
-    if (state === 'normal' || state === 'triggered') {
-      if (isTarget) {
-        streakRun++;
-        if (streakRun >= streakDays) {
-          state = 'after_streak';
-          streakEndDate = dates[i];
-          accum = 0;
-        }
-      } else {
-        streakRun = 0;
-        if (state === 'triggered') state = 'normal';
-      }
-    } else if (state === 'after_streak') {
-      if (isTarget) {
-        streakRun++;
-        if (streakRun >= streakDays) {
-          // 又出现连续N天 → 重置
-          state = 'after_streak';
-          streakEndDate = dates[i];
-          accum = 0;
-          streakRun = streakDays; // 保持streak状态
-        }
-      } else if (isAccum) {
-        streakRun = 0;
-        accum++;
-        if (accum >= accumCount) {
-          state = 'triggered';
-          triggerDate = dates[i];
-        }
-      } else {
-        // 不是目标方向也不是累计方向 → 忽略
-        streakRun = 0;
-      }
-    }
-  }
-  
-  // 计算gap：最近一次触发 到现在过了多少天
-  var gap = -1;
-  if (triggerDate) {
-    gap = 0;
-    for (var j = dates.length-1; j >= 0; j--) {
-      if (dates[j] === triggerDate) break;
-      gap++;
-    }
-  }
-  
-  return {
-    store: store,
-    triggerDate: triggerDate,
-    streakEndDate: streakEndDate,
-    streakDays: streakDays,
-    accumCount: accumCount,
-    direction: direction,
-    gap: gap,
-    state: state,
-    streakRun: streakRun,
-    accum: accum
-  };
-}
-
-// ── 震荡转正/转负检测（多店累计）──
-function getComboOscToWarn(streakDays, accumCount, direction) {
-  // 检查规则是否开启
-  var ruleType = direction === 'l2p' ? 'combo_l2p' : 'combo_p2n';
-  var cr = null;
-  for (var j=0; j<alertRules.length; j++) {
-    if (alertRules[j].type === ruleType && alertRules[j].on) { cr = alertRules[j]; break; }
-  }
-  if (!cr) return null;
-  
-  var sel = [];
-  for (var s2 in warnComboStores) { if (warnComboStores[s2]) sel.push(s2); }
-  if (sel.length < 2) return null;
-  
-  var dayMap = {};
-  records.forEach(function(r){
-    if (warnComboStores[r.store]) dayMap[r.date] = (dayMap[r.date]||0) + r.amount;
-  });
-  var dates = Object.keys(dayMap).sort();
-  if (dates.length < streakDays + accumCount) return null;
+  if (dates.length < streakDays + 1) return null;
   
   var isLoss = direction === 'l2p';
-  var state = 'normal', streakRun = 0, accum = 0, triggerDate = null;
+  var state = 'between';
+  var streakRun = 0;
+  var accum = 0;
+  var consecOpp = 0;
+  var triggerDate = null;
   
   for (var i = 0; i < dates.length; i++) {
-    var net = dayMap[dates[i]];
-    var isTarget = isLoss ? (net < 0) : (net > 0);
-    var isAccum = isLoss ? (net >= 0) : (net <= 0);
+    var rank = dayMap[dates[i]];
+    var isStreak = isLoss ? (rank > 25) : (rank <= 25);
+    var isOpp    = isLoss ? (rank <= 25) : (rank > 25);
     
-    if (state === 'normal' || state === 'triggered') {
-      if (isTarget) {
+    if (state === 'between') {
+      if (isStreak) {
         streakRun++;
-        if (streakRun >= streakDays) { state = 'after_streak'; accum = 0; }
-      } else { streakRun = 0; if (state === 'triggered') state = 'normal'; }
-    } else if (state === 'after_streak') {
-      if (isTarget) {
+        if (streakRun >= streakDays) { state = 'ready'; }
+      } else { streakRun = 0; }
+    }
+    else if (state === 'ready') {
+      if (isOpp) { accum = 1; consecOpp = 1; streakRun = 0; state = 'active'; }
+    }
+    else if (state === 'active') {
+      if (isOpp) {
+        accum++; consecOpp++; streakRun = 0;
+        if (consecOpp >= 2) {
+          if (accum >= accumCount) { state = 'triggered'; triggerDate = dates[i]; }
+          else { state = 'ended'; }
+        } else if (accum >= accumCount) {
+          state = 'triggered'; triggerDate = dates[i];
+        }
+      } else {
+        consecOpp = 0; streakRun++;
+        if (streakRun >= streakDays) {
+          state = 'between'; accum = 0; streakRun = 0;
+        }
+      }
+    }
+    else if (state === 'triggered') {
+      if (isOpp) {
+        consecOpp++;
+        if (consecOpp >= 2) { state = 'ended'; }
+      } else {
+        consecOpp = 0; streakRun++;
+        if (streakRun >= streakDays) { state = 'between'; accum = 0; streakRun = 0; }
+      }
+    }
+    else if (state === 'ended') {
+      if (isStreak) {
         streakRun++;
-        if (streakRun >= streakDays) { state = 'after_streak'; accum = 0; streakRun = streakDays; }
-      } else if (isAccum) {
-        streakRun = 0; accum++;
-        if (accum >= accumCount) { state = 'triggered'; triggerDate = dates[i]; }
+        if (streakRun >= streakDays) { state = 'ready'; accum = 0; }
       } else { streakRun = 0; }
     }
   }
@@ -1974,176 +1912,94 @@ function getComboOscToWarn(streakDays, accumCount, direction) {
     }
   }
   
+  return {
+    store: store,
+    triggerDate: triggerDate,
+    streakDays: streakDays,
+    accumCount: accumCount,
+    direction: direction,
+    gap: gap,
+    state: state,
+    streakRun: streakRun,
+    accum: accum
+  };
+}
+
+function getComboOscToWarn(streakDays, accumCount, direction) {
+  var ruleType = direction === 'l2p' ? 'combo_l2p' : 'combo_p2n';
+  var cr = null;
+  for (var j=0; j<alertRules.length; j++) {
+    if (alertRules[j].type === ruleType && alertRules[j].on) { cr = alertRules[j]; break; }
+  }
+  if (!cr) return null;
+  
+  var sel = [];
+  for (var s2 in warnComboStores) { if (warnComboStores[s2]) sel.push(s2); }
+  if (sel.length < 2) return null;
+  
+  var dayMap = {};
+  records.forEach(function(r){
+    if (warnComboStores[r.store] && r.category === 'cat_1783487972049') {
+      dayMap[r.date] = dayMap[r.date] || {};
+      dayMap[r.date][r.store] = r.amount;
+    }
+  });
+  var dates = Object.keys(dayMap).sort();
+  if (dates.length < streakDays + 1) return null;
+  
+  var isLoss = direction === 'l2p';
+  var state = 'between', streakRun = 0, accum = 0, consecOpp = 0, triggerDate = null;
+  
+  for (var i = 0; i < dates.length; i++) {
+    var storesOnDay = dayMap[dates[i]];
+    var allStreak = true, allOpp = true;
+    for (var s in storesOnDay) {
+      var rk = storesOnDay[s];
+      if (isLoss) { if (rk <= 25) allStreak = false; if (rk > 25) allOpp = false; }
+      else        { if (rk > 25) allStreak = false; if (rk <= 25) allOpp = false; }
+    }
+    var isStreak = allStreak && Object.keys(storesOnDay).length > 0;
+    var isOpp    = allOpp && Object.keys(storesOnDay).length > 0;
+    
+    if (state === 'between') {
+      if (isStreak) { streakRun++; if (streakRun >= streakDays) state = 'ready'; }
+      else { streakRun = 0; }
+    }
+    else if (state === 'ready') {
+      if (isOpp) { accum = 1; consecOpp = 1; streakRun = 0; state = 'active'; }
+    }
+    else if (state === 'active') {
+      if (isOpp) {
+        accum++; consecOpp++; streakRun = 0;
+        if (consecOpp >= 2) {
+          if (accum >= accumCount) { state = 'triggered'; triggerDate = dates[i]; }
+          else { state = 'ended'; }
+        } else if (accum >= accumCount) { state = 'triggered'; triggerDate = dates[i]; }
+      } else {
+        consecOpp = 0; streakRun++;
+        if (streakRun >= streakDays) { state = 'between'; accum = 0; streakRun = 0; }
+      }
+    }
+    else if (state === 'triggered') {
+      if (isOpp) { consecOpp++; if (consecOpp >= 2) state = 'ended'; }
+      else { consecOpp = 0; streakRun++; if (streakRun >= streakDays) { state = 'between'; accum = 0; streakRun = 0; } }
+    }
+    else if (state === 'ended') {
+      if (isStreak) { streakRun++; if (streakRun >= streakDays) { state = 'ready'; accum = 0; } }
+      else { streakRun = 0; }
+    }
+  }
+  
+  var gap = -1;
+  if (triggerDate) {
+    gap = 0;
+    for (var j = dates.length-1; j >= 0; j--) {
+      if (dates[j] === triggerDate) break;
+      gap++;
+    }
+  }
+  
   return { stores: sel.join('+'), triggerDate: triggerDate, streakDays: streakDays, accumCount: accumCount, direction: direction, gap: gap, state: state, streakRun: streakRun, accum: accum };
-}
-
-// ── 最长连续亏损计算（用于下单记录卡片）──
-function computeLongestLossStreak(rows) {
-  // rows 已按 date DESC 排序，需反转为 ASC
-  var sorted = rows.slice().reverse();
-  var valid = sorted.filter(function(r) { return (r.draw_number || 0) > 0; });
-  if (valid.length < 3) return null;
-
-  var best = { days: 0, start: '', end: '' };
-  var cur = { days: 0, start: '' };
-  valid.forEach(function(r) {
-    var isLoss = (r.own_profit || 0) < 0;
-    if (isLoss) {
-      if (cur.days === 0) cur.start = r.action_date || r.date;
-      cur.days++;
-      if (cur.days > best.days) {
-        best.days = cur.days;
-        best.start = cur.start;
-        best.end = r.action_date || r.date;
-      }
-    } else {
-      cur = { days: 0, start: '' };
-    }
-  });
-  if (best.days < 2) return null;
-  var s = best.start.substr(5);
-  var e = best.end.substr(5);
-  return { all: { days: best.days, range: s === e ? s : s + '→' + e } };
-}
-
-// ── 收集所有亏损序列（排序取 topN）──
-function getAllLossStreaks(modeFilter) {
-  var rows = window._lossStreakFilteredRows || [];
-  var sorted = rows.slice().reverse();
-  var valid = sorted.filter(function(r) { return (r.draw_number || 0) > 0; });
-  if (valid.length < 2) return [];
-
-  var streaks = [];
-  var cur = { days: 0, start: '' };
-  valid.forEach(function(r) {
-    var stores = r.stores || [];
-    var hasMode = modeFilter
-      ? stores.some(function(s) { return s.mode === modeFilter && (s.capital || 0) > 0; })
-      : true;
-    if (!hasMode) { cur = { days: 0, start: '' }; return; }
-    var isLoss = (r.own_profit || 0) < 0;
-    if (isLoss) {
-      if (cur.days === 0) cur.start = r.action_date || r.date;
-      cur.days++;
-    } else {
-      if (cur.days >= 2) {
-        var s = cur.start.substr(5);
-        var e = (r.action_date || r.date).substr ? (r.action_date || r.date).substr(5) : '';
-        streaks.push({ days: cur.days, range: s + '→' + (cur.days > 1 ? e : s) });
-      }
-      cur = { days: 0, start: '' };
-    }
-  });
-  // 收尾最后一段
-  if (cur.days >= 2) {
-    var s = cur.start.substr(5);
-    streaks.push({ days: cur.days, range: s + '→' + s });
-  }
-  streaks.sort(function(a, b) { return b.days - a.days; });
-  return streaks.slice(0, 5);
-}
-
-// ── 弹框显示 top5 最长亏损 ──
-function showLossStreakDetail(mode, label) {
-  var streaks = getAllLossStreaks(mode);
-  if (!streaks.length) { alert('无连续亏损数据'); return; }
-
-  var overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:700;background:rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center';
-  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
-
-  var box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:14px;padding:20px 16px 16px;max-width:360px;width:90%;max-height:70vh;overflow-y:auto;box-shadow:0 8px 30px rgba(0,0,0,.15)';
-
-  var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
-  html += '<h3 style="margin:0;font-size:16px;color:#dc2626">📉 ' + label + ' · 最长亏损 TOP5</h3>';
-  html += '<button onclick="this.closest(\'div\').parentElement.remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#8899b0;padding:0 4px">✕</button>';
-  html += '</div>';
-
-  streaks.forEach(function(s, i) {
-    var medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '  ';
-    html += '<div style="display:flex;align-items:center;padding:10px 12px;margin-bottom:6px;background:' + (i===0?'#fef2f2':i===1?'#fff7ed':'#f8fafc') + ';border-radius:10px;border:1px solid ' + (i===0?'#fecaca':'#e5e7eb') + '">';
-    html += '<span style="font-size:18px;margin-right:10px">' + medal + '</span>';
-    html += '<div style="flex:1"><div style="font-size:24px;font-weight:800;color:#dc2626">' + s.days + '<span style="font-size:12px">天</span></div>';
-    html += '<div style="font-size:10px;color:#5a6b85">' + s.range + '</div></div>';
-    html += '</div>';
-  });
-  html += '<button onclick="this.closest(\'div\').parentElement.remove()" style="width:100%;margin-top:8px;padding:10px;border-radius:10px;border:none;background:#f1f5f9;color:#3a5070;font-size:14px;cursor:pointer">关闭</button>';
-
-  box.innerHTML = html;
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-}
-
-// ── 构建最长亏损 HTML 卡片 ──
-function buildLossStreakCard(rows, dateFrom, dateTo) {
-  var info = computeLongestLossStreak(rows);
-  if (!info) return '';
-
-  var ds = dateFrom.substr(5);
-  var de = dateTo.substr(5);
-  var rangeStr = ds === de ? ds : ds + ' → ' + de;
-
-  var h = '<div style="background:linear-gradient(135deg,#fef2f2,#fff7ed);border-radius:12px;padding:12px;margin-bottom:10px">';
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-  h += '<span style="font-size:13px;font-weight:700;color:#dc2626">📉 最长连续亏损 <span style="font-size:9px;color:#8899b0;font-weight:400">(点击查看TOP5)</span></span>';
-  h += '<span style="font-size:9px;color:#8899b0;font-weight:400">' + rangeStr + '</span>';
-  h += '</div>';
-
-  if (info.all) {
-    h += '<div onclick="event.stopPropagation();showLossStreakDetail(null,\'全模式\')" style="text-align:center;background:rgba(255,255,255,.65);border-radius:8px;padding:10px;cursor:pointer;transition:transform .15s" onmouseover="this.style.transform=\'scale(1.02)\'" onmouseout="this.style.transform=\'scale(1)\'">';
-    h += '<div style="font-size:10px;color:#8899b0">全模式</div>';
-    h += '<div style="font-size:28px;font-weight:800;color:#dc2626">' + info.all.days + '<span style="font-size:12px"> 天</span></div>';
-    h += '<div style="font-size:10px;color:#5a6b85;margin-top:3px">' + info.all.range + '</div>';
-    h += '</div>';
-  }
-
-  h += '</div>';
-  return h;
-}
-
-function toggleYearStore(s) {
-  if (singleStoreMode && s !== singleStoreMode) return;
-  yearStoreSel[s] = !yearStoreSel[s];
-  // 确保至少选一家
-  var has = false;
-  stores.forEach(function(st){ if (yearStoreSel[st]) has = true; });
-  if (!has) { yearStoreSel[s] = true; return; }
-  renderDataModal('year');
-}
-
-function showStoreModal(store, view) {
-  singleStoreMode = store;
-  stores.forEach(function(s){ modalStoreSel[s] = (s === store); });
-  stores.forEach(function(s){ yearStoreSel[s] = (s === store); });
-  // 高亮全部卡片的对应按钮
-  var pills = document.querySelectorAll('#ov-all-card .all-pill');
-  for (var i=0; i<pills.length; i++) { pills[i].className = pills[i].className.replace(' on','').replace('on',''); }
-  renderDataModal(view);
-  document.getElementById('data-modal').classList.remove('hide');
-}
-
-function setAllView(v) {
-  // 高亮按钮
-  var pills = document.querySelectorAll('#ov-all-card .all-pill');
-  for (var i=0; i<pills.length; i++) { pills[i].className = pills[i].className.replace(' on','').replace('on',''); }
-  event.target.className += ' on';
-  // 月/日弹窗初始化门店选择
-  if (v==='month'||v==='day'||v==='analysis') initModalStore();
-  // 弹窗显示
-  renderDataModal(v);
-  document.getElementById('data-modal').classList.remove('hide');
-}
-
-function closeDataModal() {
-  document.getElementById('data-modal').classList.add('hide');
-  singleStoreMode = '';
-}
-
-function renderAllCard() {
-  // 卡片只保留标题和按钮，数据通过弹窗展示
-  document.getElementById('all-nums').innerHTML = '';
-  document.getElementById('all-detail').innerHTML = '';
 }
 
 function renderDataModal(v) {
@@ -3558,13 +3414,15 @@ function renderAlerts() {
     rhtml += '<div style="margin-top:10px;margin-bottom:6px;font-size:12px;color:#8899b0"><span>🔄 门店震荡转正状态(亏后累计正)</span></div>';
     stores.forEach(function(s){
       var on = l2pStoreOn[s] !== false;
-      var w = getOscToWarn(s, sl2pRule.pct||3, 2, 'l2p');
+      var w = getOscToWarn(s, sl2pRule.pct||3, sl2pRule.accumCount||6, 'l2p');
       var icon = '⚪', cl = '#8899b0', status = '无信号';
       if (!on) { icon = '⏸'; cl = '#c0c9d4'; status = '已关闭'; }
       else if (w) {
         if (w.state === 'triggered') { icon = '💡'; cl = '#22c55e'; status = '已触发('+w.triggerDate+')'; }
-        else if (w.state === 'after_streak') { icon = '⏳'; cl = '#f59e0b'; status = '连续亏损'+w.streakDays+'天 累'+w.accum+'/'+w.accumCount+'正'; }
-        else if (w.state === 'normal' && w.streakRun > 0) { icon = '●'; cl = '#94a3b8'; status = '连续亏损'+w.streakRun+'/'+w.streakDays+'天'; }
+        else if (w.state === 'ready') { icon = '👀'; cl = '#f59e0b'; status = '连续亏损'+w.streakDays+'天，等首正'; }
+        else if (w.state === 'active') { icon = '⏳'; cl = '#f59e0b'; status = '连续亏损'+w.streakDays+'天，累'+w.accum+'/'+w.accumCount+'正'; }
+        else if (w.state === 'ended') { icon = '⚫'; cl = '#94a3b8'; status = '振荡已结束'; }
+        else if (w.state === 'between' && w.streakRun > 0) { icon = '●'; cl = '#94a3b8'; status = '连续亏损'+w.streakRun+'/'+w.streakDays+'天'; }
         else { icon = '⚪'; cl = '#8899b0'; status = '监测中'; }
       } else { icon = '⚪'; cl = '#8899b0'; status = '数据不足'; }
       rhtml += '<div class="rule-row" style="opacity:'+(on?'1':'.5')+'"><span class="r-name">'+icon+' '+s+'</span><span style="font-size:11px;color:'+cl+';flex:1">'+status+'</span><select onchange="l2pStoreOn[\''+s+'\']=this.value===\'1\';saveData();renderAlerts()" style="font-size:11px;padding:2px 4px;border-radius:6px;border:1px solid #cdd7e5"><option value="1"'+(on?' selected':'')+'>开</option><option value="0"'+(on?'':' selected')+'>关</option></select></div>';

@@ -194,11 +194,18 @@ async def auth_logout(request: Request):
 @app.get("/api/funds/data")
 async def get_funds_data(request: Request):
     await require_auth(request)
+    # 默认返回最近365天数据，避免全量超时
+    since = request.query_params.get("since", "")
+    if not since:
+        from datetime import datetime, timedelta
+        since = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
     conn = get_db()
     try:
         stores = [r["name"] for r in conn.execute("SELECT name FROM stores ORDER BY id").fetchall()]
         cats = [dict(r) for r in conn.execute("SELECT * FROM categories").fetchall()]
-        records = [dict(r) for r in conn.execute("SELECT * FROM records ORDER BY date, id").fetchall()]
+        records = [dict(r) for r in conn.execute(
+            "SELECT * FROM records WHERE date >= ? ORDER BY date, id", (since,)
+        ).fetchall()]
         rules = conn.execute("SELECT * FROM alert_rules").fetchall()
         alert_rules = []
         for r in rules:
@@ -713,6 +720,16 @@ async def api_draw_records_sync():
                 )
                 added += 1
         conn.commit()
+        # 同步传播：更新 order_history 中的 draw_number（如果之前为 0）
+        conn.execute("""
+            UPDATE order_history 
+            SET draw_number = (
+                SELECT draw_number FROM draw_records WHERE draw_records.date = order_history.action_date
+            )
+            WHERE action_date IN (SELECT date FROM draw_records)
+            AND (draw_number IS NULL OR draw_number = 0)
+        """)
+        conn.commit()
         return {"ok": True, "added": added, "total_warehouse": len(wh_rows)}
     finally:
         conn.close()
@@ -730,6 +747,11 @@ async def api_create_draw_record(request: Request):
     try:
         conn.execute("INSERT OR REPLACE INTO draw_records (date, day_seq, draw_number) VALUES (?,?,?)",
                      (date, day_seq, draw_number))
+        # 同步传播到 order_history
+        conn.execute(
+            "UPDATE order_history SET draw_number = ? WHERE action_date = ? AND (draw_number IS NULL OR draw_number = 0)",
+            (draw_number, date)
+        )
         conn.commit()
         return {"ok": True}
     finally:
@@ -921,6 +943,18 @@ def get_store_hit_rates(days=30):
         "days": days
     }
 
+# ── 算法优化日志 ──
+OPT_LOG_FILE = os.path.join(os.path.dirname(__file__), "optimization_log.json")
+
+@app.get("/api/simulate/optimization-log")
+async def api_optimization_log():
+    try:
+        with open(OPT_LOG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return JSONResponse(content={"ok": True, "log": data})
+    except FileNotFoundError:
+        return JSONResponse(content={"ok": True, "log": []})
+
 # ═══════════════ Static + SPA ═══════════════
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 if os.path.isdir(STATIC_DIR):
@@ -943,6 +977,7 @@ if os.path.isdir(STATIC_DIR):
                 "ETag": '"' + path + '-' + str(int(os.path.getmtime(fp))) + '"'
             })
         return FileResponse(os.path.join(STATIC_DIR, "funds-v2.html"))
+
 
 if __name__ == "__main__":
     import uvicorn
