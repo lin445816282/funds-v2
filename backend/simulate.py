@@ -1027,7 +1027,7 @@ def _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date):
     for n in range(1, 50):
         amt = num_amounts.get(n, 0)
         db.execute(
-            "INSERT INTO order_amounts (date, number, amount) VALUES (?,?,?)",
+            "INSERT OR REPLACE INTO order_amounts (date, number, amount) VALUES (?,?,?)",
             (action_date, n, amt)
         )
     db.commit()
@@ -1113,6 +1113,7 @@ def get_guide_history(limit=20, mode=None, offset=0):
     store_amounts = {}  # guide_date -> {store: amount}
     draws = {}  # guide_date -> draw_number（下注日的抽签，决定盈亏）
     eval_rankings = {}  # guide_date -> {store: rank}（用评估日的排位做命中判定）
+    store_numbers = {}  # date -> {store: {"positive": set(), "negative": set()}}  精准命中判定用
     if eval_dates:
         db = sqlite3.connect(FUNDS_DB)
         db.row_factory = sqlite3.Row
@@ -1160,6 +1161,31 @@ def get_guide_history(limit=20, mode=None, offset=0):
             draw_lookup[r["date"]] = r["draw_number"]
         for gd, ed in guide_to_eval.items():
             draws[gd] = draw_lookup.get(ed) or draw_lookup.get(gd)
+
+        # 加载号码数据用于精准命中判定
+        db3 = sqlite3.connect(FUNDS_DB)
+        db3.row_factory = sqlite3.Row
+        num_rows = db3.execute(
+            f"SELECT date, collection_id, threshold, numbers_json FROM order_numbers WHERE date IN ({placeholders})",
+            eval_dates
+        ).fetchall()
+        db3.close()
+        for nr in num_rows:
+            cid = nr["collection_id"]
+            store = COLLECTION_TO_STORE.get(cid)
+            if not store:
+                continue
+            th = nr["threshold"]
+            try:
+                nums = set(json.loads(nr["numbers_json"] or "[]"))
+            except:
+                nums = set()
+            ed2 = nr["date"]
+            store_numbers.setdefault(ed2, {}).setdefault(store, {})
+            if th == 25:
+                store_numbers[ed2][store]["positive"] = nums
+            elif th == 24:
+                store_numbers[ed2][store]["negative"] = nums
 
     # 反转成从旧到新，计算累计
     sorted_asc = list(reversed(deduped))
@@ -1212,12 +1238,18 @@ def get_guide_history(limit=20, mode=None, offset=0):
             max_cap = max(caps.values()) if caps else 0
             day_capital += max_cap
             if max_cap > 0:
-                # 命中由排位决定：正帮扶排≤25命中，反帮扶排>25命中
-                # ⚠️ 无抽签号时无法判断命中，标记为pending
+                # 命中判定：优先用实际号码匹配（精准），回退到排位判定
                 store_mode = store_mode_map.get(s, res.get("mode", "positive"))
                 rank = rankings.get(s)
                 draw_num = draws.get(r["date"])
-                if draw_num is not None and rank is not None:
+                sn = store_numbers.get(r["date"], {}).get(s, {})
+                target_nums = sn.get(store_mode, set())
+
+                if draw_num is not None and target_nums:
+                    # ✅ 精准判定：draw_number 是否在购买的号码中
+                    hit = draw_num in target_nums
+                elif draw_num is not None and rank is not None:
+                    # ⚠️ 回退：无号码数据时用排位判定
                     base_hit = (rank <= 25)
                     hit = base_hit if store_mode == "positive" else not base_hit
                 else:
@@ -1285,10 +1317,12 @@ def get_guide_history(limit=20, mode=None, offset=0):
     # 再反转回最新在前
     all_results.reverse()
     # 过滤：移除评估日无实际数据的指南（7-20排位不能用于7-20自己）
-    # 必须有 earned 或 lost 数据才算有效评估 ← 但保留最新日期（当天刚生成还没收入数据）
+    # 必须有 earned/lost 或有效的 store_details（hit不是None）才算有效评估
+    # ← 但保留最新日期（当天刚生成还没收入数据）
     latest_date = all_results[0]["date"] if all_results else None
     all_results = [r for r in all_results
                    if r["day_summary"].get("earned") or r["day_summary"].get("lost")
+                   or (r["day_summary"].get("store_details") and any(sd.get("hit") is not None for sd in r["day_summary"]["store_details"]))
                    or r["date"] == latest_date]
     return {"rows": all_results, "total": total}
 
@@ -1436,7 +1470,7 @@ def save_order_amounts(date, stores_data):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for n in range(1, 50):
         db.execute(
-            "INSERT INTO order_amounts (date, number, amount, created_at, updated_at) VALUES (?,?,?,?,?)",
+            "INSERT OR REPLACE INTO order_amounts (date, number, amount, created_at, updated_at) VALUES (?,?,?,?,?)",
              (action_date, n, num_amounts.get(n, 0), now, now)
         )
     db.commit()
@@ -1850,10 +1884,11 @@ def get_order_history(limit=30, offset=0):
             amounts = json.loads(r["amounts_json"] or "{}")
         except:
             pass
-        # 命中判定：正帮扶 ranking≤25 中，反帮扶 ranking>25 中
+        # 命中判定：优先用实际号码匹配（精准），回退到排位判定
         # 只有当draw_number>0（已开奖）时才计算盈亏，未开奖的统一置0
         has_draw = (r["draw_number"] or 0) > 0
-        store_hits = {}      # {store: hit} -- 旧版兼容，仅最后一次覆盖
+        draw_num = r["draw_number"] or 0
+        store_hits = {}      # {store: hit}
         store_hits_pos = {}  # {store: hit} -- 正帮扶命中
         store_hits_neg = {}  # {store: hit} -- 反帮扶命中
         own_profit = r["own_profit"]
@@ -1882,21 +1917,30 @@ def get_order_history(limit=30, offset=0):
             own_profit = own_profit or 0
             own_capital = own_capital or 0
             for s in stores:
-                rk = rankings.get(s["store"])
-                if rk is not None:
-                    if s.get("mode") == "negative":
-                        hit = rk > 25
-                        store_hits_neg[s["store"]] = hit
-                        neg_total += 1
-                        if hit:
-                            neg_hits += 1
+                store_name = s["store"]
+                store_mode = s.get("mode", "positive")
+                # 精准判定：draw_number 是否在各店购买的号码中
+                sm = store_num_map.get(r["action_date"], {}).get(store_name, {})
+                key = "top25" if store_mode == "positive" else "top24"
+                nums = sm.get(key, [])
+                if draw_num and draw_num > 0 and nums:
+                    hit = draw_num in nums
+                else:
+                    # 回退：无号码数据时用排位判定
+                    rk = rankings.get(store_name)
+                    if rk is not None:
+                        hit = (rk <= 25) if store_mode == "positive" else (rk > 25)
                     else:
-                        hit = rk <= 25
-                        store_hits_pos[s["store"]] = hit
-                        pos_total += 1
-                        if hit:
-                            pos_hits += 1
-                    store_hits[s["store"]] = hit
+                        hit = False
+                if store_mode == "negative":
+                    store_hits_neg[store_name] = hit
+                    neg_total += 1
+                    if hit: neg_hits += 1
+                else:
+                    store_hits_pos[store_name] = hit
+                    pos_total += 1
+                    if hit: pos_hits += 1
+                store_hits[store_name] = hit
 
         # 附加实际结果（来自 sim_guides — 用修正后的 guide_date）
         guide_date = row_guide_map.get(r["id"]) or r["history_date"] or r["date"]

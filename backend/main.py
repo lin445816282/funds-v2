@@ -238,24 +238,18 @@ async def post_funds_record(request: Request):
         note = data.get("note","")
         if not store or not date:
             return {"ok": False, "error": "store and date required"}
-        existing = conn.execute(
-            "SELECT id FROM records WHERE store=? AND date=? AND category=? AND amount=? AND note=?",
-            (store, date, category, amount, note)
-        ).fetchone()
-        if existing:
-            return {"ok": True, "id": existing["id"], "skipped": True}
-        new_id = str(data.get("id")) if data.get("id") is not None else None
-        if new_id is not None:
-            conn.execute(
-                "INSERT INTO records (id, store, date, category, amount, note) VALUES (?,?,?,?,?,?)",
-                (new_id, store, date, category, amount, note))
-        else:
-            conn.execute(
-                "INSERT INTO records (store, date, category, amount, note) VALUES (?,?,?,?,?)",
-                (store, date, category, amount, note))
-            new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        # 同名同日同类 → 覆盖（银行流水以后到数据为准）
+        conn.execute("""
+            INSERT INTO records (store, date, category, amount, note)
+            VALUES (?,?,?,?,?)
+            ON CONFLICT(date, store, category) DO UPDATE SET
+                amount = excluded.amount,
+                note = excluded.note
+        """, (store, date, category, amount, note))
+        new_id = conn.execute("SELECT id FROM records WHERE date=? AND store=? AND category=?", 
+                              (date, store, category)).fetchone()["id"]
         conn.commit()
-        log_op("新增", store, f"{store} {date} {category} {amount}", {"amount": amount, "date": date, "category": category})
+        log_op("新增/更新", store, f"{store} {date} {category} {amount}", {"amount": amount, "date": date, "category": category})
         return {"ok": True, "id": new_id}
     finally:
         conn.close()
@@ -826,38 +820,83 @@ async def api_store_hit_rates(days: int = 30):
     return await loop.run_in_executor(_executor, lambda: get_store_hit_rates(days))
 
 def get_store_hit_rates(days=30):
-    """计算正帮扶/负帮扶累计命中率（所有店汇总，按mode分开）"""
+    """计算正帮扶/负帮扶累计命中率（精准号码匹配）"""
     conn = get_db()
-    rows = conn.execute(
+    guides = conn.execute(
         "SELECT date, result FROM sim_guides WHERE result IS NOT NULL ORDER BY date DESC LIMIT ?",
         (days,)
     ).fetchall()
     conn.close()
 
-    if not rows:
+    if not guides:
         return {"positive": None, "negative": None, "threshold": 53.2}
+
+    dates = [g["date"] for g in guides]
+    ph = ",".join(["?" for _ in dates])
+
+    # 批量加载 draw_records
+    try:
+        wh = sqlite3.connect("/home/xiaolin/projects/number-warehouse/backend/data/warehouse.db")
+        wh.row_factory = sqlite3.Row
+        d_rows = wh.execute(
+            f"SELECT date, draw_number FROM analysis_daily WHERE project_id=19 AND date IN ({ph})", dates
+        ).fetchall()
+        wh.close()
+        draw_map = {r["date"]: r["draw_number"] for r in d_rows}
+    except:
+        draw_map = {}
+
+    # 批量加载 order_numbers
+    conn2 = get_db()
+    conn2.row_factory = sqlite3.Row
+    on_rows = conn2.execute(
+        f"SELECT date, collection_id, threshold, numbers_json FROM order_numbers WHERE date IN ({ph})", dates
+    ).fetchall()
+    conn2.close()
+
+    STORE_CID = {"一店":-23,"二店":-24,"三店":-25,"四店":-26,"五店":-28,"六店":-29,"集合14":14,"集合16":16}
+    CID_STORE = {v:k for k,v in STORE_CID.items()}
+
+    num_idx = {}  # date -> {store: {"正":set, "反":set}}
+    for nr in on_rows:
+        store = CID_STORE.get(nr["collection_id"])
+        if not store: continue
+        try: nums = set(json.loads(nr["numbers_json"] or "[]"))
+        except: nums = set()
+        dt = nr["date"]
+        key = "正" if nr["threshold"] == 25 else "反"
+        num_idx.setdefault(dt, {}).setdefault(store, {})[key] = nums
 
     pos_hits, pos_total = 0, 0
     neg_hits, neg_total = 0, 0
 
-    for row in rows:
+    for g in guides:
         try:
-            result = json.loads(row["result"]) if isinstance(row["result"], str) else row["result"]
-        except:
-            continue
+            result = json.loads(g["result"]) if isinstance(g["result"], str) else g["result"]
+        except: continue
+
+        dt = g["date"]
+        draw_num = draw_map.get(dt, 0)
+        if not draw_num: continue
+
         mode = result.get("mode", "")
         alg = result.get("algorithms", [{}])[0] if result.get("algorithms") else {}
         detail = alg.get("detail", [])
+        sn = num_idx.get(dt, {})
+
         for d in detail:
-            if d.get("selected"):
-                if mode == "positive":
-                    pos_total += 1
-                    if d.get("qualified"):
-                        pos_hits += 1
-                elif mode == "negative":
-                    neg_total += 1
-                    if d.get("qualified"):
-                        neg_hits += 1
+            if not d.get("selected"): continue
+            store = d["store"]
+            store_mode = d.get("mode", "正")
+            target = sn.get(store, {}).get(store_mode, set())
+            if not target: continue
+
+            if mode == "positive":
+                pos_total += 1
+                if draw_num in target: pos_hits += 1
+            elif mode == "negative":
+                neg_total += 1
+                if draw_num in target: neg_hits += 1
 
     return {
         "positive": {

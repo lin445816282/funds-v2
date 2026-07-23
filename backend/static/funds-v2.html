@@ -6152,7 +6152,7 @@ function loadOrderHistory(page) {
       // 命中率卡片
       var hr = data.hit_rate || {};
       var hh = '<div style="background:linear-gradient(135deg,#f0fdf4,#fef3c7);border-radius:12px;padding:12px;margin-bottom:12px">';
-      hh += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:12px;font-weight:700;color:#1e3a5f">🎯 命中率</span>';
+      hh += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:12px;font-weight:700;color:#1e3a5f">🎯 命中率 <span style="font-weight:400;color:#8899b0;font-size:10px">' + rangeStr + '</span></span>';
       hh += '<button onclick="event.stopPropagation();toggleHistoryRankings()" style="padding:3px 10px;border-radius:6px;border:1px solid #3b82f6;background:#eff6ff;color:#2563eb;font-size:11px;font-weight:600;cursor:pointer" @click.stop>📊 历史排位</button>';
       hh += '</div>';
       hh += '<table style="width:100%;font-size:11px;border-collapse:collapse">';
