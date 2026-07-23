@@ -523,6 +523,17 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     </div>
   </div>
 
+  <!-- 报表弹窗 -->
+  <div class="modal-mask hide" id="report-mask" onclick="closeReportModal()" style="z-index:201">
+    <div class="modal-box" onclick="event.stopPropagation()" style="width:94%;max-width:520px;max-height:85vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;position:sticky;top:0;background:#fff;z-index:2;padding-bottom:6px;border-bottom:1px solid #eef2f7">
+        <h3 style="margin:0;font-size:15px">📈 盈亏报表</h3>
+        <span onclick="closeReportModal()" style="font-size:22px;color:#8899b0;cursor:pointer;line-height:1">&times;</span>
+      </div>
+      <div id="report-body"></div>
+    </div>
+  </div>
+
   <!-- 数据详情弹窗 -->
   <div class="modal-mask hide" id="data-modal" onclick="closeDataModal()">
     <div class="modal-box" onclick="event.stopPropagation()" style="width:90%;max-width:400px;max-height:80vh;overflow-y:auto">
@@ -6278,8 +6289,10 @@ function loadOrderHistory(page) {
       var hr = data.hit_rate || {};
       var hh = '<div style="background:linear-gradient(135deg,#f0fdf4,#fef3c7);border-radius:12px;padding:12px;margin-bottom:12px">';
       hh += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:12px;font-weight:700;color:#1e3a5f">🎯 命中率 <span style="font-weight:400;color:#8899b0;font-size:10px">' + rangeStr + '</span></span>';
+      hh += '<div style="display:flex;gap:6px">';
       hh += '<button onclick="event.stopPropagation();toggleHistoryRankings()" style="padding:3px 10px;border-radius:6px;border:1px solid #3b82f6;background:#eff6ff;color:#2563eb;font-size:11px;font-weight:600;cursor:pointer" @click.stop>📊 历史排位</button>';
-      hh += '</div>';
+      hh += '<button onclick="event.stopPropagation();toggleReportModal()" style="padding:3px 10px;border-radius:6px;border:1px solid #22c55e;background:#f0fdf4;color:#16a34a;font-size:11px;font-weight:600;cursor:pointer" @click.stop>📈 报表</button>';
+      hh += '</div></div>';
       hh += '<table style="width:100%;font-size:11px;border-collapse:collapse">';
       hh += '<tr><td></td><td style="text-align:center;color:#2563eb;font-weight:600">🟢 正帮扶</td><td style="text-align:center;color:#dc2626;font-weight:600">🔴 反帮扶</td></tr>';
       var pr = hr.positive || {};
@@ -6707,6 +6720,152 @@ function applyRankFilter() {
 
 function closeRankingsPopup() {
   document.getElementById('rankings-mask').classList.add('hide');
+}
+
+// ═══════ 报表功能 ═══════
+function toggleReportModal() {
+  var mask = document.getElementById('report-mask');
+  if (!mask.classList.contains('hide')) {
+    closeReportModal();
+    return;
+  }
+  mask.classList.remove('hide');
+  setTimeout(function() { buildReport(); }, 50);
+}
+
+function closeReportModal() {
+  document.getElementById('report-mask').classList.add('hide');
+}
+
+function buildReport() {
+  var rows = window._rankAllRows || [];
+  if (!rows.length) {
+    fetch(API_BASE + '/api/simulate/order-history?limit=300')
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        window._rankAllRows = data.rows || [];
+        renderReportBody(window._rankAllRows);
+      })
+      .catch(function(e){
+        document.getElementById('report-body').innerHTML = '<div style="color:#dc2626;text-align:center;padding:12px">加载失败: '+e.message+'</div>';
+      });
+    return;
+  }
+  renderReportBody(rows);
+}
+
+function renderReportBody(rows) {
+  // 只取已开奖 & own_profit!==0 的记录
+  var valid = [];
+  rows.forEach(function(r){
+    if ((r.draw_number||0)>0 && r.own_profit !== 0) valid.push(r);
+  });
+  valid.sort(function(a,b){ return a.action_date < b.action_date ? -1 : 1; });
+
+  var periods = [
+    {label:'近1个月', months:1},
+    {label:'近2个月', months:2},
+    {label:'近3个月', months:3},
+    {label:'近6个月', months:6}
+  ];
+
+  var now = new Date();
+  function monthsAgo(m) { var d=new Date(now); d.setMonth(d.getMonth()-m); return d.toISOString().substr(0,10); }
+
+  function compute(label, months) {
+    var cutoff = monthsAgo(months);
+    var subset = valid.filter(function(r){ return r.action_date >= cutoff; });
+    if (!subset.length) return null;
+
+    var totalProfit=0, totalCapital=0, winDays=0, lossDays=0;
+    var maxWin=-Infinity, maxLoss=Infinity;
+    var curWinStreak=0, curLossStreak=0, bestWinStreak=0, bestLossStreak=0;
+
+    subset.forEach(function(r){
+      var pf = r.own_profit || 0;
+      totalProfit += pf;
+      totalCapital += (r.own_capital || 0);
+      if (pf > 0) { winDays++; curWinStreak++; curLossStreak=0; if(curWinStreak>bestWinStreak) bestWinStreak=curWinStreak; }
+      else if (pf < 0) { lossDays++; curLossStreak++; curWinStreak=0; if(curLossStreak>bestLossStreak) bestLossStreak=curLossStreak; }
+      if (pf > maxWin) maxWin = pf;
+      if (pf < maxLoss) maxLoss = pf;
+    });
+
+    return {
+      days: subset.length,
+      totalProfit: totalProfit,
+      totalCapital: totalCapital,
+      winDays: winDays,
+      lossDays: lossDays,
+      winRate: subset.length ? (winDays/subset.length*100).toFixed(0) : 0,
+      bestWinStreak: bestWinStreak,
+      bestLossStreak: bestLossStreak,
+      maxWin: maxWin === -Infinity ? 0 : maxWin,
+      maxLoss: maxLoss === Infinity ? 0 : maxLoss,
+      avgProfit: subset.length ? (totalProfit/subset.length) : 0
+    };
+  }
+
+  var results = [];
+  periods.forEach(function(p){
+    var res = compute(p.label, p.months);
+    results.push({label:p.label, data:res});
+  });
+
+  var h = '';
+  // 表头
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:1px;background:#eef2f7;border-radius:10px;overflow:hidden;font-size:10px;margin-bottom:12px">';
+  h += '<div style="background:#f8fafc;padding:6px 4px;font-weight:600;color:#8899b0;text-align:center">时段</div>';
+  h += '<div style="background:#f8fafc;padding:6px 4px;font-weight:600;color:#8899b0;text-align:center">交易天</div>';
+  h += '<div style="background:#f8fafc;padding:6px 4px;font-weight:600;color:#8899b0;text-align:center">总盈亏</div>';
+  h += '<div style="background:#f8fafc;padding:6px 4px;font-weight:600;color:#8899b0;text-align:center">盈/亏天</div>';
+  h += '<div style="background:#f8fafc;padding:6px 4px;font-weight:600;color:#8899b0;text-align:center">最长连胜/连亏</div>';
+
+  results.forEach(function(item){
+    var d = item.data;
+    if (!d) {
+      h += '<div style="background:#fff;padding:6px 4px;text-align:center;font-weight:600;color:#1e3a5f">'+item.label+'</div>';
+      h += '<div style="background:#fff;padding:6px 4px;text-align:center;color:#8899b0" colspan="4">暂无数据</div>';
+      return;
+    }
+    var pfColor = d.totalProfit >= 0 ? '#16a34a' : '#dc2626';
+    var pfSign = d.totalProfit >= 0 ? '+' : '';
+    h += '<div style="background:#fff;padding:6px 4px;text-align:center;font-weight:600;color:#1e3a5f">'+item.label+'</div>';
+    h += '<div style="background:#fff;padding:6px 4px;text-align:center;color:#3b82f6;font-weight:600">'+d.days+'</div>';
+    h += '<div style="background:#fff;padding:6px 4px;text-align:center;color:'+pfColor+';font-weight:700">'+pfSign+d.totalProfit.toFixed(0)+'</div>';
+    h += '<div style="background:#fff;padding:6px 4px;text-align:center"><span style="color:#16a34a;font-weight:600">'+d.winDays+'</span><span style="color:#8899b0">/</span><span style="color:#dc2626;font-weight:600">'+d.lossDays+'</span></div>';
+    h += '<div style="background:#fff;padding:6px 4px;text-align:center"><span style="color:#16a34a;font-weight:600">'+d.bestWinStreak+'</span><span style="color:#8899b0">/</span><span style="color:#dc2626;font-weight:600">'+d.bestLossStreak+'</span></div>';
+  });
+  h += '</div>';
+
+  // 详细指标卡片
+  results.forEach(function(item){
+    var d = item.data;
+    if (!d) return;
+    var pfColor = d.totalProfit >= 0 ? '#16a34a' : '#dc2626';
+    var pfSign = d.totalProfit >= 0 ? '+' : '';
+    h += '<div style="background:#fff;border:1px solid #eef2f7;border-radius:10px;padding:10px;margin-bottom:10px">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+    h += '<span style="font-size:12px;font-weight:700;color:#1e3a5f">'+item.label+'</span>';
+    h += '<span style="font-size:14px;font-weight:800;color:'+pfColor+'">'+pfSign+d.totalProfit.toFixed(0)+'</span>';
+    h += '</div>';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:10px">';
+    // 盈天数
+    h += '<div style="text-align:center;background:#f0fdf4;border-radius:6px;padding:5px"><div style="color:#8899b0">盈天数</div><div style="font-size:14px;font-weight:700;color:#16a34a">'+d.winDays+'</div></div>';
+    // 亏天数
+    h += '<div style="text-align:center;background:#fef2f2;border-radius:6px;padding:5px"><div style="color:#8899b0">亏天数</div><div style="font-size:14px;font-weight:700;color:#dc2626">'+d.lossDays+'</div></div>';
+    // 胜率
+    h += '<div style="text-align:center;background:#eff6ff;border-radius:6px;padding:5px"><div style="color:#8899b0">胜率</div><div style="font-size:14px;font-weight:700;color:#3b82f6">'+d.winRate+'%</div></div>';
+    // 最长连胜
+    h += '<div style="text-align:center;background:#f0fdf4;border-radius:6px;padding:5px;border:1px solid #dcfce7"><div style="color:#8899b0">最长连胜</div><div style="font-size:14px;font-weight:700;color:#16a34a">'+d.bestWinStreak+'<span style="font-size:10px;font-weight:400">天</span></div></div>';
+    // 最长连亏
+    h += '<div style="text-align:center;background:#fef2f2;border-radius:6px;padding:5px;border:1px solid #fee2e2"><div style="color:#8899b0">最长连亏</div><div style="font-size:14px;font-weight:700;color:#dc2626">'+d.bestLossStreak+'<span style="font-size:10px;font-weight:400">天</span></div></div>';
+    // 最大单日
+    h += '<div style="text-align:center;background:#fffbeb;border-radius:6px;padding:5px"><div style="color:#8899b0">最大单日盈/亏</div><div style="font-size:12px;font-weight:700"><span style="color:#16a34a">+'+d.maxWin.toFixed(0)+'</span><span style="color:#8899b0">/</span><span style="color:#dc2626">'+d.maxLoss.toFixed(0)+'</span></div></div>';
+    h += '</div></div>';
+  });
+
+  document.getElementById('report-body').innerHTML = h;
 }
 
 function loadGuideHistory() {
