@@ -1727,22 +1727,24 @@ function getLossWarnings() {
   var warnings = [];
   stores.forEach(function(s){
     if (!warnStoreOn[s]) return;
-    var dayMap = {};
+    // 按排位判断：rank > 25 为亏
+    var rankMap = {};
     records.forEach(function(r){
       if (r.store !== s) return;
-      dayMap[r.date] = (dayMap[r.date]||0) + r.amount;
+      if (r.category !== 'cat_1783487972049') return;
+      rankMap[r.date] = r.amount;
     });
-    var dates = Object.keys(dayMap).sort();
+    var dates = Object.keys(rankMap).sort();
     if (dates.length < 2) return;
     var longestLoss = 0, curRun = 0;
     for (var di=0; di<dates.length; di++) {
-      if (dayMap[dates[di]] < 0) { curRun++; if (curRun > longestLoss) longestLoss = curRun; }
+      if (rankMap[dates[di]] > 25) { curRun++; if (curRun > longestLoss) longestLoss = curRun; }
       else curRun = 0;
     }
     if (longestLoss < 2) return;
     var curLoss = 0;
     for (var di2=dates.length-1; di2>=0; di2--) {
-      if (dayMap[dates[di2]] < 0) curLoss++;
+      if (rankMap[dates[di2]] > 25) curLoss++;
       else break;
     }
     if (curLoss === 0) return;
@@ -1760,22 +1762,31 @@ function getComboWarning() {
   var sel = [];
   for (var s2 in warnComboStores) { if (warnComboStores[s2]) sel.push(s2); }
   if (sel.length < 2) return null;
-  var dayMap = {};
+  // 按排位：每天所有组合门店 rank > 25 才算组合亏损日
+  var dayRank = {};
   records.forEach(function(r){
-    if (warnComboStores[r.store]) dayMap[r.date] = (dayMap[r.date]||0) + r.amount;
+    if (!warnComboStores[r.store]) return;
+    if (r.category !== 'cat_1783487972049') return;
+    dayRank[r.date] = dayRank[r.date] || {};
+    dayRank[r.date][r.store] = r.amount;
   });
-  var dates = Object.keys(dayMap).sort();
+  var dates = Object.keys(dayRank).sort();
   if (dates.length < 2) return null;
   var longestLoss = 0, curRun = 0;
   for (var di=0; di<dates.length; di++) {
-    if (dayMap[dates[di]] < 0) { curRun++; if (curRun > longestLoss) longestLoss = curRun; }
+    var storesOnDay = dayRank[dates[di]];
+    var allLosing = true;
+    for (var s3 in storesOnDay) { if (storesOnDay[s3] <= 25) { allLosing = false; break; } }
+    if (allLosing) { curRun++; if (curRun > longestLoss) longestLoss = curRun; }
     else curRun = 0;
   }
   if (longestLoss < 2) return null;
   var curLoss = 0;
   for (var di2=dates.length-1; di2>=0; di2--) {
-    if (dayMap[dates[di2]] < 0) curLoss++;
-    else break;
+    var sod2 = dayRank[dates[di2]];
+    var allL = true;
+    for (var s4 in sod2) { if (sod2[s4] <= 25) { allL = false; break; } }
+    if (allL) curLoss++; else break;
   }
   if (curLoss === 0) return null;
   var gap = longestLoss - curLoss;
@@ -1790,22 +1801,31 @@ function getComboProfit() {
   var sel = [];
   for (var s2 in warnComboStores) { if (warnComboStores[s2]) sel.push(s2); }
   if (sel.length < 2) return null;
-  var dayMap = {};
+  // 按排位：每天所有组合门店 rank <= 25 才算组合盈利日
+  var dayRank = {};
   records.forEach(function(r){
-    if (warnComboStores[r.store]) dayMap[r.date] = (dayMap[r.date]||0) + r.amount;
+    if (!warnComboStores[r.store]) return;
+    if (r.category !== 'cat_1783487972049') return;
+    dayRank[r.date] = dayRank[r.date] || {};
+    dayRank[r.date][r.store] = r.amount;
   });
-  var dates = Object.keys(dayMap).sort();
+  var dates = Object.keys(dayRank).sort();
   if (dates.length < 2) return null;
   var longestProfit = 0, curRun = 0;
   for (var di=0; di<dates.length; di++) {
-    if (dayMap[dates[di]] > 0) { curRun++; if (curRun > longestProfit) longestProfit = curRun; }
+    var storesOnDay = dayRank[dates[di]];
+    var allWinning = true;
+    for (var s3 in storesOnDay) { if (storesOnDay[s3] > 25) { allWinning = false; break; } }
+    if (allWinning) { curRun++; if (curRun > longestProfit) longestProfit = curRun; }
     else curRun = 0;
   }
   if (longestProfit < 2) return null;
   var curProfit = 0;
   for (var di2=dates.length-1; di2>=0; di2--) {
-    if (dayMap[dates[di2]] > 0) curProfit++;
-    else break;
+    var sod2 = dayRank[dates[di2]];
+    var allW = true;
+    for (var s4 in sod2) { if (sod2[s4] > 25) { allW = false; break; } }
+    if (allW) curProfit++; else break;
   }
   if (curProfit === 0) return null;
   return {cur:curProfit, max:longestProfit, stores:sel.join('+')};
@@ -3362,13 +3382,13 @@ function renderAlerts() {
     rhtml += '<div style="margin-bottom:6px;font-size:12px;color:#8899b0;display:flex;align-items:center;justify-content:space-between"><span>📊 门店连续亏损状态</span><span style="font-size:10px">关闭的不参与预警</span></div>';
     stores.forEach(function(s){
       var on = warnStoreOn[s] !== false;
-      var dayMap = {};
-      records.forEach(function(r){ if (r.store === s) dayMap[r.date] = (dayMap[r.date]||0) + r.amount; });
-      var dates = Object.keys(dayMap).sort();
+      var rankMap = {};
+      records.forEach(function(r){ if (r.store === s && r.category === 'cat_1783487972049') rankMap[r.date] = r.amount; });
+      var dates = Object.keys(rankMap).sort();
       var longestLoss = 0, curRun = 0, curLoss = 0;
       if (dates.length >= 2) {
-        for (var di=0; di<dates.length; di++) { if (dayMap[dates[di]] < 0) { curRun++; if (curRun > longestLoss) longestLoss = curRun; } else curRun = 0; }
-        for (var di2=dates.length-1; di2>=0; di2--) { if (dayMap[dates[di2]] < 0) curLoss++; else break; }
+        for (var di=0; di<dates.length; di++) { if (rankMap[dates[di]] > 25) { curRun++; if (curRun > longestLoss) longestLoss = curRun; } else curRun = 0; }
+        for (var di2=dates.length-1; di2>=0; di2--) { if (rankMap[dates[di2]] > 25) curLoss++; else break; }
       }
       var gap = longestLoss - curLoss, icon, cl;
       if (!on) { icon = '⏸'; cl = '#c0c9d4'; }
@@ -3391,13 +3411,13 @@ function renderAlerts() {
     rhtml += '<div style="margin-top:10px;margin-bottom:6px;font-size:12px;color:#8899b0"><span>📈 门店连续赚钱状态</span></div>';
     stores.forEach(function(s){
       var on = profitStoreOn[s] !== false;
-      var dayMap = {};
-      records.forEach(function(r){ if (r.store === s) dayMap[r.date] = (dayMap[r.date]||0) + r.amount; });
-      var dates = Object.keys(dayMap).sort();
+      var rankMap = {};
+      records.forEach(function(r){ if (r.store === s && r.category === 'cat_1783487972049') rankMap[r.date] = r.amount; });
+      var dates = Object.keys(rankMap).sort();
       var longestProfit = 0, curRun = 0, curProfit = 0;
       if (dates.length >= 2) {
-        for (var di=0; di<dates.length; di++) { if (dayMap[dates[di]] > 0) { curRun++; if (curRun > longestProfit) longestProfit = curRun; } else curRun = 0; }
-        for (var di2=dates.length-1; di2>=0; di2--) { if (dayMap[dates[di2]] > 0) curProfit++; else break; }
+        for (var di=0; di<dates.length; di++) { if (rankMap[dates[di]] <= 25) { curRun++; if (curRun > longestProfit) longestProfit = curRun; } else curRun = 0; }
+        for (var di2=dates.length-1; di2>=0; di2--) { if (rankMap[dates[di2]] <= 25) curProfit++; else break; }
       }
       var icon, cl;
       if (!on) { icon = '⏸'; cl = '#c0c9d4'; }
