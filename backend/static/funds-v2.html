@@ -2468,6 +2468,11 @@ function renderOverview() {
   renderAllCard();
 }
 
+function renderAllCard() {
+  document.getElementById('all-nums').innerHTML = '';
+  document.getElementById('all-detail').innerHTML = '';
+}
+
 function buildPills() {
   document.getElementById('pb-year').textContent = ovYear+'年';
   document.getElementById('pb-month').textContent = ovMonth+'月';
