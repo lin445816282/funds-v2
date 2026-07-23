@@ -1726,7 +1726,7 @@ function saveEdit() {
 function getLossWarnings() {
   var warnings = [];
   stores.forEach(function(s){
-    if (!warnStoreOn[s]) return;
+    if (warnStoreOn[s] === false) return;
     // 按排位判断：rank > 25 为亏
     var rankMap = {};
     records.forEach(function(r){
