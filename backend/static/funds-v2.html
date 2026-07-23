@@ -3305,6 +3305,22 @@ function renderAlerts() {
     });
   }
 
+  // 门店连盈通知
+  var spRule2 = null;
+  for (var ai2b=0; ai2b<alertRules.length; ai2b++) { if (alertRules[ai2b].type === 'store_profit') { spRule2 = alertRules[ai2b]; break; } }
+  if (spRule2 && spRule2.on) {
+    stores.forEach(function(s){
+      if (profitStoreOn[s] === false) return;
+      var rankMap = {};
+      records.forEach(function(r){ if (r.store === s && r.category === 'cat_1783487972049') rankMap[r.date] = r.amount; });
+      var dates = Object.keys(rankMap).sort();
+      if (dates.length < 2) return;
+      var curProfit = 0;
+      for (var di2=dates.length-1; di2>=0; di2--) { if (rankMap[dates[di2]] <= 25) curProfit++; else break; }
+      if (curProfit >= 3) alerts.push({level:'green', title:s+' 连续赚钱', detail:'当前连盈'+curProfit+'天 🎉'});
+    });
+  }
+
   // 门店震荡转正预警
   var sl2pRule = null;
   for (var ai7=0; ai7<alertRules.length; ai7++) { if (alertRules[ai7].type === 'store_l2p') { sl2pRule = alertRules[ai7]; break; } }
