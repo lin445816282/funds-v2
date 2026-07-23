@@ -1966,6 +1966,53 @@ function getComboOscToWarn(streakDays, accumCount, direction) {
   return { stores: sel.join('+'), triggerDate: triggerDate, streakDays: streakDays, accumCount: accumCount, direction: direction, gap: gap, state: state, streakRun: streakRun, accum: accum };
 }
 
+// ── 最长连续亏损计算（用于下单记录卡片）──
+function computeLongestLossStreak(rows) {
+  // rows 已按 date DESC 排序，需反转为 ASC
+  var sorted = rows.slice().reverse();
+  var valid = sorted.filter(function(r) { return (r.draw_number || 0) > 0; });
+  if (valid.length < 3) return null;
+
+  function streakInfo(modeFilter) {
+    // 按天看：当天有该 mode 门店 + own_profit < 0 = 亏损
+    var best = { days: 0, start: '', end: '' };
+    var cur = { days: 0, start: '' };
+    valid.forEach(function(r) {
+      var stores = r.stores || [];
+      var hasMode = modeFilter
+        ? stores.some(function(s) { return s.mode === modeFilter && (s.capital || 0) > 0; })
+        : true;
+      if (!hasMode) { cur = { days: 0, start: '' }; return; }
+      var isLoss = (r.own_profit || 0) < 0;
+      if (isLoss) {
+        if (cur.days === 0) cur.start = r.action_date || r.date;
+        cur.days++;
+        if (cur.days > best.days) {
+          best.days = cur.days;
+          best.start = cur.start;
+          best.end = r.action_date || r.date;
+        }
+      } else {
+        cur = { days: 0, start: '' };
+      }
+    });
+    if (best.days < 2) return null;
+    // 日期格式化：MM-DD
+    var s = best.start.substr(5);
+    var e = best.end.substr(5);
+    return { days: best.days, range: s === e ? s : s + '→' + e };
+  }
+
+  var result = {};
+  var all = streakInfo(null);
+  if (all) result.all = all;
+  var pos = streakInfo('positive');
+  if (pos) result.positive = pos;
+  var neg = streakInfo('negative');
+  if (neg) result.negative = neg;
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 function toggleYearStore(s) {
   if (singleStoreMode && s !== singleStoreMode) return;
   yearStoreSel[s] = !yearStoreSel[s];
@@ -6173,6 +6220,43 @@ function loadOrderHistory(page) {
       summary += '<tr><td>总计</td><td colspan="2" style="text-align:center;font-weight:700;color:#1e3a5f">' + totalCap.toLocaleString() + '</td></tr>';
       summary += '</table></div>';
 
+      // ── 最长连续亏损卡片 ──
+      var lossInfo = computeLongestLossStreak(rows);
+      var lossCard = '';
+      if (lossInfo) {
+        lossCard += '<div style="background:linear-gradient(135deg,#fef2f2,#fff7ed);border-radius:12px;padding:12px;margin-bottom:12px">';
+        lossCard += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+        lossCard += '<span style="font-size:12px;font-weight:700;color:#dc2626">📉 最长连续亏损</span>';
+        lossCard += '<span style="font-size:9px;color:#8899b0;font-weight:400">' + rangeStr + '</span>';
+        lossCard += '</div>';
+        lossCard += '<div style="display:flex;gap:8px;justify-content:space-around">';
+        // 总体
+        if (lossInfo.all) {
+          lossCard += '<div style="flex:1;text-align:center;background:rgba(255,255,255,.6);border-radius:8px;padding:8px">';
+          lossCard += '<div style="font-size:9px;color:#8899b0">全模式</div>';
+          lossCard += '<div style="font-size:28px;font-weight:800;color:#dc2626">' + lossInfo.all.days + '<span style="font-size:12px">天</span></div>';
+          lossCard += '<div style="font-size:10px;color:#3a5070;margin-top:2px">' + lossInfo.all.range + '</div>';
+          lossCard += '</div>';
+        }
+        // 正帮扶
+        if (lossInfo.positive) {
+          lossCard += '<div style="flex:1;text-align:center;background:rgba(255,255,255,.6);border-radius:8px;padding:8px">';
+          lossCard += '<div style="font-size:9px;color:#2563eb">🟢 正帮扶</div>';
+          lossCard += '<div style="font-size:28px;font-weight:800;color:#dc2626">' + lossInfo.positive.days + '<span style="font-size:12px">天</span></div>';
+          lossCard += '<div style="font-size:10px;color:#3a5070;margin-top:2px">' + lossInfo.positive.range + '</div>';
+          lossCard += '</div>';
+        }
+        // 反帮扶
+        if (lossInfo.negative) {
+          lossCard += '<div style="flex:1;text-align:center;background:rgba(255,255,255,.6);border-radius:8px;padding:8px">';
+          lossCard += '<div style="font-size:9px;color:#dc2626">🔴 反帮扶</div>';
+          lossCard += '<div style="font-size:28px;font-weight:800;color:#dc2626">' + lossInfo.negative.days + '<span style="font-size:12px">天</span></div>';
+          lossCard += '<div style="font-size:10px;color:#3a5070;margin-top:2px">' + lossInfo.negative.range + '</div>';
+          lossCard += '</div>';
+        }
+        lossCard += '</div></div>';
+      }
+
       // 缩写函数
       function abbr(store) {
         var map = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','集合14':'14','集合16':'16'};
@@ -6373,7 +6457,7 @@ function loadOrderHistory(page) {
         }
         pager += '</div>';
       }
-      container.innerHTML = hh + summary + h + pager;
+      container.innerHTML = hh + summary + lossCard + h + pager;
     })
     .catch(function(e) {
       container.innerHTML = '<div style="color:#e53e3e;text-align:center">加载失败: ' + e.message + '</div>';
