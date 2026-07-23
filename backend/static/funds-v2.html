@@ -1973,44 +1973,122 @@ function computeLongestLossStreak(rows) {
   var valid = sorted.filter(function(r) { return (r.draw_number || 0) > 0; });
   if (valid.length < 3) return null;
 
-  function streakInfo(modeFilter) {
-    // 按天看：当天有该 mode 门店 + own_profit < 0 = 亏损
-    var best = { days: 0, start: '', end: '' };
-    var cur = { days: 0, start: '' };
-    valid.forEach(function(r) {
-      var stores = r.stores || [];
-      var hasMode = modeFilter
-        ? stores.some(function(s) { return s.mode === modeFilter && (s.capital || 0) > 0; })
-        : true;
-      if (!hasMode) { cur = { days: 0, start: '' }; return; }
-      var isLoss = (r.own_profit || 0) < 0;
-      if (isLoss) {
-        if (cur.days === 0) cur.start = r.action_date || r.date;
-        cur.days++;
-        if (cur.days > best.days) {
-          best.days = cur.days;
-          best.start = cur.start;
-          best.end = r.action_date || r.date;
-        }
-      } else {
-        cur = { days: 0, start: '' };
+  var best = { days: 0, start: '', end: '' };
+  var cur = { days: 0, start: '' };
+  valid.forEach(function(r) {
+    var isLoss = (r.own_profit || 0) < 0;
+    if (isLoss) {
+      if (cur.days === 0) cur.start = r.action_date || r.date;
+      cur.days++;
+      if (cur.days > best.days) {
+        best.days = cur.days;
+        best.start = cur.start;
+        best.end = r.action_date || r.date;
       }
-    });
-    if (best.days < 2) return null;
-    // 日期格式化：MM-DD
-    var s = best.start.substr(5);
-    var e = best.end.substr(5);
-    return { days: best.days, range: s === e ? s : s + '→' + e };
+    } else {
+      cur = { days: 0, start: '' };
+    }
+  });
+  if (best.days < 2) return null;
+  var s = best.start.substr(5);
+  var e = best.end.substr(5);
+  return { all: { days: best.days, range: s === e ? s : s + '→' + e } };
+}
+
+// ── 收集所有亏损序列（排序取 topN）──
+function getAllLossStreaks(modeFilter) {
+  var rows = window._lossStreakFilteredRows || [];
+  var sorted = rows.slice().reverse();
+  var valid = sorted.filter(function(r) { return (r.draw_number || 0) > 0; });
+  if (valid.length < 2) return [];
+
+  var streaks = [];
+  var cur = { days: 0, start: '' };
+  valid.forEach(function(r) {
+    var stores = r.stores || [];
+    var hasMode = modeFilter
+      ? stores.some(function(s) { return s.mode === modeFilter && (s.capital || 0) > 0; })
+      : true;
+    if (!hasMode) { cur = { days: 0, start: '' }; return; }
+    var isLoss = (r.own_profit || 0) < 0;
+    if (isLoss) {
+      if (cur.days === 0) cur.start = r.action_date || r.date;
+      cur.days++;
+    } else {
+      if (cur.days >= 2) {
+        var s = cur.start.substr(5);
+        var e = (r.action_date || r.date).substr ? (r.action_date || r.date).substr(5) : '';
+        streaks.push({ days: cur.days, range: s + '→' + (cur.days > 1 ? e : s) });
+      }
+      cur = { days: 0, start: '' };
+    }
+  });
+  // 收尾最后一段
+  if (cur.days >= 2) {
+    var s = cur.start.substr(5);
+    streaks.push({ days: cur.days, range: s + '→' + s });
+  }
+  streaks.sort(function(a, b) { return b.days - a.days; });
+  return streaks.slice(0, 5);
+}
+
+// ── 弹框显示 top5 最长亏损 ──
+function showLossStreakDetail(mode, label) {
+  var streaks = getAllLossStreaks(mode);
+  if (!streaks.length) { alert('无连续亏损数据'); return; }
+
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:700;background:rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:14px;padding:20px 16px 16px;max-width:360px;width:90%;max-height:70vh;overflow-y:auto;box-shadow:0 8px 30px rgba(0,0,0,.15)';
+
+  var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
+  html += '<h3 style="margin:0;font-size:16px;color:#dc2626">📉 ' + label + ' · 最长亏损 TOP5</h3>';
+  html += '<button onclick="this.closest(\'div\').parentElement.remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#8899b0;padding:0 4px">✕</button>';
+  html += '</div>';
+
+  streaks.forEach(function(s, i) {
+    var medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '  ';
+    html += '<div style="display:flex;align-items:center;padding:10px 12px;margin-bottom:6px;background:' + (i===0?'#fef2f2':i===1?'#fff7ed':'#f8fafc') + ';border-radius:10px;border:1px solid ' + (i===0?'#fecaca':'#e5e7eb') + '">';
+    html += '<span style="font-size:18px;margin-right:10px">' + medal + '</span>';
+    html += '<div style="flex:1"><div style="font-size:24px;font-weight:800;color:#dc2626">' + s.days + '<span style="font-size:12px">天</span></div>';
+    html += '<div style="font-size:10px;color:#5a6b85">' + s.range + '</div></div>';
+    html += '</div>';
+  });
+  html += '<button onclick="this.closest(\'div\').parentElement.remove()" style="width:100%;margin-top:8px;padding:10px;border-radius:10px;border:none;background:#f1f5f9;color:#3a5070;font-size:14px;cursor:pointer">关闭</button>';
+
+  box.innerHTML = html;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+// ── 构建最长亏损 HTML 卡片 ──
+function buildLossStreakCard(rows, dateFrom, dateTo) {
+  var info = computeLongestLossStreak(rows);
+  if (!info) return '';
+
+  var ds = dateFrom.substr(5);
+  var de = dateTo.substr(5);
+  var rangeStr = ds === de ? ds : ds + ' → ' + de;
+
+  var h = '<div style="background:linear-gradient(135deg,#fef2f2,#fff7ed);border-radius:12px;padding:12px;margin-bottom:10px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<span style="font-size:13px;font-weight:700;color:#dc2626">📉 最长连续亏损 <span style="font-size:9px;color:#8899b0;font-weight:400">(点击查看TOP5)</span></span>';
+  h += '<span style="font-size:9px;color:#8899b0;font-weight:400">' + rangeStr + '</span>';
+  h += '</div>';
+
+  if (info.all) {
+    h += '<div onclick="event.stopPropagation();showLossStreakDetail(null,\'全模式\')" style="text-align:center;background:rgba(255,255,255,.65);border-radius:8px;padding:10px;cursor:pointer;transition:transform .15s" onmouseover="this.style.transform=\'scale(1.02)\'" onmouseout="this.style.transform=\'scale(1)\'">';
+    h += '<div style="font-size:10px;color:#8899b0">全模式</div>';
+    h += '<div style="font-size:28px;font-weight:800;color:#dc2626">' + info.all.days + '<span style="font-size:12px"> 天</span></div>';
+    h += '<div style="font-size:10px;color:#5a6b85;margin-top:3px">' + info.all.range + '</div>';
+    h += '</div>';
   }
 
-  var result = {};
-  var all = streakInfo(null);
-  if (all) result.all = all;
-  var pos = streakInfo('positive');
-  if (pos) result.positive = pos;
-  var neg = streakInfo('negative');
-  if (neg) result.negative = neg;
-  return Object.keys(result).length > 0 ? result : null;
+  h += '</div>';
+  return h;
 }
 
 function toggleYearStore(s) {
@@ -6220,43 +6298,6 @@ function loadOrderHistory(page) {
       summary += '<tr><td>总计</td><td colspan="2" style="text-align:center;font-weight:700;color:#1e3a5f">' + totalCap.toLocaleString() + '</td></tr>';
       summary += '</table></div>';
 
-      // ── 最长连续亏损卡片 ──
-      var lossInfo = computeLongestLossStreak(rows);
-      var lossCard = '';
-      if (lossInfo) {
-        lossCard += '<div style="background:linear-gradient(135deg,#fef2f2,#fff7ed);border-radius:12px;padding:12px;margin-bottom:12px">';
-        lossCard += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-        lossCard += '<span style="font-size:12px;font-weight:700;color:#dc2626">📉 最长连续亏损</span>';
-        lossCard += '<span style="font-size:9px;color:#8899b0;font-weight:400">' + rangeStr + '</span>';
-        lossCard += '</div>';
-        lossCard += '<div style="display:flex;gap:8px;justify-content:space-around">';
-        // 总体
-        if (lossInfo.all) {
-          lossCard += '<div style="flex:1;text-align:center;background:rgba(255,255,255,.6);border-radius:8px;padding:8px">';
-          lossCard += '<div style="font-size:9px;color:#8899b0">全模式</div>';
-          lossCard += '<div style="font-size:28px;font-weight:800;color:#dc2626">' + lossInfo.all.days + '<span style="font-size:12px">天</span></div>';
-          lossCard += '<div style="font-size:10px;color:#3a5070;margin-top:2px">' + lossInfo.all.range + '</div>';
-          lossCard += '</div>';
-        }
-        // 正帮扶
-        if (lossInfo.positive) {
-          lossCard += '<div style="flex:1;text-align:center;background:rgba(255,255,255,.6);border-radius:8px;padding:8px">';
-          lossCard += '<div style="font-size:9px;color:#2563eb">🟢 正帮扶</div>';
-          lossCard += '<div style="font-size:28px;font-weight:800;color:#dc2626">' + lossInfo.positive.days + '<span style="font-size:12px">天</span></div>';
-          lossCard += '<div style="font-size:10px;color:#3a5070;margin-top:2px">' + lossInfo.positive.range + '</div>';
-          lossCard += '</div>';
-        }
-        // 反帮扶
-        if (lossInfo.negative) {
-          lossCard += '<div style="flex:1;text-align:center;background:rgba(255,255,255,.6);border-radius:8px;padding:8px">';
-          lossCard += '<div style="font-size:9px;color:#dc2626">🔴 反帮扶</div>';
-          lossCard += '<div style="font-size:28px;font-weight:800;color:#dc2626">' + lossInfo.negative.days + '<span style="font-size:12px">天</span></div>';
-          lossCard += '<div style="font-size:10px;color:#3a5070;margin-top:2px">' + lossInfo.negative.range + '</div>';
-          lossCard += '</div>';
-        }
-        lossCard += '</div></div>';
-      }
-
       // 缩写函数
       function abbr(store) {
         var map = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','集合14':'14','集合16':'16'};
@@ -6457,7 +6498,7 @@ function loadOrderHistory(page) {
         }
         pager += '</div>';
       }
-      container.innerHTML = hh + summary + lossCard + h + pager;
+      container.innerHTML = hh + summary + h + pager;
     })
     .catch(function(e) {
       container.innerHTML = '<div style="color:#e53e3e;text-align:center">加载失败: ' + e.message + '</div>';
@@ -6657,7 +6698,10 @@ function applyRankFilter() {
     h += '</div></div>';
   });
   h += '</div>';
-  document.getElementById('rankings-body').innerHTML = h;
+  // ── 最长连续亏损卡片（随日期段过滤变化）──
+  window._lossStreakFilteredRows = rows;
+  var lossCard = buildLossStreakCard(rows, from, to);
+  document.getElementById('rankings-body').innerHTML = lossCard + h;
   setTimeout(function(){ if(typeof updateRankStats==='function')updateRankStats(); }, 100);
 }
 
