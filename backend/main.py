@@ -739,6 +739,49 @@ async def api_draw_records_sync():
     finally:
         conn.close()
 
+@app.post("/api/draw-records/auto-sync")
+async def api_draw_records_auto_sync(days: int = 30):
+    """增量同步最近N天抽签记录 → 仅新增不覆盖 → 下单tab打开时自动触发"""
+    from datetime import datetime as dt, timedelta
+    cutoff = (dt.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    try:
+        wh = sqlite3.connect("/home/xiaolin/projects/number-warehouse/backend/data/warehouse.db")
+        wh.row_factory = sqlite3.Row
+        wh_rows = wh.execute(
+            "SELECT date, day_seq, draw_number FROM records WHERE date >= ? ORDER BY date",
+            (cutoff,)
+        ).fetchall()
+        wh.close()
+    except Exception as e:
+        return {"ok": False, "error": f"读取warehouse失败: {e}"}
+
+    conn = get_db()
+    added = 0
+    try:
+        for r in wh_rows:
+            existing = conn.execute("SELECT id FROM draw_records WHERE date=?", (r["date"],)).fetchone()
+            if not existing:
+                conn.execute(
+                    "INSERT INTO draw_records (date, day_seq, draw_number) VALUES (?,?,?)",
+                    (r["date"], r["day_seq"], r["draw_number"])
+                )
+                added += 1
+        conn.commit()
+        # 同步传播：更新 order_history 中之前为0的 draw_number
+        if added > 0:
+            conn.execute("""
+                UPDATE order_history 
+                SET draw_number = (
+                    SELECT draw_number FROM draw_records WHERE draw_records.date = order_history.action_date
+                )
+                WHERE action_date IN (SELECT date FROM draw_records WHERE date >= ?)
+                AND (draw_number IS NULL OR draw_number = 0)
+            """, (cutoff,))
+            conn.commit()
+        return {"ok": True, "added": added}
+    finally:
+        conn.close()
+
 @app.post("/api/draw-records")
 async def api_create_draw_record(request: Request):
     """新增/更新一条抽签记录（warehouse 推送用）"""

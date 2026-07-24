@@ -4044,8 +4044,15 @@ var latestOrderDate = '';
 function initOrderSheet(guideDate, writeDate) {
   var el = document.getElementById('order-sheet');
   el.innerHTML = '<div class="empty">⏳ 加载中...</div>';
-  // 先加载亏损记录，再加载下单数据
-  return loadLossResults().then(function() {
+  // 先增量同步抽签记录，再加载亏损记录，最后加载下单数据
+  return fetch(API_BASE + '/api/draw-records/auto-sync?days=30', {method:'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+      if (res.added && res.added > 0) console.log('[draw-sync] 新增 ' + res.added + ' 条抽签记录');
+      return loadLossResults();
+    })
+    .catch(function() { return loadLossResults(); })
+    .then(function() {
     var url = API_BASE + '/api/simulate/order-sheet?days=30&_t=' + Date.now();
     if (guideDate) url += '&guide_date=' + encodeURIComponent(guideDate);
     return fetch(url)
