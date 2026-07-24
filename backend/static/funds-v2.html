@@ -4506,9 +4506,9 @@ function syncOrderNumbers() {
   var syncDate = dateInput ? dateInput.value : orderSheetDate;
 
   // 只拉号码 → 刷新下单页（下单数据从 sim_guides 缓存读，兜底用目标日期窗口无前视偏差）
-  var url = API_BASE + '/api/simulate/pull-numbers';
+  var url = '/api/simulate/pull-numbers';
   if (syncDate) url += '?date=' + encodeURIComponent(syncDate);
-  fetch(url, {method:'POST'}).then(r => r.json())
+  authFetch(url, {method:'POST'}).then(r => r.json())
     .then(function(res){
       if (!res.ok) {
         showAlert('号码无数据', '拉取号码失败', function(){
@@ -4540,8 +4540,8 @@ function syncOrderByDate() {
   if (!syncDate) { showToast('❌ 请选择日期'); return; }
   var btn = event && event.target;
   if (btn) { btn.disabled = true; btn.textContent = '⏳...'; }
-  var url = API_BASE + '/api/simulate/pull-numbers?date=' + syncDate;
-  fetch(url, {method:'POST'})
+  var url = '/api/simulate/pull-numbers?date=' + syncDate;
+  authFetch(url, {method:'POST'})
     .then(r => r.json())
     .then(function(res){
       if (res.ok) {
@@ -4565,8 +4565,8 @@ function syncAllOrders() {
   btn.textContent = '⏳ 全量同步...';
   // 拉全部数据（auto=查仓库最早日期~今天）
   var today = new Date().toISOString().slice(0,10);
-  var url = API_BASE + '/api/simulate/pull-numbers?from_date=auto&to_date=' + today;
-  fetch(url, {method:'POST'})
+  var url = '/api/simulate/pull-numbers?from_date=auto&to_date=' + today;
+  authFetch(url, {method:'POST'})
     .then(r => r.json())
     .then(function(res){
       if (res.ok) {
