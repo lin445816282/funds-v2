@@ -1060,6 +1060,18 @@ def _save_guide(result):
         print(f"[_save_guide] 保存失败: {e}")
 
 
+def get_optimization_log():
+    """读取算法优化日志 JSON"""
+    log_path = os.path.join(BASE_DIR, "optimization_log.json")
+    if not os.path.exists(log_path):
+        return {"logs": []}
+    try:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            logs = json.load(f)
+        return {"logs": logs[::-1]}  # 最新在前
+    except Exception as e:
+        return {"logs": [], "error": str(e)}
+
 def get_guide_history(limit=20, mode=None, offset=0):
     """获取历史下单指南 — 按(日期,mode)去重，支持mode过滤，附当天/累计结果值
     返回 {"rows": [...], "total": N}"""

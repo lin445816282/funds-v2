@@ -556,7 +556,7 @@ async def index_predictions(days: int = 30):
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
 # ═══════════════ 总部出手模拟 ═══════════════
-from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts, save_order_history, get_order_history, ack_order_history
+from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_optimization_log, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts, save_order_history, get_order_history, ack_order_history
 
 @app.get("/api/simulate/data")
 async def api_simulate_data(days: int = 90):
@@ -591,6 +591,11 @@ async def api_daily_guide(days: int = 90, mode: str = "positive", max_iter: int 
 async def api_guide_history(limit: int = 30, mode: str = None, offset: int = 0):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: get_guide_history(limit, mode, offset))
+
+@app.get("/api/simulate/optimization-log")
+async def api_optimization_log():
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, get_optimization_log)
 
 @app.get("/api/simulate/order-sheet")
 async def api_order_sheet(days: int = 90, date: str = None, guide_date: str = None):
