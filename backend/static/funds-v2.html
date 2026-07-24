@@ -1149,6 +1149,19 @@ function authSync(url, body) {
   return xhr;
 }
 
+// fetch 封装：自动带 token + 401跳登录
+function authFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  if (apiToken) opts.headers['Authorization'] = 'Bearer ' + apiToken;
+  if (!opts.headers['Content-Type'] && (opts.method === 'POST' || opts.method === 'PUT' || opts.method === 'PATCH'))
+    opts.headers['Content-Type'] = 'application/json';
+  return fetch(API_BASE + url, opts).then(function(r) {
+    if (r.status === 401) { logout(false); throw new Error('未登录'); }
+    return r;
+  });
+}
+
 function logout(showGate) {
   try {
     var xhr = new XMLHttpRequest();
@@ -3894,7 +3907,7 @@ function closeOptLogPopup() {
 function loadOptLog() {
   var el = document.getElementById('opt-log-content');
   el.innerHTML = '⏳ 加载中...';
-  fetch(API_BASE + '/api/simulate/optimization-log')
+  authFetch('/api/simulate/optimization-log')
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (!data.logs || !data.logs.length) {
@@ -3926,7 +3939,7 @@ function closePlanPopup() {
 function loadHitRates() {
   var el = document.getElementById('hit-rate-section');
   if (!el) return;
-  fetch(API_BASE + '/api/simulate/store-hit-rates?days=30')
+  authFetch('/api/simulate/store-hit-rates?days=30')
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var h = '<div style="background:#fff;border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
@@ -3973,7 +3986,7 @@ function loadHitRates() {
 var _lossResults = [];  // [{date, result}]
 
 function loadLossResults() {
-  return fetch(API_BASE + '/api/simulate/order-daily-results')
+  return authFetch('/api/simulate/order-daily-results')
     .then(function(r) { return r.json(); })
     .then(function(data) { _lossResults = data; return data; })
     .catch(function() { return []; });
@@ -4020,7 +4033,7 @@ function markDayResult(result) {
   var dateInput = document.getElementById('order-date-input');
   var date = dateInput ? dateInput.value : '';
   if (!date) { alert('请先选择日期'); return; }
-  fetch(API_BASE + '/api/simulate/order-daily-results', {
+  authFetch('/api/simulate/order-daily-results', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({date: date, result: result})
@@ -4045,7 +4058,7 @@ function initOrderSheet(guideDate, writeDate) {
   var el = document.getElementById('order-sheet');
   el.innerHTML = '<div class="empty">⏳ 加载中...</div>';
   // 先增量同步抽签记录，再加载亏损记录，最后加载下单数据
-  return fetch(API_BASE + '/api/draw-records/auto-sync?days=30', {method:'POST'})
+  return authFetch('/api/draw-records/auto-sync?days=30', {method:'POST'})
     .then(function(r) { return r.json(); })
     .then(function(res) {
       if (res.added && res.added > 0) console.log('[draw-sync] 新增 ' + res.added + ' 条抽签记录');
@@ -4053,9 +4066,9 @@ function initOrderSheet(guideDate, writeDate) {
     })
     .catch(function() { return loadLossResults(); })
     .then(function() {
-    var url = API_BASE + '/api/simulate/order-sheet?days=30&_t=' + Date.now();
+    var url = '/api/simulate/order-sheet?days=30&_t=' + Date.now();
     if (guideDate) url += '&guide_date=' + encodeURIComponent(guideDate);
-    return fetch(url)
+    return authFetch(url)
       .then(r => r.json())
       .then(function(d) {
         orderData = d;
@@ -4307,7 +4320,7 @@ function confirmOrderToHistory(overrideDate) {
     if (s.capital) stores.push({store: s.store, capital: s.capital, mode: 'negative'});
   });
   if (!stores.length) return alert('无门店需确认');
-  fetch(API_BASE + '/api/simulate/order-history/confirm', {
+  authFetch('/api/simulate/order-history/confirm', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({date: actionDay, stores: stores, amounts: d.order_amounts ? d.order_amounts.amounts : null})
@@ -4317,7 +4330,7 @@ function confirmOrderToHistory(overrideDate) {
     if (res.ok) {
       showToast('✅ 排位' + date + ' → 出手' + res.action_date + ' · ' + res.stores + '店 · ' + res.total_capital);
       // 自动标记已执行
-      fetch(API_BASE + '/api/simulate/order-history/ack', {
+      authFetch('/api/simulate/order-history/ack', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({action_date: res.action_date, acknowledged: true})
@@ -4409,7 +4422,7 @@ function updateOrderAmounts(silent) {
   (d.negative.stores||[]).forEach(function(s) {
     if (s.capital) stores.push({store: s.store, capital: s.capital, mode: 'negative', numbers: (d.numbers||{})[s.store]||{}});
   });
-  fetch(API_BASE + '/api/simulate/order-amounts', {
+  authFetch('/api/simulate/order-amounts', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({date: d._write_date || d.date, stores: stores})
@@ -4590,7 +4603,7 @@ function showCollectSummary() {
   overlay.innerHTML = '<div style="background:#fff;border-radius:16px;padding:20px;width:92%;max-width:400px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-weight:700;font-size:15px;color:#1e3a5f">📊 采集记录</span><button onclick="document.getElementById(\'collect-overlay\').remove()" style="border:none;background:none;font-size:20px;color:#999;cursor:pointer">✕</button></div><div id="collect-body" style="flex:1;overflow-y:auto;font-size:13px"><div style="text-align:center;padding:40px;color:#999">⏳ 加载中...</div></div></div>';
   overlay.style.display = 'flex';
 
-  fetch(API_BASE + '/api/simulate/order-numbers-list?page=1&limit=1000')
+  authFetch('/api/simulate/order-numbers-list?page=1&limit=1000')
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var body = document.getElementById('collect-body');
@@ -4634,7 +4647,7 @@ function showOrderDetailPopup(date) {
   overlay.style.display = 'flex';
 
   var STORE_MAP = {'-23':'一店','-24':'二店','-25':'三店','-26':'四店','-28':'五店','-29':'六店','14':'集合14','16':'集合16'};
-  fetch(API_BASE + '/api/simulate/order-numbers-detail?date=' + encodeURIComponent(date))
+  authFetch('/api/simulate/order-numbers-detail?date=' + encodeURIComponent(date))
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var body = document.getElementById('order-detail-body');
@@ -4817,7 +4830,7 @@ function doDeleteConfirm() {
   overlay.style.display = 'none';
   pendingDeleteDate = null;
   if (!date) return;
-  fetch(API_BASE + '/api/simulate/order-numbers?date=' + date, {method:'DELETE'})
+  authFetch('/api/simulate/order-numbers?date=' + date, {method:'DELETE'})
     .then(function(r) { return r.json(); })
     .then(function(res) {
       if (res.ok) {
@@ -5698,7 +5711,7 @@ var STORE_NAMES = ['一店','二店','三店','四店','五店','六店','集合
 function initSimPanel() {
   if (simData) { renderSimStoreTable(); updateAlgoHint(); return; }
   // 首次加载数据
-  fetch(API_BASE + '/api/simulate/data')
+  authFetch('/api/simulate/data')
     .then(r => r.json())
     .then(d => { simData = d; renderSimStoreTable(); updateAlgoHint(); })
     .catch(e => { document.getElementById('sim-store-table').innerHTML = '<p style="color:#dc2626;font-size:12px;padding:8px">加载数据失败: '+e.message+'</p>'; });
@@ -5803,7 +5816,7 @@ function runSimOptimize() {
   document.getElementById('sim-daily').style.display = 'none';
   var algo = document.getElementById('sim-algo').value;
   
-  fetch(API_BASE + '/api/simulate/optimize', {
+  authFetch('/api/simulate/optimize', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({days:90, mode:simMode, algorithm:algo})
@@ -5843,7 +5856,7 @@ function runSimManual() {
 
   var algo = document.getElementById('sim-algo').value;
 
-  fetch(API_BASE + '/api/simulate/manual', {
+  authFetch('/api/simulate/manual', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({stores: stores, days:90, algorithm:algo})
@@ -5962,7 +5975,7 @@ function fetchGuide(mode) {
   btn.disabled = true;
   btn.textContent = '⏳ 加载中...';
   
-  fetch(API_BASE + '/api/simulate/daily-guide?mode=' + mode)
+  authFetch('/api/simulate/daily-guide?mode=' + mode)
     .then(r => r.json())
     .then(function(d) {
       renderGuide(d);
@@ -6008,8 +6021,8 @@ function loadGuideCompare() {
   modal.classList.remove('hide');
   
   Promise.all([
-    fetch(API_BASE + '/api/simulate/guide-history?limit=1000&mode=positive').then(r => r.json()),
-    fetch(API_BASE + '/api/simulate/guide-history?limit=1000&mode=negative').then(r => r.json())
+    authFetch('/api/simulate/guide-history?limit=1000&mode=positive').then(r => r.json()),
+    authFetch('/api/simulate/guide-history?limit=1000&mode=negative').then(r => r.json())
   ]).then(function(results) {
     var posData = results[0], negData = results[1];
     var posRows = posData.rows || [];
@@ -6208,7 +6221,7 @@ function refreshGuide() {
   btn.textContent = '⏳ 刷新中...';
   btn.disabled = true;
   
-  fetch(API_BASE + '/api/simulate/daily-guide?mode=' + _lastGuideMode)
+  authFetch('/api/simulate/daily-guide?mode=' + _lastGuideMode)
     .then(r => r.json())
     .then(function(d) {
       renderGuide(d);
@@ -6237,7 +6250,7 @@ function loadOrderHistory(page) {
   container.innerHTML = '<div style="color:#8899b0;text-align:center;padding:20px">⏳ 加载中...</div>';
   modal.classList.remove('hide');
 
-  fetch(API_BASE + '/api/simulate/order-history?limit=' + _ohPageSize + '&offset=' + offset + '&_t=' + Date.now())
+  authFetch('/api/simulate/order-history?limit=' + _ohPageSize + '&offset=' + offset + '&_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var rows = data.rows || [];
@@ -6501,7 +6514,7 @@ function ackOrderHistory(actionDate) {
   var currentlyAcked = btn && btn.textContent === '✓ 已确认';
   var newAck = !currentlyAcked;
   if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
-  fetch(API_BASE + '/api/simulate/order-history/ack', {
+  authFetch('/api/simulate/order-history/ack', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({action_date: actionDate, acknowledged: newAck})
@@ -6546,7 +6559,7 @@ function toggleHistoryRankings() {
 
 function showHistoryRankings() {
   /* 显示下单记录中各日期的排位详情 + 49号金额分布 + 日期段过滤 */
-  return fetch(API_BASE + '/api/simulate/order-history?limit=300')
+  return authFetch('/api/simulate/order-history?limit=300')
     .then(function(r) { return r.json(); })
     .then(function(data) {
       window._rankAllRows = data.rows || [];
@@ -6744,7 +6757,7 @@ function closeReportModal() {
 function buildReport() {
   var rows = window._rankAllRows || [];
   if (!rows.length) {
-    fetch(API_BASE + '/api/simulate/order-history?limit=300')
+    authFetch('/api/simulate/order-history?limit=300')
       .then(function(r){ return r.json(); })
       .then(function(data){
         window._rankAllRows = data.rows || [];
@@ -6890,7 +6903,7 @@ function fetchGuidePage(page) {
   historyDiv.style.display = 'block';
   
   var offset = page * _guidePageSize;
-  fetch(API_BASE + '/api/simulate/guide-history?limit=' + _guidePageSize + '&offset=' + offset + '&mode=' + _lastGuideMode)
+  authFetch('/api/simulate/guide-history?limit=' + _guidePageSize + '&offset=' + offset + '&mode=' + _lastGuideMode)
     .then(r => r.json())
     .then(function(data) {
       var rows = data.rows || [];
@@ -6991,7 +7004,7 @@ function viewHistory(id, date) {
   var historyDiv = document.getElementById('guide-history');
   historyDiv.innerHTML = '<div style="color:#8899b0;text-align:center">⏳ 加载 '+date+' 详情...</div>';
   
-  fetch(API_BASE + '/api/simulate/guide-history?limit=50')
+  authFetch('/api/simulate/guide-history?limit=50')
     .then(r => r.json())
     .then(function(rows) {
       var found = (rows.rows || rows).find(function(r){ return r.id == id; });
@@ -7010,7 +7023,7 @@ function loadDrawRecords(page) {
   if (page) drawRecordsPage = page;
   var container = document.getElementById('draw-records-content');
   container.innerHTML = '<div style="color:#8899b0;text-align:center;padding:20px">⏳ 加载中...</div>';
-  fetch(API_BASE + '/api/draw-records?page=' + drawRecordsPage + '&page_size=30&_t=' + Date.now())
+  authFetch('/api/draw-records?page=' + drawRecordsPage + '&page_size=30&_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var rows = data.rows || [];
@@ -7048,7 +7061,7 @@ function loadDrawRecords(page) {
 function deleteDrawRecord(id) {
   if (!drawDeleteEnabled) return;
   if (!confirm('确认删除 ' + id + ' ？')) return;
-  fetch(API_BASE + '/api/draw-records/' + id, {method:'DELETE'})
+  authFetch('/api/draw-records/' + id, {method:'DELETE'})
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.ok) loadDrawRecords();
@@ -7062,7 +7075,7 @@ function syncDrawRecords() {
   var btn = event.target;
   btn.disabled = true;
   btn.textContent = '⏳';
-  fetch(API_BASE + '/api/draw-records/sync', {method:'POST'})
+  authFetch('/api/draw-records/sync', {method:'POST'})
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.ok) {
@@ -7075,6 +7088,11 @@ function syncDrawRecords() {
     .catch(function(e) { alert('同步失败: '+e.message); })
     .finally(function() { btn.disabled = false; btn.textContent = '🔄 同步'; });
 }
+// ═══════ 全局未捕获 Promise 兜底 ═══════
+window.addEventListener('unhandledrejection', function(e) {
+  console.error('[funds-v2] 未捕获异步错误:', e.reason);
+  showToast('⚠️ 网络异常，请重试');
+});
 </script>
 
 <!-- 投资计划弹框 -->

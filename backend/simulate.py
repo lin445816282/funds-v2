@@ -860,12 +860,12 @@ def get_order_sheet(days=90, target_date=None, guide_date=None):
         """获取指定 mode 的 sim_guide，指定 guide_date 时精确匹配不回落"""
         if guide_date:
             row = db.execute(
-                "SELECT date, rankings, result FROM sim_guides WHERE date=? AND json_extract(result, '$.mode')=? ORDER BY id DESC LIMIT 1",
+                "SELECT date, rankings, result FROM sim_guides WHERE date=? AND mode=? ORDER BY id DESC LIMIT 1",
                 (guide_date, mode)
             ).fetchone()
             return row  # 找到返回，找不到返回 None → 触发实时计算
         return db.execute(
-            "SELECT date, rankings, result FROM sim_guides WHERE json_extract(result, '$.mode')=? ORDER BY date DESC, id DESC LIMIT 1",
+            "SELECT date, rankings, result FROM sim_guides WHERE mode=? ORDER BY date DESC, id DESC LIMIT 1",
             (mode,)
         ).fetchone()
 
@@ -993,7 +993,7 @@ def _load_amounts_from_order_history(action_date):
         return None
     try:
         amounts = json.loads(row["amounts_json"])
-    except:
+    except Exception:
         return None
     total = sum(amounts.values())
     return {"date": action_date, "action_date": action_date, "amounts": amounts, "day_index": 0, "total": total}
@@ -1039,20 +1039,15 @@ def _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date):
 
 
 def _save_guide(result):
-    """保存到 sim_guides 表 — 自动去重：先删同日期+同mode旧记录再插入"""
+    """保存到 sim_guides 表 — INSERT OR REPLACE 利用 UNIQUE(date,mode) 自动去重"""
     try:
         db = sqlite3.connect(FUNDS_DB)
         rankings = result.get("pred_rankings") or result.get("today_rankings", {})
         mode = result.get("mode", "")
         date = result["date"]
-        # 去重：删掉同一日期+同一mode的旧记录
         db.execute(
-            "DELETE FROM sim_guides WHERE date=? AND json_extract(result, '$.mode')=?",
-            (date, mode)
-        )
-        db.execute(
-            "INSERT INTO sim_guides (date, rankings, result) VALUES (?, ?, ?)",
-            (date, json.dumps(rankings), json.dumps(result, ensure_ascii=False))
+            "INSERT OR REPLACE INTO sim_guides (date, mode, rankings, result) VALUES (?, ?, ?, ?)",
+            (date, mode, json.dumps(rankings), json.dumps(result, ensure_ascii=False))
         )
         db.commit()
         db.close()
@@ -1073,269 +1068,26 @@ def get_optimization_log():
         return {"logs": [], "error": str(e)}
 
 def get_guide_history(limit=20, mode=None, offset=0):
-    """获取历史下单指南 — 按(日期,mode)去重，支持mode过滤，附当天/累计结果值
+    """获取历史下单指南 — UNIQUE(date,mode)保证无重复，支持mode过滤
     返回 {"rows": [...], "total": N}"""
     db = sqlite3.connect(FUNDS_DB)
     db.row_factory = sqlite3.Row
-    rows = db.execute(
-        "SELECT id, date, rankings, result, created_at FROM sim_guides ORDER BY id DESC"
-    ).fetchall()
-    db.close()
-
-    # 按(date, effective_mode)去重取最新
-    seen = set()
-    deduped = []
-    for r in rows:
-        d = r["date"]
-        try:
-            res = json.loads(r["result"])
-        except Exception:
-            res = {}
-        em = res.get("mode")
-        if em is None:
-            # 旧数据：推断mode用于去重key
-            try:
-                rankings = json.loads(r["rankings"])
-            except Exception:
-                rankings = {}
-            consensus = res.get("consensus", [])
-            voted = [c for c in consensus if c.get("votes", 0) > 0]
-            gt25 = sum(1 for c in voted if rankings.get(c["store"], 0) > 25)
-            em = "negative" if gt25 > len(voted) / 2 else "positive"
-        if mode and em != mode:
-            continue
-        key = (d, em)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(r)
-
-    # 按日期降序排列，不受插入ID顺序影响
-    deduped.sort(key=lambda r: r["date"], reverse=True)
-    total = len(deduped)
-    # 分页切片
-    deduped = deduped[offset:offset+limit]
-    dates = [r["date"] for r in deduped]
-
-    # 评估日期 = 下注日（sim_guides.date就是下注日，排位来自前一日）
-    guide_to_eval = {d: d for d in dates}  # guide_date -> eval_date = 同一天
-    eval_dates = dates
-
-    # 批量查各店实际盈亏 + draw + 排位（都用评估日期=下注日）
-    store_amounts = {}  # guide_date -> {store: amount}
-    draws = {}  # guide_date -> draw_number（下注日的抽签，决定盈亏）
-    eval_rankings = {}  # guide_date -> {store: rank}（用评估日的排位做命中判定）
-    store_numbers = {}  # date -> {store: {"positive": set(), "negative": set()}}  精准命中判定用
-    if eval_dates:
-        db = sqlite3.connect(FUNDS_DB)
-        db.row_factory = sqlite3.Row
-        placeholders = ",".join(["?" for _ in eval_dates])
+    if mode:
         rows = db.execute(
-            f"SELECT date, store, amount FROM records WHERE date IN ({placeholders}) AND category='income'",
-            eval_dates
+            "SELECT id, date, mode, rankings, result, created_at FROM sim_guides WHERE mode=? ORDER BY date DESC LIMIT ? OFFSET ?",
+            (mode, limit, offset)
         ).fetchall()
-        db.close()
-        for r in rows:
-            eval_date = r["date"]
-            for gd, ed in guide_to_eval.items():
-                if ed == eval_date:
-                    store_amounts.setdefault(gd, {})[r["store"]] = r["amount"]
-
-        # 加载评估日的排位数据（用于命中判定）— 从 sim_guides.rankings 取（pred_rankings=前一日），不取当天实际排位
-        db2 = sqlite3.connect(FUNDS_DB)
-        db2.row_factory = sqlite3.Row
-        rank_rows = db2.execute(
-            f"SELECT date, rankings FROM sim_guides WHERE date IN ({placeholders}) ORDER BY id DESC",
-            eval_dates
+        total = db.execute(
+            "SELECT COUNT(*) FROM sim_guides WHERE mode=?", (mode,)
+        ).fetchone()[0]
+    else:
+        rows = db.execute(
+            "SELECT id, date, mode, rankings, result, created_at FROM sim_guides ORDER BY date DESC LIMIT ? OFFSET ?",
+            (limit, offset)
         ).fetchall()
-        db2.close()
-        for rr in rank_rows:
-            eval_date = rr["date"]
-            for gd, ed in guide_to_eval.items():
-                if ed == eval_date and gd not in eval_rankings:
-                    try:
-                        eval_rankings[gd] = json.loads(rr["rankings"] or "{}")
-                    except:
-                        eval_rankings[gd] = {}
-
-        # draw 用评估日（下注日）的抽签，无数据时fallback到指南日
-        wh = sqlite3.connect(WH_DB)
-        wh.row_factory = sqlite3.Row
-        all_draw_dates = list(set(eval_dates + dates))
-        dp = ",".join(["?" for _ in all_draw_dates])
-        rows_d = wh.execute(
-            f"SELECT date, draw_number FROM analysis_daily WHERE project_id=19 AND date IN ({dp})",
-            all_draw_dates
-        ).fetchall()
-        wh.close()
-        draw_lookup = {}
-        for r in rows_d:
-            draw_lookup[r["date"]] = r["draw_number"]
-        for gd, ed in guide_to_eval.items():
-            draws[gd] = draw_lookup.get(ed) or draw_lookup.get(gd)
-
-        # 加载号码数据用于精准命中判定
-        db3 = sqlite3.connect(FUNDS_DB)
-        db3.row_factory = sqlite3.Row
-        num_rows = db3.execute(
-            f"SELECT date, collection_id, threshold, numbers_json FROM order_numbers WHERE date IN ({placeholders})",
-            eval_dates
-        ).fetchall()
-        db3.close()
-        for nr in num_rows:
-            cid = nr["collection_id"]
-            store = COLLECTION_TO_STORE.get(cid)
-            if not store:
-                continue
-            th = nr["threshold"]
-            try:
-                nums = set(json.loads(nr["numbers_json"] or "[]"))
-            except:
-                nums = set()
-            ed2 = nr["date"]
-            store_numbers.setdefault(ed2, {}).setdefault(store, {})
-            if th == 25:
-                store_numbers[ed2][store]["positive"] = nums
-            elif th == 24:
-                store_numbers[ed2][store]["negative"] = nums
-
-    # 反转成从旧到新，计算累计
-    sorted_asc = list(reversed(deduped))
-    all_results = []
-    running_capital = 0
-    running_profit = 0
-    running_days = 0
-
-    for r in sorted_asc:
-        try:
-            res = json.loads(r["result"])
-        except Exception:
-            res = {}
-        algs = res.get("algorithms", [])
-        day_capital = 0
-
-        consensus = res.get("consensus", [])
-        voted = [c for c in consensus if c.get("votes", 0) > 0]
-
-        # 加载排位数据（命中判定用）— 用评估日的排位，fallback到指南日排位
-        rankings = eval_rankings.get(r["date"]) or json.loads(r["rankings"])
-
-        # 推断每店mode（兼容旧数据没有global mode字段）
-        global_mode = res.get("mode")
-        store_mode_map = {}
-        if global_mode:
-            for s in set(c["store"] for c in voted):
-                store_mode_map[s] = global_mode
-        else:
-            # 多数voted店排>25→反帮扶，否则正帮扶
-            gt25 = sum(1 for c in voted if rankings.get(c["store"], 0) > 25)
-            inferred = "negative" if gt25 > len(voted) / 2 else "positive"
-            for s in set(c["store"] for c in voted):
-                store_mode_map[s] = inferred
-
-        # 当天各店实际盈亏
-        day_store_income = store_amounts.get(r["date"], {})
-        earned = {}  # 赚的店 -> amount
-        lost = {}    # 亏的店 -> amount
-        store_details = []  # 每店：投多少 + 实际赚/亏
-        for c in voted:
-            s = c["store"]
-            amt = day_store_income.get(s)
-            if amt is not None:
-                if amt > 0:
-                    earned[s] = amt
-                elif amt < 0:
-                    lost[s] = abs(amt)
-            caps = c.get("caps", {})
-            max_cap = max(caps.values()) if caps else 0
-            day_capital += max_cap
-            if max_cap > 0:
-                # 命中判定：优先用实际号码匹配（精准），回退到排位判定
-                store_mode = store_mode_map.get(s, res.get("mode", "positive"))
-                rank = rankings.get(s)
-                draw_num = draws.get(r["date"])
-                sn = store_numbers.get(r["date"], {}).get(s, {})
-                target_nums = sn.get(store_mode, set())
-
-                if draw_num is not None and target_nums:
-                    # ✅ 精准判定：draw_number 是否在购买的号码中
-                    hit = draw_num in target_nums
-                elif draw_num is not None and rank is not None:
-                    # ⚠️ 回退：无号码数据时用排位判定
-                    base_hit = (rank <= 25)
-                    hit = base_hit if store_mode == "positive" else not base_hit
-                else:
-                    hit = None  # 无抽签 → 待定
-                # 正帮扶买25号(中+22,亏-25)，反帮扶买24号(中+23,亏-24)
-                hm = HIT_MULT.get(store_mode, 22)
-                mm = MISS_MULT.get(store_mode, 25)
-                if hit is None:
-                    net = 0  # 无抽签，无法计算盈亏
-                    formula_text = f"待开奖 ×{max_cap}"
-                elif hit:
-                    net = max_cap * hm
-                    formula_text = f"{max_cap}×{hm}={net:+}"
-                else:
-                    net = -max_cap * mm
-                    formula_text = f"-{max_cap}×{mm}={net}"
-                store_details.append({
-                    "store": s,
-                    "capital": max_cap,
-                    "rank": rank,
-                    "hit": hit,
-                    "formula": formula_text,
-                    "net": net,
-                })
-
-        # 当天公式利润 = 各店net之和
-        day_profit = sum(sd["net"] for sd in store_details)
-
-        running_days += 1
-        running_capital += day_capital
-        running_profit += day_profit
-
-        store_capitals = {}  # 所有店的配资映射
-        for c in consensus:
-            caps = c.get("caps", {})
-            store_capitals[c["store"]] = max(caps.values()) if caps else 0
-
-        all_results.append({
-            "id": r["id"],
-            "date": r["date"],
-            "rankings": json.loads(r["rankings"]),
-            "result": res,
-            "created_at": r["created_at"],
-            "draw": draws.get(r["date"]),
-            "capital": day_capital,
-            "profit": day_profit,
-            "hit_rate": round(sum(1 for sd in store_details if sd["hit"] is True) / max(sum(1 for sd in store_details if sd["hit"] is not None), 1), 2) if any(sd["hit"] is not None for sd in store_details) else None,
-            "day_summary": {
-                "profit": day_profit,
-                "capital": day_capital,
-                "stores": [c["store"] for c in voted],
-                "top_store": voted[0]["store"] if voted else None,
-                "earned": earned,
-                "lost": lost,
-                "store_details": store_details,
-                "store_capitals": store_capitals,
-            },
-            "total": {
-                "days": running_days,
-                "capital": running_capital,
-                "profit": running_profit,
-            }
-        })
-
-    # 再反转回最新在前
-    all_results.reverse()
-    # 过滤：移除评估日无实际数据的指南（7-20排位不能用于7-20自己）
-    # 必须有 earned/lost 或有效的 store_details（hit不是None）才算有效评估
-    # ← 但保留最新日期（当天刚生成还没收入数据）
-    latest_date = all_results[0]["date"] if all_results else None
-    all_results = [r for r in all_results
-                   if r["day_summary"].get("earned") or r["day_summary"].get("lost")
-                   or (r["day_summary"].get("store_details") and any(sd.get("hit") is not None for sd in r["day_summary"]["store_details"]))
-                   or r["date"] == latest_date]
-    return {"rows": all_results, "total": total}
+        total = db.execute("SELECT COUNT(*) FROM sim_guides").fetchone()[0]
+    db.close()
+    return {"rows": [dict(r) for r in rows], "total": total}
 
 
 def _predict_orders(rankings, params):
@@ -1534,7 +1286,7 @@ def _sync_amounts_to_history(action_date, num_amounts, stores_data=None):
             )
         db2.commit()
         db2.close()
-    except:
+    except Exception:
         pass
 
 
@@ -1615,7 +1367,7 @@ def _compute_from_order_numbers(action_date, stores):
             for n in guides:
                 num_amounts[n] = num_amounts.get(n, 0) + cap
         return {str(k): v for k, v in num_amounts.items()}
-    except:
+    except Exception:
         return {}
 
 
@@ -1666,7 +1418,7 @@ def save_order_history(date, stores_data, amounts=None):
             if rows:
                 amounts_snapshot = {str(r[0]): r[1] for r in rows}
             db0.close()
-        except:
+        except Exception:
             pass
     # 最后兜底：传参
     if not amounts_snapshot and amounts and isinstance(amounts, dict):
@@ -1684,7 +1436,7 @@ def save_order_history(date, stores_data, amounts=None):
         if r:
             draw_number = r["draw_number"]
         wh.close()
-    except:
+    except Exception:
         pass
 
     # 快照3：排位数据（排位日各店 ranking）
@@ -1698,7 +1450,7 @@ def save_order_history(date, stores_data, amounts=None):
         for row in rows:
             rankings[row[0]] = row[1]
         db2.close()
-    except:
+    except Exception:
         pass
 
     db = sqlite3.connect(FUNDS_DB)
@@ -1771,7 +1523,7 @@ def get_order_history(limit=30, offset=0):
         for gr in g_rows:
             try:
                 res = json.loads(gr["result"])
-            except:
+            except Exception:
                 res = {}
             rankings = json.loads(gr["rankings"] or "{}")
             em = res.get("mode")
@@ -1875,7 +1627,7 @@ def get_order_history(limit=30, offset=0):
                     continue
                 try:
                     nums = json.loads(onr["numbers_json"])
-                except:
+                except Exception:
                     nums = []
                 store_num_map.setdefault(dt, {}).setdefault(store, {})
                 store_num_map[dt][store]["top25" if th == 25 else "top24"] = nums
@@ -1888,12 +1640,12 @@ def get_order_history(limit=30, offset=0):
         rankings = {}
         try:
             rankings = json.loads(r["rankings_json"] or "{}")
-        except:
+        except Exception:
             pass
         amounts = {}
         try:
             amounts = json.loads(r["amounts_json"] or "{}")
-        except:
+        except Exception:
             pass
         # 命中判定：优先用实际号码匹配（精准），回退到排位判定
         # 只有当draw_number>0（已开奖）时才计算盈亏，未开奖的统一置0
@@ -1919,7 +1671,7 @@ def get_order_history(limit=30, offset=0):
                 )
                 db_w.commit()
                 db_w.close()
-            except:
+            except Exception:
                 pass
         elif not has_draw:
             own_profit = 0

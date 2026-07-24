@@ -26,8 +26,9 @@ app.add_middleware(
 
 # ── DB ─────────────────────────────────────
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 # ═══════════════ 初始化 ═══════════════════
@@ -559,11 +560,13 @@ async def index_predictions(days: int = 30):
 from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_optimization_log, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts, save_order_history, get_order_history, ack_order_history
 
 @app.get("/api/simulate/data")
-async def api_simulate_data(days: int = 90):
+async def api_simulate_data(request: Request, days: int = 90):
+    await require_auth(request)
     return get_simulate_data(days)
 
 @app.post("/api/simulate/optimize")
 async def api_simulate_optimize(request: Request):
+    await require_auth(request)
     data = await request.json()
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: run_optimize(
@@ -574,6 +577,7 @@ async def api_simulate_optimize(request: Request):
 
 @app.post("/api/simulate/manual")
 async def api_simulate_manual(request: Request):
+    await require_auth(request)
     data = await request.json()
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: run_manual(
@@ -583,47 +587,55 @@ async def api_simulate_manual(request: Request):
     ))
 
 @app.get("/api/simulate/daily-guide")
-async def api_daily_guide(days: int = 90, mode: str = "positive", max_iter: int = 10):
+async def api_daily_guide(request: Request, days: int = 90, mode: str = "positive", max_iter: int = 10):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: run_daily_guide(days, mode, max_iter))
 
 @app.get("/api/simulate/guide-history")
-async def api_guide_history(limit: int = 30, mode: str = None, offset: int = 0):
+async def api_guide_history(request: Request, limit: int = 30, mode: str = None, offset: int = 0):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: get_guide_history(limit, mode, offset))
 
 @app.get("/api/simulate/optimization-log")
-async def api_optimization_log():
+async def api_optimization_log(request: Request, ):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, get_optimization_log)
 
 @app.get("/api/simulate/order-sheet")
-async def api_order_sheet(days: int = 90, date: str = None, guide_date: str = None):
+async def api_order_sheet(request: Request, days: int = 90, date: str = None, guide_date: str = None):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(_executor, lambda: get_order_sheet(days, target_date=date, guide_date=guide_date))
     return JSONResponse(content=result, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.post("/api/simulate/pull-numbers")
-async def api_pull_numbers(date: str = None, from_date: str = None, to_date: str = None):
+async def api_pull_numbers(request: Request, date: str = None, from_date: str = None, to_date: str = None):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: pull_threshold_numbers(
         target_date=date, from_date=from_date, to_date=to_date
     ))
 
 @app.get("/api/simulate/order-numbers-list")
-async def api_order_numbers_list(page: int = 1, limit: int = 20):
+async def api_order_numbers_list(request: Request, page: int = 1, limit: int = 20):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: list_order_numbers(page, limit))
 
 @app.get("/api/simulate/order-numbers-detail")
-async def api_order_numbers_detail(date: str = ""):
+async def api_order_numbers_detail(request: Request, date: str = ""):
+    await require_auth(request)
     if not date:
         raise HTTPException(400, "date required")
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: get_order_numbers_detail(date))
 
 @app.delete("/api/simulate/order-numbers")
-async def api_order_numbers_delete(date: str = ""):
+async def api_order_numbers_delete(request: Request, date: str = ""):
+    await require_auth(request)
     if not date:
         raise HTTPException(400, "date required")
     loop = asyncio.get_event_loop()
@@ -631,26 +643,30 @@ async def api_order_numbers_delete(date: str = ""):
 
 # ── 下单金额 ──
 @app.post("/api/simulate/order-amounts")
-async def api_save_order_amounts(data: dict):
+async def api_save_order_amounts(request: Request, data: dict):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: save_order_amounts(
         data.get("date", ""), data.get("stores", [])
     ))
 
 @app.get("/api/simulate/order-amounts")
-async def api_get_order_amounts(date: str = None, list_all: bool = False):
+async def api_get_order_amounts(request: Request, date: str = None, list_all: bool = False):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: get_order_amounts(date=date, list_all=list_all))
 
 # ── 下单历史（独立表）──
 @app.get("/api/simulate/order-history")
-async def api_get_order_history(limit: int = 30, offset: int = 0):
+async def api_get_order_history(request: Request, limit: int = 30, offset: int = 0):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(_executor, lambda: get_order_history(limit, offset))
     return JSONResponse(content=result, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.post("/api/simulate/order-history/confirm")
 async def api_confirm_order_history(request: Request):
+    await require_auth(request)
     """用户确认当前下单配置 → 写入 order_history"""
     body = await request.json()
     date = body.get("date", "")
@@ -663,6 +679,7 @@ async def api_confirm_order_history(request: Request):
 
 @app.post("/api/simulate/order-history/ack")
 async def api_ack_order_history(request: Request):
+    await require_auth(request)
     """用户确认/撤销某个出手日的下单记录"""
     body = await request.json()
     action_date = body.get("action_date", "")
@@ -674,7 +691,8 @@ async def api_ack_order_history(request: Request):
 
 # ═══════ 抽签记录（从 warehouse 同步）═══════
 @app.get("/api/draw-records")
-async def api_draw_records(page: int = 1, page_size: int = 30):
+async def api_draw_records(request: Request, page: int = 1, page_size: int = 30):
+    await require_auth(request)
     conn = get_db()
     try:
         total = conn.execute("SELECT COUNT(*) FROM draw_records").fetchone()[0]
@@ -703,7 +721,8 @@ async def api_draw_records(page: int = 1, page_size: int = 30):
         conn.close()
 
 @app.post("/api/draw-records/sync")
-async def api_draw_records_sync():
+async def api_draw_records_sync(request: Request, ):
+    await require_auth(request)
     """从 warehouse 同步抽签记录"""
     try:
         wh = sqlite3.connect("/home/xiaolin/projects/number-warehouse/backend/data/warehouse.db")
@@ -740,7 +759,8 @@ async def api_draw_records_sync():
         conn.close()
 
 @app.post("/api/draw-records/auto-sync")
-async def api_draw_records_auto_sync(days: int = 30):
+async def api_draw_records_auto_sync(request: Request, days: int = 30):
+    await require_auth(request)
     """增量同步最近N天抽签记录 → 仅新增不覆盖 → 下单tab打开时自动触发"""
     from datetime import datetime as dt, timedelta
     cutoff = (dt.now() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -784,6 +804,7 @@ async def api_draw_records_auto_sync(days: int = 30):
 
 @app.post("/api/draw-records")
 async def api_create_draw_record(request: Request):
+    await require_auth(request)
     """新增/更新一条抽签记录（warehouse 推送用）"""
     body = await request.json()
     date = body.get("date", "")
@@ -806,7 +827,8 @@ async def api_create_draw_record(request: Request):
         conn.close()
 
 @app.delete("/api/draw-records/{rid}")
-async def api_delete_draw_record(rid: int):
+async def api_delete_draw_record(request: Request, rid: int):
+    await require_auth(request)
     conn = get_db()
     try:
         conn.execute("DELETE FROM draw_records WHERE id=?", (rid,))
@@ -817,12 +839,14 @@ async def api_delete_draw_record(rid: int):
 
 # ═══════ 日盈亏记录 ═══════
 @app.get("/api/simulate/order-daily-results")
-async def api_get_order_daily_results():
+async def api_get_order_daily_results(request: Request, ):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, get_order_daily_results)
 
 @app.post("/api/simulate/order-daily-results")
 async def api_save_order_daily_result(request: Request):
+    await require_auth(request)
     body = await request.json()
     date = body.get("date", "")
     result = body.get("result", "")
@@ -872,7 +896,7 @@ def get_order_daily_results():
                     "INSERT OR REPLACE INTO order_daily_results (date, result) VALUES (?,?)",
                     (date, _json.dumps({"draw_number": r["draw_number"], "rank": rank}))
                 )
-            except:
+            except Exception:
                 result = "loss"
             results.append({"date": date, "result": result, "created": r["created"]})
     
@@ -889,7 +913,8 @@ def save_order_daily_result(date, result):
 
 # ═══════ 门店命中率 ═══════
 @app.get("/api/simulate/store-hit-rates")
-async def api_store_hit_rates(days: int = 30):
+async def api_store_hit_rates(request: Request, days: int = 30):
+    await require_auth(request)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: get_store_hit_rates(days))
 
@@ -917,7 +942,7 @@ def get_store_hit_rates(days=30):
         ).fetchall()
         wh.close()
         draw_map = {r["date"]: r["draw_number"] for r in d_rows}
-    except:
+    except Exception:
         draw_map = {}
 
     # 批量加载 order_numbers
@@ -936,7 +961,7 @@ def get_store_hit_rates(days=30):
         store = CID_STORE.get(nr["collection_id"])
         if not store: continue
         try: nums = set(json.loads(nr["numbers_json"] or "[]"))
-        except: nums = set()
+        except Exception: nums = set()
         dt = nr["date"]
         key = "正" if nr["threshold"] == 25 else "反"
         num_idx.setdefault(dt, {}).setdefault(store, {})[key] = nums
@@ -947,7 +972,7 @@ def get_store_hit_rates(days=30):
     for g in guides:
         try:
             result = json.loads(g["result"]) if isinstance(g["result"], str) else g["result"]
-        except: continue
+        except Exception: continue
 
         dt = g["date"]
         draw_num = draw_map.get(dt, 0)
@@ -992,16 +1017,6 @@ def get_store_hit_rates(days=30):
     }
 
 # ── 算法优化日志 ──
-OPT_LOG_FILE = os.path.join(os.path.dirname(__file__), "optimization_log.json")
-
-@app.get("/api/simulate/optimization-log")
-async def api_optimization_log():
-    try:
-        with open(OPT_LOG_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return JSONResponse(content={"ok": True, "log": data})
-    except FileNotFoundError:
-        return JSONResponse(content={"ok": True, "log": []})
 
 # ═══════════════ Static + SPA ═══════════════
 STATIC_DIR = os.path.join(BASE_DIR, "static")
