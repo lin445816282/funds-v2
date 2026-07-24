@@ -2285,6 +2285,34 @@ function renderDataModal(v) {
   document.getElementById('dm-body').innerHTML = body;
 }
 
+// ═══════════ 数据弹窗控制 ═══════════
+function closeDataModal() {
+  document.getElementById('data-modal').classList.add('hide');
+}
+
+function openDataModal() {
+  document.getElementById('data-modal').classList.remove('hide');
+}
+
+function setAllView(v) {
+  singleStoreMode = '';
+  allView = v;
+  initModalStore();
+  renderDataModal(v);
+  openDataModal();
+}
+
+function showStoreModal(store, v) {
+  singleStoreMode = store;
+  allView = v;
+  modalStoreSel = {};
+  modalStoreSel[store] = true;
+  yearStoreSel = {};
+  yearStoreSel[store] = true;
+  renderDataModal(v);
+  openDataModal();
+}
+
 // 📋 查看分析详情 — 展示每日净额明细
 function showStreakDetail(store, start, end, label) {
   var dayMap={}, dayList=[];
