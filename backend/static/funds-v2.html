@@ -6017,116 +6017,50 @@ function storeRange(ds, hits, hasDraw) {
 function loadGuideCompare() {
   var modal = document.getElementById('compare-modal');
   var container = document.getElementById('compare-content');
-  container.innerHTML = '<div style="color:#8899b0;text-align:center;padding:20px">⏳ 加载中...</div>';
+  container.innerHTML = '<div style="color:#8899b0">⏳ 加载中...</div>';
   modal.classList.remove('hide');
   
   Promise.all([
-    authFetch('/api/simulate/guide-history?limit=1000&mode=positive').then(r => r.json()),
-    authFetch('/api/simulate/guide-history?limit=1000&mode=negative').then(r => r.json())
+    authFetch('/api/simulate/guide-history?limit=1000&mode=positive').then(r=>r.json()),
+    authFetch('/api/simulate/guide-history?limit=1000&mode=negative').then(r=>r.json())
   ]).then(function(results) {
-    var posData = results[0], negData = results[1];
-    var posRows = posData.rows || [];
-    var negRows = negData.rows || [];
+    var posRows=results[0].rows||[],negRows=results[1].rows||[];
+    var posMap={},negMap={};posRows.forEach(r=>posMap[r.date]=r);negRows.forEach(r=>negMap[r.date]=r);
     
-    // 建立 date → row 映射
-    var posMap = {};
-    posRows.forEach(function(r){ posMap[r.date] = r; });
-    var negMap = {};
-    negRows.forEach(function(r){ negMap[r.date] = r; });
-    
-    // 合并日期列表（只取近3个月）
-    var threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-    var cutoff = threeMonthsAgo.toISOString().slice(0,10);
-    
-    var allDates = [];
-    var seen = {};
-    posRows.concat(negRows).forEach(function(r){
-      if (!seen[r.date] && r.date >= cutoff) { seen[r.date] = true; allDates.push(r.date); }
-    });
+    var allDates=[],seen={};
+    posRows.concat(negRows).forEach(r=>{if(!seen[r.date]&&r.date>='2026-01-01'){seen[r.date]=true;allDates.push(r.date)}});
     allDates.sort().reverse();
+    if(!allDates.length){container.innerHTML='<div style="color:#94a3b8">暂无数据</div>';return}
+    document.getElementById('compare-freshness').textContent=allDates.length+'天';
     
-    if (!allDates.length) {
-      container.innerHTML = '<div style="color:#94a3b8;text-align:center">暂无数据</div>';
-      return;
-    }
-    
-    var dateMin = allDates[allDates.length-1];  // 最旧
-    var dateMax = allDates[0];                   // 最新
-    var rangeStr = dateMin.substr(5) + '至' + dateMax.substr(5);  // MM-DD至MM-DD
-    document.getElementById('compare-freshness').textContent = allDates.length + '天 | ' + rangeStr;
-    
-    // 汇总
-    var posTotalProfit = 0, negTotalProfit = 0, posTotalCap = 0, negTotalCap = 0, posHits = 0, negHits = 0, posShots = 0, negShots = 0;
-    
-    var h = '';
-    allDates.forEach(function(d) {
-      var pr = posMap[d], nr = negMap[d];
-      var pds = pr ? pr.day_summary : null;
-      var nds = nr ? nr.day_summary : null;
-      var pp = pds ? pds.profit : null;
-      var np = nds ? nds.profit : null;
-      var pc = pds ? pds.capital : 0;
-      var nc = nds ? nds.capital : 0;
+    var totalProfit=0,totalCap=0;
+    var h='';
+    allDates.forEach(function(d){
+      var pr=posMap[d],nr=negMap[d],pds=pr?pr.day_summary:null,nds=nr?nr.day_summary:null;
+      var profit=pds?pds.profit:null;
+      if(profit!==null){totalProfit+=profit}
       
-      if (pp !== null) { posTotalProfit += pp; posTotalCap += pc; }
-      if (np !== null) { negTotalProfit += np; negTotalCap += nc; }
+      // Store capital sums
+      var posStores=pds?pds.store_details||[]:[], negStores=nds?nds.store_details||[]:[];
+      var pcap=posStores.reduce(function(s,x){return s+(x.capital||0)},0);
+      var ncap=negStores.reduce(function(s,x){return s+(x.capital||0)},0);
+      var totalBet=pds?pds.capital||0:0;
+      if(profit!==null)totalCap+=totalBet;
       
-      // 统计命中
-      if (pds && pds.store_details) {
-        pds.store_details.forEach(function(sd){ posShots++; if (sd.hit) posHits++; });
-      }
-      if (nds && nds.store_details) {
-        nds.store_details.forEach(function(sd){ negShots++; if (sd.hit) negHits++; });
-      }
-      
-      // 使用全局 storeRange(ds)
-      
-      // 颜色：正优→绿，反优→红
-      var diffColor = '#8899b0';
-      if (pp !== null && np !== null) {
-        if (pp > np) diffColor = '#16a34a';
-        else if (np > pp) diffColor = '#dc2626';
-      }
-      
-      h += '<div style="padding:8px 10px;margin-bottom:4px;background:#f8fafc;border-radius:8px">';
-      h += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">';
-      h += '<span style="font-weight:700;font-size:13px">' + d + '</span>';
-      // 右上角：当天 正+反=总
-      var pt = (pp||0), nt = (np||0), tt = pt + nt;
-      var tfmt = (pt>=0?'+':'') + pt.toLocaleString() + (nt>=0?'+':'') + nt.toLocaleString() + '=' + (tt>=0?'+':'') + tt.toLocaleString();
-      h += '<span style="font-size:10px;font-weight:600;color:' + (tt>=0?'#16a34a':'#dc2626') + '">' + tfmt + '</span>';
-      h += '</div>';
-      h += '<div style="font-size:10px;margin-bottom:2px">';
-      h += '<span>🟢正: <b style="color:#2563eb">' + (pc||0) + '</b></span>';
-      h += storeRange(pds, null, true);
-      h += '</div>';
-      h += '<div style="font-size:10px">';
-      h += '<span>🔴反: <b style="color:#dc2626">' + (nc||0) + '</b></span>';
-      h += storeRange(nds, null, true);
-      h += '</div>';
-      h += '</div>';
+      h+='<div style="padding:8px 10px;margin-bottom:4px;background:#f8fafc;border-radius:8px">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">';
+      h+='<span style="font-weight:700;font-size:13px">📅 '+d+'</span>';
+      h+='<span style="font-size:10px;color:#8899b0">合计'+totalBet.toLocaleString()+'</span>';
+      if(profit!==null){var cl=profit>0?'#16a34a':profit<0?'#dc2626':'#8899b0';h+='<span style="font-size:11px;font-weight:700;color:'+cl+'">'+(profit>0?'+':'')+profit.toLocaleString()+'</span>'}
+      h+='</div>';
+      if(profit!==null)h+='<div style="font-size:9px;color:#6b7280;margin-bottom:2px">'+pcap+'×47−'+totalBet.toLocaleString()+'='+(profit>0?'+':'')+profit.toLocaleString()+'</div>';
+      h+='<div style="font-size:10px;margin-bottom:2px">🟢正: '+pcap.toLocaleString()+(pcap?' ('+posStores.map(function(s){return s.capital}).join('+')+')':'')+' '+storeRange(pds,null,true)+'</div>';
+      h+='<div style="font-size:10px">🔴反: '+ncap.toLocaleString()+(ncap?' ('+negStores.map(function(s){return s.capital}).join('+')+')':'')+' '+storeRange(nds,null,true)+'</div>';
+      h+='</div>'
     });
-    
-    // 汇总放在顶部
-    var summary = '<div style="background:linear-gradient(135deg,#f0f7ff,#fef2f2);border-radius:12px;padding:12px;margin-bottom:12px">';
-    summary += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:12px;font-weight:700;color:#1e3a5f">📊 汇总对比</span><span style="font-size:11px;color:#667">' + rangeStr + '</span></div>';
-    summary += '<table style="width:100%;font-size:11px;border-collapse:collapse">';
-    summary += '<tr><td></td><td style="text-align:center;color:#2563eb;font-weight:600">🟢 正帮扶</td><td style="text-align:center;color:#dc2626;font-weight:600">🔴 反帮扶</td></tr>';
-    summary += '<tr><td>累计利润</td><td style="text-align:center;color:#2563eb;font-weight:700">' + posTotalProfit.toLocaleString() + '</td><td style="text-align:center;color:#dc2626;font-weight:700">' + negTotalProfit.toLocaleString() + '</td></tr>';
-    summary += '<tr><td>累计出手</td><td style="text-align:center">' + posTotalCap + '</td><td style="text-align:center">' + negTotalCap + '</td></tr>';
-    summary += '<tr><td>命中率</td><td style="text-align:center">' + (posShots ? (posHits/posShots*100).toFixed(0)+'%' : '—') + '</td><td style="text-align:center">' + (negShots ? (negHits/negShots*100).toFixed(0)+'%' : '—') + '</td></tr>';
-    summary += '</table>';
-    // 差异
-    var diff = posTotalProfit - negTotalProfit;
-    var diffColor2 = diff > 0 ? '#16a34a' : '#dc2626';
-    summary += '<div style="margin-top:6px;font-size:11px;text-align:center;font-weight:700;color:' + diffColor2 + '">正帮扶比反帮扶' + (diff>=0?'多赚':'少赚') + ' ' + Math.abs(diff).toLocaleString() + '</div>';
-    summary += '</div>';
-    
-    container.innerHTML = summary + h;
-  }).catch(function(e) {
-    container.innerHTML = '<div style="color:#e53e3e">加载失败: ' + e.message + '</div>';
-  });
+    h='<div style="margin-bottom:8px;font-size:11px;color:#8899b0">'+allDates.length+'天 · 总盈亏'+(totalProfit>=0?'+':'')+totalProfit.toLocaleString()+' · 总投入'+totalCap.toLocaleString()+'</div>'+h;
+    container.innerHTML=h
+  }).catch(function(e){container.innerHTML='<div style="color:#dc2626">加载失败: '+e.message+'</div>'})
 }
 
 function renderGuide(d) {
@@ -6935,59 +6869,39 @@ function renderGuidePage() {
   
   rows.forEach(function(r) {
     var ds = r.day_summary || {};
-    var tt = r.total || {};
-    var top = (r.result.consensus||[]).filter(function(c){ return c.votes>0; }).slice(0,3);
-    var tops = top.map(function(c){ return c.store+''+c.votes+'/4'; }).join(' ');
+    var mode = r.mode || '';
+    var modeTag = mode === 'negative' ? '<span style="font-size:9px;color:#dc2626;margin-left:4px">反</span>' : '<span style="font-size:9px;color:#16a34a;margin-left:4px">正</span>';
+    
+    // Parse result JSON
+    var resultObj = {};
+    try { resultObj = typeof r.result === 'string' ? JSON.parse(r.result) : r.result; } catch(e) {}
+    var consensus = resultObj.consensus || [];
+    var top = consensus.filter(function(c){ return c.votes>0; }).slice(0,3);
+    var tops = top.map(function(c){ return c.store+''+c.votes+'/'+(c.out_of||4); }).join(' ');
     
     h += '<div style="padding:8px 10px;margin-bottom:6px;background:#f8fafc;border-radius:8px;cursor:pointer" onclick="viewHistory('+r.id+',\''+r.date+'\')">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
-    var modeTag = (r.result.mode === 'negative') ? '<span style="font-size:9px;color:#dc2626;margin-left:4px">反</span>' : '';
     h += '<span style="font-size:13px;font-weight:700">'+r.date+modeTag+'</span>';
     h += '<span style="font-size:9px;color:#8899b0">'+r.created_at.slice(0,16)+'</span>';
     h += '</div>';
     h += '<div style="font-size:11px;color:#1e3a5f;margin-bottom:2px">';
     h += '当天 <b style="color:#2563eb">'+(ds.profit||0).toLocaleString()+'</b> · 出手<b style="color:#b45309">'+(ds.capital||0)+'</b>';
-    if (ds.top_store) h += ' · 首<b style="color:#16a34a">'+ds.top_store+'</b>';
+    if (tops) h += ' · 首票<b style="color:#16a34a">'+tops+'</b>';
     h += '</div>';
-    h += '<div style="font-size:10px;color:#8899b0">';
-    h += '合计 利润<b style="color:#1e3a5f">'+(tt.profit||0).toLocaleString()+'</b> · 出手<b style="color:#1e3a5f">'+(tt.capital||0).toLocaleString()+'</b> · '+tt.days+'天';
-    h += '</div>';
-    if (tops) h += '<div style="font-size:9px;color:#b45309;margin-top:2px;border-top:1px solid #e8ecf0;padding-top:2px">🎯 '+tops+'</div>';
-    var sd = ds.store_details || [];
-    if (sd.length) {
-      var parts = [];
-      for (var i=0; i<sd.length; i++) {
-        var s = sd[i];
-        var color = s.hit ? '#16a34a' : '#e53e3e';
-        var icon = s.hit ? '🟢' : '🔴';
-        parts.push('<span>'+icon+' '+s.store+'<b> 投'+s.capital+'→<span style="color:'+color+'">'+s.formula+'</span></b></span>');
-      }
-      h += '<div style="font-size:10px;margin-top:2px">' + parts.join('<br>') + '</div>';
-    }
+    h += storeRange(ds, null, true);
     h += '</div>';
   });
   
-  // 分页按钮
   if (totalPages > 1) {
-    h += '<div style="display:flex;justify-content:center;gap:12px;margin-top:10px">';
-    h += '<button onclick="changeGuidePage(-1)" style="padding:6px 20px;border-radius:8px;border:1px solid #d0d8e0;background:#fff;color:#3a5070;font-size:12px" ' + (_guidePage === 0 ? 'disabled' : '') + '>◀ 上一页</button>';
-    h += '<button onclick="changeGuidePage(1)" style="padding:6px 20px;border-radius:8px;border:1px solid #d0d8e0;background:#fff;color:#3a5070;font-size:12px" ' + (_guidePage >= totalPages-1 ? 'disabled' : '') + '>下一页 ▶</button>';
+    h += '<div style="text-align:center;margin-top:8px">';
+    if (_guidePage > 0) h += '<button onclick="fetchGuidePage('+(_guidePage-1)+')" style="padding:4px 12px">◀</button> ';
+    h += '<span style="font-size:11px;color:#8899b0">' + (_guidePage+1) + '/' + totalPages + '</span>';
+    if (_guidePage < totalPages-1) h += ' <button onclick="fetchGuidePage('+(_guidePage+1)+')" style="padding:4px 12px">▶</button>';
     h += '</div>';
   }
   
   historyDiv.innerHTML = h;
 }
-
-function changeGuidePage(delta) {
-  var totalPages = Math.ceil(_guideTotal / _guidePageSize);
-  var newPage = _guidePage + delta;
-  if (newPage < 0 || newPage >= totalPages) return;
-  document.getElementById('guide-history').scrollTop = 0;
-  fetchGuidePage(newPage);
-}
-
-// 历史记录数据缓存
-window._guideCache = {};
 
 function viewHistory(id, date) {
   // 从缓存取

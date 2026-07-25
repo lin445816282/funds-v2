@@ -1068,26 +1068,44 @@ def get_optimization_log():
         return {"logs": [], "error": str(e)}
 
 def get_guide_history(limit=20, mode=None, offset=0):
-    """获取历史下单指南 — UNIQUE(date,mode)保证无重复，支持mode过滤
-    返回 {"rows": [...], "total": N}"""
+    """获取历史下单指南 — 含盈亏(来自order_history)"""
     db = sqlite3.connect(FUNDS_DB)
     db.row_factory = sqlite3.Row
     if mode:
-        rows = db.execute(
-            "SELECT id, date, mode, rankings, result, created_at FROM sim_guides WHERE mode=? ORDER BY date DESC LIMIT ? OFFSET ?",
-            (mode, limit, offset)
-        ).fetchall()
-        total = db.execute(
-            "SELECT COUNT(*) FROM sim_guides WHERE mode=?", (mode,)
-        ).fetchone()[0]
+        rows = db.execute("SELECT s.*, o.own_profit, o.own_capital FROM sim_guides s LEFT JOIN order_history o ON s.date=o.action_date WHERE s.mode=? ORDER BY s.date DESC LIMIT ? OFFSET ?",(mode,limit,offset)).fetchall()
+        total = db.execute("SELECT COUNT(*) FROM sim_guides WHERE mode=?",(mode,)).fetchone()[0]
     else:
-        rows = db.execute(
-            "SELECT id, date, mode, rankings, result, created_at FROM sim_guides ORDER BY date DESC LIMIT ? OFFSET ?",
-            (limit, offset)
-        ).fetchall()
+        rows = db.execute("SELECT s.*, o.own_profit, o.own_capital FROM sim_guides s LEFT JOIN order_history o ON s.date=o.action_date ORDER BY s.date DESC LIMIT ? OFFSET ?",(limit,offset)).fetchall()
         total = db.execute("SELECT COUNT(*) FROM sim_guides").fetchone()[0]
+    
+    result_rows = []
+    for r in rows:
+        row = dict(r)
+        stores, store_caps = [], {}
+        try:
+            rd = json.loads(row.get('result','{}'))
+            for c in rd.get('consensus',[]):
+                caps = c.get('caps') or {}
+                v = max(caps.values()) if caps else c.get('capital',0)
+                if v > 0: stores.append({'store':c['store'],'capital':v,'hit':None}); store_caps[c['store']]=v
+        except: pass
+        
+        # 计算真实命中
+        dn_row = db.execute("SELECT draw_number FROM draw_records WHERE date=?",(row['date'],)).fetchone()
+        dn = dn_row['draw_number'] if dn_row else 0
+        if dn > 0:
+            th = 25 if row.get('mode')=='positive' else 24
+            sm = {-23:"一店",-24:"二店",-25:"三店",-26:"四店",-28:"五店",-29:"六店",14:"集合14",16:"集合16"}
+            for o in db.execute("SELECT collection_id,numbers_json FROM order_numbers WHERE date=? AND threshold=?",(row['date'],th)):
+                s = sm.get(o['collection_id'])
+                if s:
+                    h = dn in json.loads(o['numbers_json'])
+                    for st in stores:
+                        if st['store']==s: st['hit']=h
+        
+        result_rows.append({'id':row['id'],'date':row['date'],'mode':row['mode'],'rankings':row.get('rankings','{}'),'result':row.get('result','{}'),'created_at':row.get('created_at'),'day_summary':{'profit':row.get('own_profit'),'capital':row.get('own_capital') or sum(store_caps.values()),'store_details':stores,'store_capitals':store_caps}})
     db.close()
-    return {"rows": [dict(r) for r in rows], "total": total}
+    return {"rows": result_rows, "total": total}
 
 
 def _predict_orders(rankings, params):
