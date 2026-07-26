@@ -4302,11 +4302,6 @@ function confirmOrderToHistory(overrideDate) {
   var date = d.date;  // 排位日期
   var actionDay = overrideDate || offsetDate(date, 1);  // 出手日：输入框优先，其次排位+1
 
-  var today = new Date().toISOString().slice(0,10);
-  // 排位日必须已到达（排位数据就绪即可确认，无需等出手日）
-  if (date > today) {
-    return alert('❌ 排位日 ' + date + ' 还未到达，数据未就绪');
-  }
   // 排位日必须是最新
   if (d.date !== latestOrderDate && latestOrderDate && d.date < latestOrderDate) {
     return alert('❌ 排位日 ' + d.date + ' 不是最新（最新: ' + latestOrderDate + '），仅允许最新排位日确认');
@@ -4525,7 +4520,8 @@ function syncOrderNumbers() {
       }
       btn.textContent = '更新正负下单';
       btn.disabled = false;
-      initOrderSheet(syncDate, syncDate).then(function() {
+      // guide_date=null 用最新共识，writeDate=syncDate 写入目标日期
+      initOrderSheet(null, syncDate).then(function() {
         confirmOrderToHistory(syncDate);
       });
     })
@@ -4545,8 +4541,8 @@ function syncOrderByDate() {
     .then(r => r.json())
     .then(function(res){
       if (res.ok) {
-        showToast('✅ 同步完成: ' + syncDate + ' (' + (res.items||0) + '条)');
-        initOrderSheet(syncDate, syncDate);
+        showToast('✅ 号码同步: ' + syncDate + ' (' + (res.items||0) + '条)');
+        initOrderSheet(syncDate);  // 只刷新页面，不自动更新下单金额
       } else {
         showToast('❌ ' + (res.error || '同步失败'));
       }
@@ -6384,37 +6380,6 @@ function loadOrderHistory(page) {
         if (negRange === '—') negRange = storeFallback(r.stores, 'negative', hasDrawOH);
         h += negRange;
         h += '</div>';
-        // 实际配置盈亏（用户自己的资本 × 真实排位）—— 按条件逐店计算
-        var ownHits = r.store_hits || {};
-        var ownStores = r.stores || [];
-        var hasOwn = ownStores.some(function(s){ return (s.capital||0) > 0; });
-        var hasDraw = (r.draw_number || 0) > 0;
-        if (hasOwn && hasDraw) {
-          var totalStoreProfit = 0;
-          var storeParts = [];
-          ownStores.forEach(function(s){
-            var c = s.capital || 0;
-            if (c <= 0) return;
-            var hit = ownHits[s.store];
-            var rk = (r.rankings||{})[s.store];
-            var em = s.mode === 'negative' ? 'negative' : 'positive';
-            var net = hit ? c*22 : -c*25;
-            if (em === 'negative') net = hit ? c*23 : -c*24;
-            totalStoreProfit += net;
-            var clr = net>0 ? '#16a34a' : '#dc2626';
-            var sign = net>0 ? '+' : '';
-            var abbr = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','集合14':'14','集合16':'16'}[s.store]||s.store;
-            var cond = em === 'negative' ? '反' : '正';
-            var hitLabel = hit ? '✅' : '❌';
-            storeParts.push('<span style="margin:0 2px;white-space:nowrap">'+hitLabel+cond+abbr+':'+(rk||'?')+'→<span style="color:'+clr+';font-weight:700">'+sign+net+'</span></span>');
-          });
-          var tclr = totalStoreProfit>0 ? '#16a34a' : totalStoreProfit<0 ? '#dc2626' : '#8899b0';
-          var tsign = totalStoreProfit>0 ? '+' : '';
-          h += '<div style="font-size:9px;margin-top:4px;padding:6px 8px;background:#fefce8;border-radius:4px;border:1px dashed #eab308">';
-          h += '<div style="font-weight:700;color:#b45309;margin-bottom:2px">💰 按条件逐店盈亏 · 合计<span style="color:'+tclr+'"> '+tsign+totalStoreProfit+'</span></div>';
-          h += storeParts.join(' ');
-          h += '</div>';
-        }
         h += '</div>'; // 关闭展开区
         h += '</div>'; // 关闭父容器(日期行)
       });
