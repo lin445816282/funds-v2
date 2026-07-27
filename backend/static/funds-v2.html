@@ -617,6 +617,13 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
         <button class="btn-clear" onclick="runDailyGuideNegative()" id="sim-guide-neg-btn" style="background:#fef2f2;color:#dc2626">📋 反帮扶</button>
       </div>
       <div style="text-align:center;font-size:10px;color:#8899b0;margin-top:2px">优化轮数: 10（坐标下降默认精度）</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px">
+        <span style="font-size:11px;color:#92400e;white-space:nowrap;font-weight:600">📅 生成指南</span>
+        <input type="date" id="gen-from" style="flex:1;padding:5px 4px;border:1px solid #d4a574;border-radius:6px;font-size:11px;color:#1e3a5f;background:#fff;min-width:0">
+        <span style="font-size:11px;color:#b45309">→</span>
+        <input type="date" id="gen-to" style="flex:1;padding:5px 4px;border:1px solid #d4a574;border-radius:6px;font-size:11px;color:#1e3a5f;background:#fff;min-width:0">
+        <button onclick="generateGuidesRange()" id="gen-guides-btn" style="padding:5px 10px;border-radius:6px;border:none;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">生成</button>
+      </div>
       <div class="btn-row" style="margin-top:4px">
         <button class="btn-save" onclick="loadGuideCompare()" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;flex:1">⚖️ 正负帮扶对比</button>
       </div>
@@ -1114,9 +1121,17 @@ var rankStreakMonths = {};  // { 1: true, 2: true } — 多选月
 var txYear, txMonth, txDay;
 
 // 数据来源追踪
-var dataSource = '';  // 'api' | 'local' | 'mock'
 var lastSyncTime = '';
 var lastSyncSuccess = 0;  // 上次同步成功时间戳，0=未同步
+var _batchTimer = null;  // 批次进度计时器
+
+// 安全 JSON 解析 — 非 JSON 返回（如 500 HTML）不崩
+function safeJson(r) {
+  return r.text().then(function(t) {
+    try { return JSON.parse(t); }
+    catch(e) { return {ok: false, error: '服务器异常: ' + t.substring(0, 80)}; }
+  });
+}
 
 // 路径前缀：代理下为 /funds-v2，直连为空
 var API_BASE = window.location.pathname.startsWith('/funds-v2') ? '/funds-v2' : '';
@@ -4050,6 +4065,7 @@ function markDayResult(result) {
 }
 
 // ═══════════ 下单表 ═══════════
+var guideMode = 'single';
 var orderData = null;
 var trimCount = 0;
 var latestOrderDate = '';
@@ -4068,9 +4084,14 @@ function initOrderSheet(guideDate, writeDate) {
     .then(function() {
     var url = '/api/simulate/order-sheet?days=30&_t=' + Date.now();
     if (guideDate) url += '&guide_date=' + encodeURIComponent(guideDate);
+    if (writeDate && !guideDate) url += '&date=' + encodeURIComponent(writeDate);
     return authFetch(url)
       .then(r => r.json())
       .then(function(d) {
+        if (d.error) {
+          el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:20px">⚠️ ' + d.error + '<br><span style="font-size:11px;color:#8899b0">请先运行算法演算生成缓存数据</span></div>';
+          throw new Error(d.error);
+        }
         orderData = d;
         latestOrderDate = d.date;
         trimCount = 0;
@@ -4146,10 +4167,24 @@ function renderOrderSheet(d) {
     h += badge;
     h += '</div>';
   }
+  // 模式切换
+  h += '<div style="display:flex;align-items:center;justify-content:center;gap:4px;margin-bottom:4px">';
+  h += '<button onclick="switchGuideMode(\'single\')" id="mode-btn-single" style="padding:3px 10px;border-radius:12px;border:1px solid #3b82f6;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;'+(guideMode==='single'?'background:#3b82f6;color:#fff':'background:#f8fafc;color:#3b82f6')+'">单日</button>';
+  h += '<button onclick="switchGuideMode(\'range\')" id="mode-btn-range" style="padding:3px 10px;border-radius:12px;border:1px solid #f59e0b;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;'+(guideMode==='range'?'background:#f59e0b;color:#fff':'background:#f8fafc;color:#f59e0b')+'">日期段</button>';
+  h += '</div>';
+  
   h += '<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">';
-  h += '<input type="date" id="order-date-input" value="'+d.date+'" style="width:130px;padding:6px 8px;border-radius:8px;border:1px solid #cdd7e5;font-size:13px;color:#1e3a5f;text-align:center;background:#f8fafc">';
-  h += '<button onclick="syncOrderNumbers()" id="sync-order-btn" style="padding:6px 12px;border-radius:8px;border:none;background:#3b82f6;color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">更新正负下单</button>';
-  h += '<button onclick="showOrderNumbersModal()" id="order-view-btn" style="padding:6px 12px;border-radius:8px;border:1px solid #cdd7e5;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;'+(numMatched?'background:#f8fafc;color:#3a5070':'background:#e5e7eb;color:#9ca3af;cursor:default')+'"'+(numMatched?'':' disabled')+'>列表</button>';
+  if (guideMode === 'range') {
+    h += '<input type="date" id="order-date-from" value="'+d.date+'" style="width:120px;padding:6px 4px;border-radius:8px;border:1px solid #f59e0b;font-size:12px;color:#1e3a5f;text-align:center;background:#fffbeb">';
+    h += '<span style="font-size:12px;color:#8899b0">→</span>';
+    h += '<input type="date" id="order-date-to" value="'+d.date+'" style="width:120px;padding:6px 4px;border-radius:8px;border:1px solid #f59e0b;font-size:12px;color:#1e3a5f;text-align:center;background:#fffbeb">';
+    h += '<button onclick="batchGuideRun()" id="batch-guide-btn" style="padding:6px 12px;border-radius:8px;border:none;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">📅 逐日演算</button>';
+    h += '<button onclick="showOrderNumbersModal()" id="order-view-btn" style="padding:6px 12px;border-radius:8px;border:1px solid #cdd7e5;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;'+(numMatched?'background:#f8fafc;color:#3a5070':'background:#e5e7eb;color:#9ca3af;cursor:default')+'"'+(numMatched?'':' disabled')+'>列表</button>';
+  } else {
+    h += '<input type="date" id="order-date-input" value="'+d.date+'" style="width:130px;padding:6px 8px;border-radius:8px;border:1px solid #cdd7e5;font-size:13px;color:#1e3a5f;text-align:center;background:#f8fafc">';
+    h += '<button onclick="syncOrderNumbers()" id="sync-order-btn" style="padding:6px 12px;border-radius:8px;border:none;background:#3b82f6;color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">更新正负下单</button>';
+    h += '<button onclick="showOrderNumbersModal()" id="order-view-btn" style="padding:6px 12px;border-radius:8px;border:1px solid #cdd7e5;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;'+(numMatched?'background:#f8fafc;color:#3a5070':'background:#e5e7eb;color:#9ca3af;cursor:default')+'"'+(numMatched?'':' disabled')+'>列表</button>';
+  }
   h += '</div>';
   h += '<div style="font-size:10px;color:'+(pulledAt?'#16a34a':'#dc2626')+'">号码同步 '+syncStatus+'</div>';
 
@@ -4492,6 +4527,174 @@ function copyNumModal() {
 }
 
 var orderSheetDate = "";
+
+
+function switchGuideMode(mode) {
+  guideMode = mode;
+  if (orderData) renderOrderSheet(orderData);
+}
+
+function batchGuideRun() {
+  var btn = document.getElementById('batch-guide-btn');
+  if (!btn || btn.disabled) return;
+  
+  var fromInput = document.getElementById('order-date-from');
+  var toInput = document.getElementById('order-date-to');
+  var fromDate = fromInput ? fromInput.value : '';
+  var toDate = toInput ? toInput.value : '';
+  
+  if (!fromDate || !toDate) { showToast('❌ 请选择起止日期'); return; }
+  if (fromDate > toDate) { showToast('❌ 起始日期不能晚于结束日期'); return; }
+  
+  // Build date list
+  var dates = [];
+  var cur = new Date(fromDate);
+  var end = new Date(toDate);
+  while (cur <= end) {
+    dates.push(cur.toISOString().slice(0,10));
+    cur.setDate(cur.getDate() + 1);
+  }
+  var days = dates.length;
+  if (days > 90) { showToast('❌ 最多90天'); return; }
+  
+  btn.disabled = true;
+  btn.textContent = '⏳ 0/' + days;
+  showBatchProgress(days, fromDate, toDate);
+  
+  var okCount = 0, skipCount = 0, errCount = 0;
+  var errors = [];
+  
+  function updateUI() {
+    var done = okCount + skipCount + errCount;
+    var text = document.getElementById('batch-progress-text');
+    var bar = document.getElementById('batch-progress-bar');
+    if (text) text.textContent = done + '/' + days;
+    if (bar) bar.style.width = (done / days * 100) + '%';
+    btn.textContent = '⏳ ' + done + '/' + days;
+  }
+  
+  function processNext(i) {
+    if (i >= days) {
+      // All done
+      btn.disabled = false;
+      btn.textContent = '📅 逐日演算';
+      var msg;
+      if (okCount > 0) {
+        msg = '✅ 完成: ' + okCount + '/' + days;
+        if (skipCount) msg += ' (跳过' + skipCount + ')';
+        if (errCount) msg += ' ⚠' + errCount + '错';
+      } else if (skipCount === days) {
+        msg = '✅ ' + days + '天已是最新数据';
+      } else if (errCount === days) {
+        msg = '❌ 全部失败';
+      } else {
+        msg = '⚠ ' + okCount + '/' + days + ' (跳过' + skipCount + ', ' + errCount + '错)';
+      }
+      showToast(msg);
+      
+      // Update progress overlay
+      var text = document.getElementById('batch-progress-text');
+      var bar = document.getElementById('batch-progress-bar');
+      var detail = document.getElementById('batch-progress-detail');
+      var done = okCount + skipCount;
+      if (text) text.textContent = done + '/' + days;
+      if (bar) bar.style.width = (days > 0 ? (done / days * 100) : 0) + '%';
+      if (detail) {
+        var d = okCount + '天';
+        if (skipCount) d += ' | 跳过' + skipCount;
+        if (errCount) d += ' | ⚠' + errCount;
+        detail.textContent = d;
+      }
+      var closeBtn = document.querySelector('#batch-progress-overlay button');
+      if (closeBtn) closeBtn.textContent = '关闭并刷新';
+      
+      _batchCallback = initOrderSheet;
+      return;
+    }
+    
+    var date = dates[i];
+    
+    authFetch('/api/simulate/run-one-day', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({date: date})
+    })
+    .then(safeJson)
+    .then(function(res) {
+      if (res.ok) {
+        okCount++;
+      } else if (res.skip) {
+        skipCount++;
+      } else {
+        errCount++;
+        errors.push(date + ': ' + (res.error || 'unknown'));
+      }
+      updateUI();
+      processNext(i + 1);
+    })
+    .catch(function(e) {
+      errCount++;
+      errors.push(date + ': ' + e.message);
+      updateUI();
+      if (e.message === '未登录') {
+        showToast('❌ 登录过期，请重新登录');
+        closeBatchProgress();
+        _batchCallback = null;
+        btn.disabled = false;
+        btn.textContent = '📅 逐日演算';
+        return;
+      }
+      processNext(i + 1);
+    });
+  }
+  
+  processNext(0);
+}
+
+function showBatchProgress(total, fromDate, toDate) {
+  var overlay = document.getElementById('batch-progress-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'batch-progress-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = '<div style="background:#fff;border-radius:16px;padding:24px;max-width:300px;width:90%;text-align:center">'
+    + '<div style="font-size:16px;font-weight:700;color:#1e3a5f;margin-bottom:8px">📅 逐日演算中</div>'
+    + '<div style="font-size:12px;color:#8899b0;margin-bottom:4px">' + fromDate + ' → ' + toDate + '</div>'
+    + '<div style="font-size:28px;font-weight:700;color:#2563eb;margin:12px 0" id="batch-progress-text">0/' + total + '</div>'
+    + '<div style="background:#e5e7eb;border-radius:8px;height:8px;overflow:hidden;margin-bottom:8px">'
+    + '<div id="batch-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#7c3aed);border-radius:8px;transition:width .3s"></div></div>'
+    + '<div style="font-size:11px;color:#667" id="batch-progress-detail">准备中...</div>'
+    + '<button onclick="closeBatchProgress(true)" style="margin-top:12px;padding:6px 16px;border-radius:8px;border:1px solid #e5e7eb;background:#f8fafc;color:#5a6b85;font-size:12px;cursor:pointer">关闭</button>'
+    + '</div>';
+  overlay.style.display = 'flex';
+}
+
+function updateBatchProgress(res) {
+  var text = document.getElementById('batch-progress-text');
+  var bar = document.getElementById('batch-progress-bar');
+  var detail = document.getElementById('batch-progress-detail');
+  if (text) text.textContent = res.ok_count + '/' + res.total;
+  if (bar) bar.style.width = (res.total > 0 ? (res.ok_count / res.total * 100) : 0) + '%';
+  if (detail) {
+    var d = '✅ ' + res.ok_count + '天';
+    if (res.skip_count) d += ' | 跳过' + res.skip_count;
+    if (res.error_count) d += ' | ⚠' + res.error_count;
+    detail.textContent = d;
+  }
+  setTimeout(function() {
+    var closeBtn = document.querySelector('#batch-progress-overlay button');
+    if (closeBtn) closeBtn.textContent = '关闭并刷新';
+  }, 0);
+}
+
+function closeBatchProgress(doRefresh) {
+  var overlay = document.getElementById('batch-progress-overlay');
+  if (overlay) overlay.style.display = 'none';
+  if (doRefresh && _batchCallback) { var cb = _batchCallback; _batchCallback = null; cb(); }
+  else _batchCallback = null;
+}
 function syncOrderNumbers() {
   var btn = document.getElementById('sync-order-btn');
   if (!btn) return;
@@ -5705,12 +5908,21 @@ var simLastResult = null;  // 最后结果
 var STORE_NAMES = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
 
 function initSimPanel() {
-  if (simData) { renderSimStoreTable(); updateAlgoHint(); return; }
+  if (simData) { renderSimStoreTable(); updateAlgoHint(); initGenDates(); return; }
   // 首次加载数据
   authFetch('/api/simulate/data')
     .then(r => r.json())
-    .then(d => { simData = d; renderSimStoreTable(); updateAlgoHint(); })
+    .then(d => { simData = d; renderSimStoreTable(); updateAlgoHint(); initGenDates(); })
     .catch(e => { document.getElementById('sim-store-table').innerHTML = '<p style="color:#dc2626;font-size:12px;padding:8px">加载数据失败: '+e.message+'</p>'; });
+}
+
+function initGenDates() {
+  var today = new Date().toISOString().slice(0,10);
+  var weekAgo = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+  var fromEl = document.getElementById('gen-from');
+  var toEl = document.getElementById('gen-to');
+  if (fromEl && !fromEl.value) fromEl.value = weekAgo;
+  if (toEl && !toEl.value) toEl.value = today;
 }
 
 function toggleSimMode() {
@@ -6010,6 +6222,111 @@ function storeRange(ds, hits, hasDraw) {
   return '<div style="line-height:1.3;overflow-x:auto">' + top + '<br>' + bot + '</div>';
 }
 
+function generateGuidesRange() {
+  var btn = document.getElementById('gen-guides-btn');
+  if (!btn || btn.disabled) return;
+  var from = document.getElementById('gen-from').value;
+  var to = document.getElementById('gen-to').value;
+  if (!from || !to) { showToast('❌ 请选择起止日期'); return; }
+  if (from > to) { showToast('❌ 起始日期不能晚于结束日期'); return; }
+  
+  var dates = [];
+  var cur = new Date(from);
+  var end = new Date(to);
+  while (cur <= end) {
+    dates.push(cur.toISOString().slice(0,10));
+    cur.setDate(cur.getDate() + 1);
+  }
+  var days = dates.length;
+  if (days > 90) { showToast('❌ 最多90天'); return; }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ 0/' + days;
+  showBatchProgress(days, from, to);
+  
+  var okCount = 0, skipCount = 0, errCount = 0;
+  
+  function updateUI() {
+    var done = okCount + skipCount + errCount;
+    var text = document.getElementById('batch-progress-text');
+    var bar = document.getElementById('batch-progress-bar');
+    if (text) text.textContent = done + '/' + days;
+    if (bar) bar.style.width = (done / days * 100) + '%';
+    btn.textContent = '⏳ ' + done + '/' + days;
+  }
+  
+  function processNext(i) {
+    if (i >= days) {
+      btn.disabled = false;
+      btn.textContent = '生成';
+      var msg;
+      if (okCount > 0) {
+        msg = '✅ 完成: ' + okCount + '/' + days;
+        if (skipCount) msg += ' (已有' + skipCount + '天)';
+        if (errCount) msg += ' ⚠' + errCount + '错';
+      } else if (skipCount === days) {
+        msg = '✅ ' + days + '天已是最新数据';
+      } else {
+        msg = '⚠ ' + okCount + '/' + days;
+      }
+      showToast(msg);
+      
+      var text = document.getElementById('batch-progress-text');
+      var bar = document.getElementById('batch-progress-bar');
+      var detail = document.getElementById('batch-progress-detail');
+      var done = okCount + skipCount;
+      if (text) text.textContent = done + '/' + days;
+      if (bar) bar.style.width = (days > 0 ? (done / days * 100) : 0) + '%';
+      if (detail) {
+        var d = okCount + '天';
+        if (skipCount) d += ' | 跳过' + skipCount;
+        if (errCount) d += ' | ⚠' + errCount;
+        detail.textContent = d;
+      }
+      var closeBtn = document.querySelector('#batch-progress-overlay button');
+      if (closeBtn) closeBtn.textContent = '关闭并刷新';
+      
+      _batchCallback = loadGuideCompare;
+      return;
+    }
+    
+    var date = dates[i];
+    authFetch('/api/simulate/generate-one-day', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({date: date})
+    })
+    .then(safeJson)
+    .then(function(res) {
+      if (res.ok) {
+        okCount++;
+      } else if (res.skip) {
+        skipCount++;
+      } else {
+        errCount++;
+      }
+      updateUI();
+      processNext(i + 1);
+    })
+    .catch(function(e) {
+      errCount++;
+      updateUI();
+      if (e.message === '未登录') {
+        showToast('❌ 登录过期，请重新登录');
+        closeBatchProgress();
+        _batchCallback = null;
+        btn.disabled = false;
+        btn.textContent = '生成';
+        return;
+      }
+      processNext(i + 1);
+    });
+  }
+  
+  processNext(0);
+}
+
+
 function loadGuideCompare() {
   var modal = document.getElementById('compare-modal');
   var container = document.getElementById('compare-content');
@@ -6066,8 +6383,8 @@ function renderGuide(d) {
   var h = '';
   // 今日排位
   h += '<div style="margin-bottom:12px;padding:8px 10px;background:#f0f7ff;border-radius:8px">';
-  var nextDate = offsetDate(d.date, 1);
-  h += '<div style="font-size:11px;color:#8899b0;margin-bottom:3px">📅 '+nextDate+' 出手（排位日 '+d.date+'）</div>';
+  var rankDate = d.ranking_date || offsetDate(d.date, -1);
+  h += '<div style="font-size:11px;color:#8899b0;margin-bottom:3px">📅 '+d.date+' 出手（排位日 '+rankDate+'）</div>';
   h += '<div style="font-size:12px;font-weight:600">';
   ['一店','二店','三店','四店','五店','六店','集合14','集合16'].forEach(function(s){
     var rankings = d.pred_rankings || d.today_rankings || {};
@@ -6230,7 +6547,35 @@ function loadOrderHistory(page) {
       summary += '<tr><td>累计投入</td><td style="text-align:center;color:#2563eb;font-weight:700">' + posTotal.toLocaleString() + '</td><td style="text-align:center;color:#dc2626;font-weight:700">' + negTotal.toLocaleString() + '</td></tr>';
       summary += '<tr><td>出场次数</td><td style="text-align:center;color:#2563eb">' + posCount + '</td><td style="text-align:center;color:#dc2626">' + negCount + '</td></tr>';
       summary += '<tr><td>总计</td><td colspan="2" style="text-align:center;font-weight:700;color:#1e3a5f">' + totalCap.toLocaleString() + '</td></tr>';
-      summary += '</table></div>';
+      summary += '</table>';
+      // 按月汇总卡片
+      var ms = data.monthly_summary || [];
+      if (ms.length > 0) {
+        summary += '<div style="margin-top:8px;font-size:10px;font-weight:700;color:#1e3a5f">📆 按月盈亏</div>';
+        summary += '<table style="width:100%;font-size:10px;border-collapse:collapse;margin-top:4px">';
+        summary += '<tr style="color:#8899b0;font-size:9px"><td>月份</td><td style="text-align:right">盈亏</td><td style="text-align:right">盈/亏天</td><td style="text-align:right">胜率</td></tr>';
+        ms.forEach(function(m){
+          var pc = m.profit;
+          var color = pc>0?'#16a34a':pc<0?'#dc2626':'#64748b';
+          var sign = pc>0?'+':'';
+          var winRate = m.days>0 ? Math.round(m.win_days/m.days*100)+'%' : '—';
+          summary += '<tr><td style="border-bottom:1px solid #f1f5f9;padding:2px 0">'+m.month+'</td>';
+          summary += '<td style="text-align:right;font-weight:700;color:'+color+';border-bottom:1px solid #f1f5f9">'+sign+pc.toLocaleString()+'</td>';
+          summary += '<td style="text-align:right;color:#64748b;border-bottom:1px solid #f1f5f9">'+m.win_days+'/'+m.lose_days+'</td>';
+          summary += '<td style="text-align:right;color:#64748b;border-bottom:1px solid #f1f5f9">'+winRate+'</td></tr>';
+        });
+        // 总计行
+        var ts = data.total_summary || {};
+        var tp = ts.profit || 0;
+        var tc = tp>0?'#16a34a':tp<0?'#dc2626':'#64748b';
+        var tsgn = tp>0?'+':'';
+        summary += '<tr style="font-weight:700;background:#f8fafc"><td>总计('+ts.months+'月)</td>';
+        summary += '<td style="text-align:right;color:'+tc+'">'+tsgn+tp.toLocaleString()+'</td>';
+        summary += '<td style="text-align:right;color:#1e3a5f">'+ts.days+'天</td>';
+        summary += '<td></td></tr>';
+        summary += '</table>';
+      }
+      summary += '</div>';
 
       // 缩写函数
       function abbr(store) {

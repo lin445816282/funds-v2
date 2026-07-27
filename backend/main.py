@@ -79,6 +79,23 @@ def init_db():
             total_capital INTEGER NOT NULL DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        CREATE TABLE IF NOT EXISTS strategy_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            ts TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            mode TEXT NOT NULL,
+            algorithm TEXT,
+            params_json TEXT,
+            total_profit REAL,
+            total_shots INTEGER,
+            total_hits INTEGER,
+            hit_rate REAL,
+            max_drawdown REAL,
+            backfilled INTEGER NOT NULL DEFAULT 0,
+            actual_profit REAL,
+            actual_capital REAL,
+            next_day_capital INTEGER
+        );
         CREATE TABLE IF NOT EXISTS draw_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL UNIQUE,
@@ -557,7 +574,7 @@ async def index_predictions(days: int = 30):
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
 # ═══════════════ 总部出手模拟 ═══════════════
-from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_optimization_log, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts, save_order_history, get_order_history, ack_order_history
+from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_optimization_log, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts, save_order_history, get_order_history, ack_order_history, load_data, optimize, STORE_NAMES, batch_generate_guides, generate_guides_only, run_single_day, run_single_guide
 
 @app.get("/api/simulate/data")
 async def api_simulate_data(request: Request, days: int = 90):
@@ -1040,6 +1057,189 @@ if os.path.isdir(STATIC_DIR):
                 "ETag": '"' + path + '-' + str(int(os.path.getmtime(fp))) + '"'
             })
         return FileResponse(os.path.join(STATIC_DIR, "funds-v2.html"))
+
+
+
+# ═══════════════ 策略最优保存 & 回填 ═══════════════
+
+@app.get("/api/strategy/optimal")
+async def api_strategy_optimal(request: Request, save: int = 0):
+    """运行坐标下降+均匀算法，取最优策略保存到 strategy_log
+    save=1 时写入 DB"""
+    await require_auth(request)
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(_executor, load_data, 90)
+    if not data:
+        return {"ok": False, "error": "无数据"}
+
+    modes = ["positive", "negative"]
+    algorithms = ["coordinate", "uniform", "stop_neg2", "positive_only"]
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    best_overall = None
+
+    for mode in modes:
+        for algo in algorithms:
+            params, result = optimize(data, mode=mode, algorithm=algo, max_iter=10)
+            if params is None or result is None:
+                continue
+            profit = result.get("total_profit", 0)
+            if best_overall is None or profit > best_overall["result"]["total_profit"]:
+                best_overall = {
+                    "mode": mode,
+                    "algorithm": algo,
+                    "params": params,
+                    "result": result,
+                }
+
+    if not best_overall:
+        return {"ok": False, "error": "优化无结果"}
+
+    result = best_overall["result"]
+    saved_id = None
+    if save:
+        conn = get_db()
+        import json as _j
+        conn.execute("INSERT INTO strategy_log (date, mode, algorithm, params_json, total_profit, total_shots, total_hits, hit_rate, max_drawdown) VALUES (?,?,?,?,?,?,?,?,?)", (
+            today,
+            best_overall["mode"],
+            best_overall["algorithm"],
+            _j.dumps(best_overall["params"], ensure_ascii=False),
+            result["total_profit"],
+            result["total_shots"],
+            result["total_hits"],
+            result["hit_rate"],
+            result["max_drawdown"],
+        ))
+        conn.commit()
+        saved_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.close()
+
+    return {
+        "ok": True,
+        "saved": bool(save),
+        "saved_id": saved_id,
+        "date": today,
+        "mode": best_overall["mode"],
+        "algorithm": best_overall["algorithm"],
+        "params": best_overall["params"],
+        "result": result,
+        "store_details": [
+            {"name": s,
+             "threshold": best_overall["params"][s]["threshold"],
+             "capital": best_overall["params"][s]["capital"],
+             "mode": best_overall["params"][s]["mode"]}
+            for s in STORE_NAMES
+        ],
+    }
+
+
+@app.post("/api/strategy/backfill")
+async def api_strategy_backfill(request: Request):
+    """回填昨日实际盈亏到 strategy_log（从 order_history 读取）"""
+    await require_auth(request)
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute(
+        "SELECT action_date, mode, stores_json, total_capital, draw_number, own_profit, own_capital, amounts_json FROM order_history WHERE action_date=? ORDER BY id",
+        (yesterday,)
+    ).fetchall()
+
+    if not rows:
+        return {"ok": True, "date": yesterday, "backfilled": False, "reason": "昨日无出手记录"}
+
+    total_actual_profit = sum(r["own_profit"] or 0 for r in rows)
+    total_actual_capital = sum(r["own_capital"] or 0 for r in rows)
+    next_day_capital = None
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_log = conn.execute(
+        "SELECT id, total_capital FROM strategy_log WHERE date=? ORDER BY id DESC LIMIT 1", (today,)
+    ).fetchone()
+    if today_log:
+        next_day_capital = today_log["total_capital"]
+
+    conn.execute(
+        "UPDATE strategy_log SET backfilled=1, actual_profit=?, actual_capital=? WHERE date=? AND backfilled=0",
+        (total_actual_profit, total_actual_capital, yesterday)
+    )
+    updated = conn.total_changes
+    conn.commit()
+    conn.close()
+
+    return {
+        "ok": True,
+        "date": yesterday,
+        "backfilled": bool(updated),
+        "updated_rows": len(rows),
+        "actual_profit": total_actual_profit,
+        "actual_capital": total_actual_capital,
+        "total_capital": total_actual_capital,
+        "next_day_capital": next_day_capital,
+    }
+
+@app.post("/api/simulate/run-one-day")
+async def api_run_one_day(request: Request):
+    """单日演算：跑算法投票 + 存入历史"""
+    await require_auth(request)
+    body = await request.json()
+    bet_date = body.get("date", "")
+    if not bet_date:
+        raise HTTPException(400, "date required")
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(_executor, lambda: run_single_day(bet_date))
+    except Exception as e:
+        return {"ok": False, "date": bet_date, "error": str(e)}
+
+
+@app.post("/api/simulate/batch-guide")
+async def api_batch_guide(request: Request):
+    """批量逐日演算：指定日期范围，逐一跑算法投票 + 存入历史"""
+    await require_auth(request)
+    body = await request.json()
+    from_date = body.get("from_date", "")
+    to_date = body.get("to_date", "")
+    if not from_date or not to_date:
+        raise HTTPException(400, "from_date and to_date required")
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(_executor, lambda: batch_generate_guides(from_date, to_date))
+    except Exception as e:
+        return {"ok": False, "error": f"批量演算异常: {e}", "total": 0, "ok_count": 0, "skip_count": 0, "error_count": 1}
+
+
+@app.post("/api/simulate/generate-one-day")
+async def api_generate_one_day(request: Request):
+    """单日指南生成：只写 sim_guides，不动 order_history"""
+    await require_auth(request)
+    body = await request.json()
+    bet_date = body.get("date", "")
+    if not bet_date:
+        raise HTTPException(400, "date required")
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(_executor, lambda: run_single_guide(bet_date))
+    except Exception as e:
+        return {"ok": False, "date": bet_date, "error": str(e)}
+
+
+@app.post("/api/simulate/generate-guides")
+async def api_generate_guides(request: Request):
+    """生成指南缓存：只写 sim_guides，不动 order_history"""
+    await require_auth(request)
+    body = await request.json()
+    from_date = body.get("from_date", "")
+    to_date = body.get("to_date", "")
+    if not from_date or not to_date:
+        raise HTTPException(400, "from_date and to_date required")
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(_executor, lambda: generate_guides_only(from_date, to_date))
+    except Exception as e:
+        return {"ok": False, "error": f"生成异常: {e}", "total": 0, "ok_count": 0, "error_count": 1}
 
 
 if __name__ == "__main__":

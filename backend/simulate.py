@@ -25,30 +25,17 @@ MISS_MULT = {"positive": 25, "negative": 24}
 def load_data(days=90):
     """返回 {date: {draw: int, rankings: {store: rank}}} 列表，按日期排序"""
     from datetime import datetime, timedelta
-    from dateutil.relativedelta import relativedelta
     
     fv = sqlite3.connect(FUNDS_DB)
     fv.row_factory = sqlite3.Row
     
-    # 动态计算起始日期：最新排位日往前3个月
-    latest_row = fv.execute(
-        "SELECT MAX(date) FROM records WHERE category=?", (RANKING_CAT,)
-    ).fetchone()
-    latest_date = latest_row[0] if latest_row and latest_row[0] else None
-    if latest_date:
-        dt = datetime.strptime(latest_date, "%Y-%m-%d")
-        start_dt = dt - relativedelta(months=3)
-        start_date = start_dt.strftime("%Y-%m-%d")
-    else:
-        start_date = '2026-04-11'  # fallback
-    
-    # 获取排位数据
+    # 获取全部排位数据（不限下限，调用方自己切92天窗口）
     rankings = {}
     rows = fv.execute("""
         SELECT store, date, amount FROM records 
-        WHERE category=? AND date >= ?
+        WHERE category=?
         ORDER BY date, store
-    """, (RANKING_CAT, start_date)).fetchall()
+    """, (RANKING_CAT,)).fetchall()
     
     # 去重：同一store+date取最新的一条
     seen = set()
@@ -60,13 +47,13 @@ def load_data(days=90):
             if d not in rankings:
                 rankings[d] = {}
             rankings[d][r["store"]] = int(r["amount"])
-    # 获取各店实际收入（盈亏判定用）
+    # 获取各店实际收入（盈亏判定用）— 全量，调用方自己切
     store_income = {}
     rows_i = fv.execute("""
         SELECT date, store, amount FROM records 
-        WHERE category='income' AND date >= ?
+        WHERE category='income'
         ORDER BY date, store
-    """, (start_date,)).fetchall()
+    """).fetchall()
     for r in rows_i:
         d = r["date"]
         if d not in store_income:
@@ -80,9 +67,9 @@ def load_data(days=90):
     draws = {}
     rows_d = wh.execute("""
         SELECT date, draw_number FROM analysis_daily 
-        WHERE project_id=19 AND date >= ?
+        WHERE project_id=19
         ORDER BY date
-    """, (start_date,)).fetchall()
+    """).fetchall()
     for r in rows_d:
         draws[r["date"]] = r["draw_number"]
     wh.close()
@@ -495,15 +482,37 @@ def store_params_to_dict(sp):
 
 # ═══════════════ API：每日下单指南 ═══════════════
 def run_daily_guide(days=90, mode="positive", max_iter=10):
-    """跑4组优化 + 取最新排位 + 逐店判定 → 投票汇总
-    mode: "positive"=正帮扶（排位≤阈值出手）, "negative"=反帮扶（排位>阈值出手）
-    max_iter: 坐标下降迭代轮数（3=全精度, 1=快速）
+    """跑4组优化 + 取最新排位 → 预测次日出手 → 投票汇总
+
+    正确时序：
+    - 排位日 PK：最新有排位日（如7-26）
+    - 出手日 D：排位日+1（如7-27）
+    - 训练数据：严格 < D（不含出手日及之后数据，防前视偏差）
+    - 预测用：排位日（PK）的排位数据
+
+    前端按钮不传日期，自动按"排位日次日出击"逻辑推演。
+    如需指定日期生成，用 run_daily_guide_for_date。
     """
+    # ── 缓存：查 sim_guides 是否有当天数据（出手日 = 最新排位日+1）──
+    from datetime import datetime, timedelta
+    _latest_rank_day = None
+    _tmp_data = load_data(days)
+    if _tmp_data:
+        for d in reversed(_tmp_data):
+            if d.get("rankings"):
+                _latest_rank_day = d["date"]
+                break
+    if _latest_rank_day:
+        _bet_date_cache = (datetime.strptime(_latest_rank_day, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        _cached = _get_guide_from_db(_bet_date_cache, mode)
+        if _cached:
+            return _cached
+
     data = load_data(days)
     if not data:
         return {"error": "无数据"}
 
-    # 找最新有排位日 → 用当日排位预测次日出手
+    # 找最新有排位日（排位日 PK）
     last_day = None
     for d in reversed(data):
         if d.get("rankings"):
@@ -512,22 +521,20 @@ def run_daily_guide(days=90, mode="positive", max_iter=10):
     if not last_day:
         return {"error": "无排位数据"}
 
-    today_rankings = last_day["rankings"]
-    today_date = last_day["date"]
+    ranking_day = last_day["date"]
+    pred_rankings = last_day["rankings"]
 
-    # ── 关键：优化只用 D-1 之前的数据，D 本身不参与训练（避免数据泄露）──
-    train_data = [d for d in data if d.get("date") != today_date]
+    # 出手日 = 排位日+1
+    from datetime import datetime, timedelta
+    ranking_dt = datetime.strptime(ranking_day, "%Y-%m-%d")
+    bet_date = (ranking_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # ── 验证：仓库 threshold 号码是否就绪 ──
-    import urllib.request
-    try:
-        url = "http://localhost:8016/api/threshold/results?" + urllib.parse.urlencode({"date": today_date})
-        with urllib.request.urlopen(url, timeout=3) as resp:
-            th_data = json.loads(resp.read())
-        if not th_data.get("items"):
-            return {"error": f"仓库{today_date}无threshold号码，请先在数字仓库同步", "ranking_date": today_date}
-    except Exception as e:
-        return {"error": f"仓库验证失败: {e}", "ranking_date": today_date}
+    # ── 关键：训练只用出手日之前的数据（不含出手日及之后），滚动92天窗口──
+    train_data = [d for d in data if d.get("date", "") < bet_date]
+    from dateutil.relativedelta import relativedelta
+    bet_dt = datetime.strptime(bet_date, "%Y-%m-%d")
+    window_start = (bet_dt - relativedelta(days=92)).strftime("%Y-%m-%d")
+    train_data = [d for d in train_data if d.get("date", "") >= window_start]
 
     algorithms = [
         ("coordinate", "坐标下降"),
@@ -539,7 +546,7 @@ def run_daily_guide(days=90, mode="positive", max_iter=10):
     algo_results = []
     for algo_key, algo_name in algorithms:
         params, result = optimize(train_data, mode, algo_key, max_iter)
-        orders, detail = _predict_orders(today_rankings, params)
+        orders, detail = _predict_orders(pred_rankings, params)
         algo_results.append({
             "name": algo_name, "key": algo_key,
             "profit": result["total_profit"],
@@ -551,9 +558,10 @@ def run_daily_guide(days=90, mode="positive", max_iter=10):
     consensus = _build_consensus(algo_results)
 
     result = {
-        "date": today_date,
+        "date": bet_date,          # 出手日
+        "ranking_date": ranking_day, # 排位日
         "mode": mode,
-        "today_rankings": today_rankings,
+        "pred_rankings": pred_rankings,
         "algorithms": algo_results,
         "consensus": consensus,
     }
@@ -564,15 +572,32 @@ def run_daily_guide(days=90, mode="positive", max_iter=10):
 
 
 def run_daily_guide_for_date(bet_date, mode="positive", max_iter=10):
-    """按指定下注日生成指南：排位来自 bet_date-1 的前一个有排位日，评估用 bet_date"""
+    """按指定下注日生成指南：排位来自 bet_date-1 的前一个有排位日，评估用 bet_date
+    
+    安全校验：如果 bet_date 已有 order_history（已确认下单），禁止重算。
+    """
     data = load_data(90)
     if not data:
         return {"error": "无数据"}
+
+    # ── 安全闸：该日期已有下单记录或已开奖 → 禁止重算 ──
+    db_check = sqlite3.connect(FUNDS_DB)
+    try:
+        existing = db_check.execute(
+            "SELECT 1 FROM order_history WHERE action_date=? OR date=? LIMIT 1",
+            (bet_date, bet_date)
+        ).fetchone()
+        if existing:
+            db_check.close()
+            return {"error": f"日{bet_date}已有下单记录，禁止重算。请查看历史记录。"}
+    finally:
+        db_check.close()
 
     # 找 bet_date 前最近的有排位日
     pred_day = None
     for d in reversed(data):
         if d.get("date") < bet_date and d.get("rankings"):
+            # 排位日不能等于出手日（否则就是偷看结果排位）
             pred_day = d
             break
     if not pred_day:
@@ -580,8 +605,18 @@ def run_daily_guide_for_date(bet_date, mode="positive", max_iter=10):
 
     pred_rankings = pred_day["rankings"]
 
-    # 训练用 bet_date 之前的数据
+    # 安全校验：排位日 == bet_date → 偷看结果，禁止
+    if pred_day["date"] == bet_date:
+        return {"error": f"排位日({bet_date})等于出手日，不允许用当天结果排位预测当天出手"}
+
+    # 训练用 bet_date 之前的数据，滚动92天窗口
     train_data = [d for d in data if d.get("date") < bet_date]
+    # 按出手日往前滚92天：只保留最近92天
+    from dateutil.relativedelta import relativedelta
+    bet_dt = datetime.strptime(bet_date, "%Y-%m-%d")
+    window_start = (bet_dt - relativedelta(days=92)).strftime("%Y-%m-%d")
+    train_data = [d for d in train_data if d.get("date", "") >= window_start]
+    print(f"   训练数据: {len(train_data)}天, {train_data[0]['date']} ~ {train_data[-1]['date']}（滚动92天窗口）")
 
     algorithms = [
         ("coordinate", "坐标下降"),
@@ -863,7 +898,15 @@ def get_order_sheet(days=90, target_date=None, guide_date=None):
                 "SELECT date, rankings, result FROM sim_guides WHERE date=? AND mode=? ORDER BY id DESC LIMIT 1",
                 (guide_date, mode)
             ).fetchone()
-            return row  # 找到返回，找不到返回 None → 触发实时计算
+            return row
+        if target_date:
+            # 有 target_date 时，找最接近且 ≤ target_date 的 sim_guide
+            row = db.execute(
+                "SELECT date, rankings, result FROM sim_guides WHERE date<=? AND mode=? ORDER BY date DESC, id DESC LIMIT 1",
+                (target_date, mode)
+            ).fetchone()
+            if row:
+                return row
         return db.execute(
             "SELECT date, rankings, result FROM sim_guides WHERE mode=? ORDER BY date DESC, id DESC LIMIT 1",
             (mode,)
@@ -926,10 +969,57 @@ def get_order_sheet(days=90, target_date=None, guide_date=None):
         }
 
     # 缓存无 → 实时计算（用目标日期窗口避免前视偏差）
-    print("[order-sheet] 无缓存，实时计算中...")
     bet_date = target_date if target_date else guide_date if guide_date else None
+
+    # ── 兜底：bet_date 已有 order_history → 反向构造（显示已确认的下单数据）──
+    if bet_date:
+        db3 = sqlite3.connect(FUNDS_DB)
+        db3.row_factory = sqlite3.Row
+        try:
+            oh_row = db3.execute(
+                "SELECT stores_json FROM order_history WHERE action_date=? ORDER BY id DESC LIMIT 1",
+                (bet_date,)
+            ).fetchone()
+            if oh_row and oh_row["stores_json"]:
+                oh_stores = json.loads(oh_row["stores_json"])
+                pos_stores_v2 = [s for s in oh_stores if s.get("mode") == "positive"]
+                neg_stores_v2 = [s for s in oh_stores if s.get("mode") == "negative"]
+                if pos_stores_v2 or neg_stores_v2:
+                    numbers_h = _load_order_numbers(bet_date)
+                    amounts_data_h = _load_amounts_from_db(bet_date, bet_date) or _load_amounts_from_order_history(bet_date) or _build_amounts_data(pos_stores_v2, neg_stores_v2, numbers_h, bet_date)
+                    db3.close()
+                    return {
+                        "date": bet_date,
+                        "guide_date": bet_date,
+                        "numbers_date": None,
+                        "rankings": {},
+                        "cached": True,
+                        "numbers": numbers_h,
+                        "positive": {
+                            "stores": [{"store": s["store"], "capital": s["capital"], "votes": "已下单", "caps": {}} for s in pos_stores_v2],
+                            "total_capital": sum(s["capital"] for s in pos_stores_v2)
+                        },
+                        "negative": {
+                            "stores": [{"store": s["store"], "capital": s["capital"], "votes": "已下单", "caps": {}} for s in neg_stores_v2],
+                            "total_capital": sum(s["capital"] for s in neg_stores_v2)
+                        },
+                        "order_amounts": amounts_data_h
+                    }
+        except Exception as e:
+            print(f"[order-sheet] history fallback err: {e}")
+        finally:
+            try: db3.close()
+            except: pass
+
     pos = run_daily_guide_for_date(bet_date, "positive", max_iter=10) if bet_date else run_daily_guide(days, "positive", max_iter=10)
     neg = run_daily_guide_for_date(bet_date, "negative", max_iter=10) if bet_date else run_daily_guide(days, "negative", max_iter=10)
+
+    # 实时计算失败 → 返回错误
+    if isinstance(pos, dict) and "error" in pos:
+        return {"error": f"正帮扶演算失败: {pos['error']}", "need_cache": True}
+    if isinstance(neg, dict) and "error" in neg:
+        return {"error": f"反帮扶演算失败: {neg['error']}", "need_cache": True}
+
     pos_stores = extract_stores(pos.get("consensus", []))
     neg_stores = extract_stores(neg.get("consensus", []))
     ranking_date2 = pos.get("date", "")
@@ -1036,6 +1126,22 @@ def _build_amounts_data(pos_stores, neg_stores, numbers, ranking_date):
     
     total = sum(num_amounts.values())
     return {"date": ranking_date, "action_date": action_date, "amounts": num_amounts, "day_index": day_index, "total": total}
+
+
+def _get_guide_from_db(date, mode):
+    """从 sim_guides 读取缓存"""
+    try:
+        db = sqlite3.connect(FUNDS_DB)
+        row = db.execute(
+            "SELECT result FROM sim_guides WHERE date=? AND mode=? LIMIT 1",
+            (date, mode)
+        ).fetchone()
+        db.close()
+        if row:
+            return json.loads(row[0])
+    except Exception as e:
+        print(f"[_get_guide_from_db] 读取失败: {e}")
+    return None
 
 
 def _save_guide(result):
@@ -1756,7 +1862,36 @@ def get_order_history(limit=30, offset=0):
         "negative": {"hits": neg_hits, "total": neg_total,
                       "rate": round(neg_hits/neg_total*100,1) if neg_total>0 else 0},
     }
-    return {"rows": result, "total": total_count, "hit_rate": hit_rate}
+    # 按月汇总 + 总汇总
+    db3 = sqlite3.connect(FUNDS_DB)
+    db3.row_factory = sqlite3.Row
+    m_rows = db3.execute("""
+        SELECT strftime('%Y-%m', date) as ym, 
+               SUM(own_profit) as pf, COUNT(*) as days,
+               SUM(CASE WHEN own_profit>0 THEN 1 ELSE 0 END) as win_days,
+               SUM(CASE WHEN own_profit<0 THEN 1 ELSE 0 END) as lose_days
+        FROM order_history WHERE own_profit IS NOT NULL
+        GROUP BY ym ORDER BY ym
+    """).fetchall()
+    db3.close()
+    monthly = []
+    total_pf = 0
+    for r in m_rows:
+        total_pf += r["pf"] or 0
+        monthly.append({
+            "month": r["ym"],
+            "profit": round(r["pf"] or 0),
+            "days": r["days"],
+            "win_days": r["win_days"],
+            "lose_days": r["lose_days"],
+        })
+    total_summary = {
+        "profit": round(total_pf),
+        "months": len(monthly),
+        "days": sum(m["days"] for m in monthly),
+    }
+    return {"rows": result, "total": total_count, "hit_rate": hit_rate,
+            "monthly_summary": monthly, "total_summary": total_summary}
 
 
 def ack_order_history(action_date, acknowledged):
@@ -1770,3 +1905,268 @@ def ack_order_history(action_date, acknowledged):
     updated = db.total_changes
     db.close()
     return {"ok": True, "action_date": action_date, "acknowledged": bool(acknowledged), "updated": updated}
+
+
+# ═══════════ 批量逐日演算 ═══════════════════
+def batch_generate_guides(from_date, to_date):
+    """逐日跑算法投票 → 存 sim_guides + order_history。
+    返回 {ok, total, ok_count, skip_count, errors[]}"""
+    from datetime import datetime, timedelta
+    
+    d_start = datetime.strptime(from_date, "%Y-%m-%d")
+    d_end = datetime.strptime(to_date, "%Y-%m-%d")
+    
+    dates = []
+    d = d_start
+    while d <= d_end:
+        dates.append(d.strftime("%Y-%m-%d"))
+        d += timedelta(days=1)
+    
+    total = len(dates)
+    ok_count = 0
+    skip_count = 0
+    errors = []
+    
+    for i, bet_date in enumerate(dates):
+        db_check = sqlite3.connect(FUNDS_DB)
+        existing = db_check.execute(
+            "SELECT 1 FROM order_history WHERE action_date=?", (bet_date,)
+        ).fetchone()
+        db_check.close()
+        if existing:
+            skip_count += 1
+            print(f"[batch {i+1}/{total}] {bet_date}: 跳过（已有下单记录）", flush=True)
+            continue
+        
+        try:
+            pos = run_daily_guide_for_date(bet_date, "positive", max_iter=10)
+            neg = run_daily_guide_for_date(bet_date, "negative", max_iter=10)
+        except Exception as e:
+            errors.append(f"{bet_date}: 算法失败 {e}")
+            continue
+        
+        # 并发场景：另一请求已写入 order_history → 算法安全闸返回 "已有下单记录"
+        # 这不是错误，应算跳过
+        pos_err = isinstance(pos, dict) and "error" in pos
+        neg_err = isinstance(neg, dict) and "error" in neg
+        pos_dup = pos_err and "已有下单记录" in pos.get("error", "")
+        neg_dup = neg_err and "已有下单记录" in neg.get("error", "")
+        
+        if pos_dup and neg_dup:
+            skip_count += 1
+            print(f"[batch {i+1}/{total}] {bet_date}: 跳过（并发已生成）", flush=True)
+            continue
+        if pos_dup:
+            print(f"[batch {i+1}/{total}] {bet_date}: positive并发跳过", flush=True)
+        if neg_dup:
+            print(f"[batch {i+1}/{total}] {bet_date}: negative并发跳过", flush=True)
+        if pos_err and not pos_dup:
+            errors.append(f"{bet_date} positive: {pos['error']}")
+        if neg_err and not neg_dup:
+            errors.append(f"{bet_date} negative: {neg['error']}")
+        if pos_err and neg_err and not (pos_dup or neg_dup):
+            continue
+        
+        try:
+            pull_threshold_numbers(target_date=bet_date)
+        except Exception as e:
+            print(f"[batch {i+1}/{total}] {bet_date}: 拉号异常 {e}", flush=True)
+        
+        try:
+            sheet = get_order_sheet(days=90, guide_date=bet_date)
+        except Exception as e:
+            errors.append(f"{bet_date}: order-sheet失败 {e}")
+            continue
+        
+        if not sheet or not sheet.get("positive") or not sheet.get("negative"):
+            errors.append(f"{bet_date}: 无下单数据")
+            continue
+        
+        stores_data = []
+        for s in sheet["positive"].get("stores", []):
+            if s.get("capital", 0) > 0:
+                stores_data.append({"store": s["store"], "capital": s["capital"], "mode": "positive"})
+        for s in sheet["negative"].get("stores", []):
+            if s.get("capital", 0) > 0:
+                stores_data.append({"store": s["store"], "capital": s["capital"], "mode": "negative"})
+        
+        if stores_data:
+            try:
+                result = save_order_history(bet_date, stores_data)
+                if result.get("ok"):
+                    ok_count += 1
+                    voted_pos = [s["store"] for s in stores_data if s["mode"] == "positive"]
+                    voted_neg = [s["store"] for s in stores_data if s["mode"] == "negative"]
+                    print(f"[batch {i+1}/{total}] {bet_date}: OK 正{len(voted_pos)}反{len(voted_neg)}", flush=True)
+                else:
+                    errors.append(f"{bet_date}: 保存失败 {result.get('error','')}")
+            except Exception as e:
+                errors.append(f"{bet_date}: 保存异常 {e}")
+        else:
+            errors.append(f"{bet_date}: 无门店需下单")
+    
+    return {
+        "ok": True, "from_date": from_date, "to_date": to_date,
+        "total": total, "ok_count": ok_count, "skip_count": skip_count,
+        "error_count": len(errors), "errors": errors[:20]
+    }
+
+
+def run_single_day(bet_date):
+    """单日演算：跑算法投票 + 存 order_history。
+    返回 {ok, date, mode_count, stores_count, error, skip}"""
+    from datetime import datetime
+
+    # 检查是否已有下单记录（防重）
+    db_check = sqlite3.connect(FUNDS_DB)
+    existing = db_check.execute(
+        "SELECT 1 FROM order_history WHERE action_date=?", (bet_date,)
+    ).fetchone()
+    db_check.close()
+    if existing:
+        return {"ok": False, "date": bet_date, "error": "已有下单记录", "skip": True}
+
+    try:
+        pos = run_daily_guide_for_date(bet_date, "positive", max_iter=10)
+        neg = run_daily_guide_for_date(bet_date, "negative", max_iter=10)
+    except Exception as e:
+        return {"ok": False, "date": bet_date, "error": f"算法失败: {e}"}
+
+    pos_err = isinstance(pos, dict) and "error" in pos
+    neg_err = isinstance(neg, dict) and "error" in neg
+    pos_dup = pos_err and "已有下单记录" in pos.get("error", "")
+    neg_dup = neg_err and "已有下单记录" in neg.get("error", "")
+
+    if pos_dup and neg_dup:
+        return {"ok": False, "date": bet_date, "error": "已有下单记录", "skip": True}
+    if pos_err and not pos_dup:
+        return {"ok": False, "date": bet_date, "error": f"positive: {pos['error']}"}
+    if neg_err and not neg_dup:
+        return {"ok": False, "date": bet_date, "error": f"negative: {neg['error']}"}
+
+    try:
+        pull_threshold_numbers(target_date=bet_date)
+    except Exception as e:
+        print(f"[single {bet_date}] 拉号异常 {e}", flush=True)
+
+    try:
+        sheet = get_order_sheet(days=90, guide_date=bet_date)
+    except Exception as e:
+        return {"ok": False, "date": bet_date, "error": f"order-sheet失败: {e}"}
+
+    if not sheet or not sheet.get("positive") or not sheet.get("negative"):
+        return {"ok": False, "date": bet_date, "error": "无下单数据"}
+
+    stores_data = []
+    for s in sheet["positive"].get("stores", []):
+        if s.get("capital", 0) > 0:
+            stores_data.append({"store": s["store"], "capital": s["capital"], "mode": "positive"})
+    for s in sheet["negative"].get("stores", []):
+        if s.get("capital", 0) > 0:
+            stores_data.append({"store": s["store"], "capital": s["capital"], "mode": "negative"})
+
+    if not stores_data:
+        return {"ok": False, "date": bet_date, "error": "无门店需下单"}
+
+    try:
+        result = save_order_history(bet_date, stores_data)
+        if result.get("ok"):
+            voted_pos = [s["store"] for s in stores_data if s["mode"] == "positive"]
+            voted_neg = [s["store"] for s in stores_data if s["mode"] == "negative"]
+            return {
+                "ok": True, "date": bet_date,
+                "mode_count": len(voted_pos) + len(voted_neg),
+                "pos_count": len(voted_pos), "neg_count": len(voted_neg),
+                "positive": voted_pos, "negative": voted_neg
+            }
+        else:
+            return {"ok": False, "date": bet_date, "error": f"保存失败: {result.get('error','')}"}
+    except Exception as e:
+        return {"ok": False, "date": bet_date, "error": f"保存异常: {e}"}
+def generate_guides_only(from_date, to_date):
+    """只生成 sim_guides 缓存，不写 order_history。
+    用于模拟页的预演算功能。返回 {ok, total, ok_count, errors[]}"""
+    from datetime import datetime, timedelta
+
+    d_start = datetime.strptime(from_date, "%Y-%m-%d")
+    d_end = datetime.strptime(to_date, "%Y-%m-%d")
+
+    dates = []
+    d = d_start
+    while d <= d_end:
+        dates.append(d.strftime("%Y-%m-%d"))
+        d += timedelta(days=1)
+
+    total = len(dates)
+    ok_count = 0
+    skip_count = 0
+    errors = []
+
+    for i, bet_date in enumerate(dates):
+        # 检查是否已有 sim_guides（两个 mode 都有）
+        db_check = sqlite3.connect(FUNDS_DB)
+        existing = db_check.execute(
+            "SELECT COUNT(*) FROM sim_guides WHERE date=?",
+            (bet_date,)
+        ).fetchone()[0]
+        db_check.close()
+        if existing >= 2:
+            skip_count += 1
+            print(f"[guides {i+1}/{total}] {bet_date}: 跳过（已有缓存）", flush=True)
+            continue
+
+        try:
+            pos = run_daily_guide_for_date(bet_date, "positive", max_iter=10)
+            neg = run_daily_guide_for_date(bet_date, "negative", max_iter=10)
+        except Exception as e:
+            errors.append(f"{bet_date}: 算法失败 {e}")
+            continue
+
+        ok = 0
+        for result, mode in [(pos, "positive"), (neg, "negative")]:
+            if isinstance(result, dict) and "error" in result:
+                errors.append(f"{bet_date} {mode}: {result['error']}")
+            else:
+                ok += 1
+
+        if ok > 0:
+            ok_count += 1
+            print(f"[guides {i+1}/{total}] {bet_date}: OK ({ok} mode)", flush=True)
+        elif ok == 0:
+            errors.append(f"{bet_date}: 正反都失败")
+
+    return {
+        "ok": True, "from_date": from_date, "to_date": to_date,
+        "total": total, "ok_count": ok_count, "skip_count": skip_count,
+        "error_count": len(errors), "errors": errors[:20]
+    }
+
+
+def run_single_guide(bet_date):
+    """单日指南生成：只写 sim_guides 缓存，不动 order_history。
+    返回 {ok, date, mode_count, error, skip}"""
+    db_check = sqlite3.connect(FUNDS_DB)
+    existing = db_check.execute(
+        "SELECT COUNT(*) FROM sim_guides WHERE date=?", (bet_date,)
+    ).fetchone()[0]
+    db_check.close()
+    if existing >= 2:
+        return {"ok": False, "date": bet_date, "error": "已有缓存", "skip": True}
+
+    try:
+        pos = run_daily_guide_for_date(bet_date, "positive", max_iter=10)
+        neg = run_daily_guide_for_date(bet_date, "negative", max_iter=10)
+    except Exception as e:
+        return {"ok": False, "date": bet_date, "error": f"算法失败: {e}"}
+
+    ok = 0
+    for result, mode in [(pos, "positive"), (neg, "negative")]:
+        if isinstance(result, dict) and "error" in result:
+            pass
+        else:
+            ok += 1
+
+    if ok > 0:
+        return {"ok": True, "date": bet_date, "mode_count": ok}
+    else:
+        return {"ok": False, "date": bet_date, "error": "正反都失败"}
