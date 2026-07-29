@@ -1033,34 +1033,8 @@ def get_store_hit_rates(days=30):
         "days": days
     }
 
-# ── 算法优化日志 ──
-
-# ═══════════════ Static + SPA ═══════════════
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-if os.path.isdir(STATIC_DIR):
-    @app.get("/")
-    async def index():
-        fp = os.path.join(STATIC_DIR, "funds-v2.html")
-        mtime = os.path.getmtime(fp)
-        return FileResponse(fp, headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
-            "Pragma": "no-cache", "Expires": "0",
-            "ETag": '"funds-v2-' + str(int(mtime)) + '"'
-        })
-
-    @app.get("/{path:path}")
-    async def serve_static(path: str):
-        fp = os.path.join(STATIC_DIR, path)
-        if os.path.isfile(fp):
-            return FileResponse(fp, headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
-                "ETag": '"' + path + '-' + str(int(os.path.getmtime(fp))) + '"'
-            })
-        return FileResponse(os.path.join(STATIC_DIR, "funds-v2.html"))
-
-
-
 # ═══════════════ 策略最优保存 & 回填 ═══════════════
+# NOTE: 必须在 SPA catch-all 之前注册，否则会被 /{path:path} 拦截
 
 @app.get("/api/strategy/optimal")
 async def api_strategy_optimal(request: Request, save: int = 0):
@@ -1152,15 +1126,8 @@ async def api_strategy_backfill(request: Request):
 
     total_actual_profit = sum(r["own_profit"] or 0 for r in rows)
     total_actual_capital = sum(r["own_capital"] or 0 for r in rows)
-    next_day_capital = None
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_log = conn.execute(
-        "SELECT id, total_capital FROM strategy_log WHERE date=? ORDER BY id DESC LIMIT 1", (today,)
-    ).fetchone()
-    if today_log:
-        next_day_capital = today_log["total_capital"]
-
+    # Update strategy_log for yesterday
     conn.execute(
         "UPDATE strategy_log SET backfilled=1, actual_profit=?, actual_capital=? WHERE date=? AND backfilled=0",
         (total_actual_profit, total_actual_capital, yesterday)
@@ -1176,9 +1143,32 @@ async def api_strategy_backfill(request: Request):
         "updated_rows": len(rows),
         "actual_profit": total_actual_profit,
         "actual_capital": total_actual_capital,
-        "total_capital": total_actual_capital,
-        "next_day_capital": next_day_capital,
     }
+
+# ── 算法优化日志 ──
+
+# ═══════════════ Static + SPA ═══════════════
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+if os.path.isdir(STATIC_DIR):
+    @app.get("/")
+    async def index():
+        fp = os.path.join(STATIC_DIR, "funds-v2.html")
+        mtime = os.path.getmtime(fp)
+        return FileResponse(fp, headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache", "Expires": "0",
+            "ETag": '"funds-v2-' + str(int(mtime)) + '"'
+        })
+
+    @app.get("/{path:path}")
+    async def serve_static(path: str):
+        fp = os.path.join(STATIC_DIR, path)
+        if os.path.isfile(fp):
+            return FileResponse(fp, headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+                "ETag": '"' + path + '-' + str(int(os.path.getmtime(fp))) + '"'
+            })
+        return FileResponse(os.path.join(STATIC_DIR, "funds-v2.html"))
 
 @app.post("/api/simulate/run-one-day")
 async def api_run_one_day(request: Request):

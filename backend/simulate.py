@@ -22,14 +22,28 @@ HIT_MULT = {"positive": 22, "negative": 23}
 MISS_MULT = {"positive": 25, "negative": 24}
 
 # ═══════════════ 数据加载 ═══════════════════
+_load_data_cache = None  # 全量数据进程级缓存，避免重复 SQL 查询
+
 def load_data(days=90):
-    """返回 {date: {draw: int, rankings: {store: rank}}} 列表，按日期排序"""
+    """返回 {date: {draw: int, rankings: {store: rank}}} 列表，按日期排序
+    days=N → 只返回最近 N 天（从最新排位日往前算）
+    days=0 或 None → 返回全量（backfill 等需要历史数据的场景）
+    进程级缓存：首次全量加载后切片复用，后续调用 O(1)"""
+    global _load_data_cache
     from datetime import datetime, timedelta
+    
+    # ── 缓存命中：直接切片返回 ──
+    if _load_data_cache is not None:
+        if days and days > 0:
+            return _load_data_cache[-days:]
+        return _load_data_cache[:]
+    
+    # ── 首次加载：始终全量（不管 days），缓存后再切片 ──
     
     fv = sqlite3.connect(FUNDS_DB)
     fv.row_factory = sqlite3.Row
     
-    # 获取全部排位数据（不限下限，调用方自己切92天窗口）
+    # 获取全量排位数据
     rankings = {}
     rows = fv.execute("""
         SELECT store, date, amount FROM records 
@@ -47,7 +61,8 @@ def load_data(days=90):
             if d not in rankings:
                 rankings[d] = {}
             rankings[d][r["store"]] = int(r["amount"])
-    # 获取各店实际收入（盈亏判定用）— 全量，调用方自己切
+    
+    # 获取各店实际收入（全量）
     store_income = {}
     rows_i = fv.execute("""
         SELECT date, store, amount FROM records 
@@ -61,7 +76,7 @@ def load_data(days=90):
         store_income[d][r["store"]] = r["amount"] or 0
     fv.close()
     
-    # 获取抽签数据
+    # 获取全量抽签数据
     wh = sqlite3.connect(WH_DB)
     wh.row_factory = sqlite3.Row
     draws = {}
@@ -84,6 +99,11 @@ def load_data(days=90):
             "rankings": rankings.get(d, {}),
             "income": store_income.get(d, {}),
         })
+    
+    # ── 缓存全量结果（切片复用）──
+    _load_data_cache = result
+    if days and days > 0:
+        return result[-days:]
     return result
 
 
@@ -571,27 +591,29 @@ def run_daily_guide(days=90, mode="positive", max_iter=10):
     return result
 
 
-def run_daily_guide_for_date(bet_date, mode="positive", max_iter=10):
+def run_daily_guide_for_date(bet_date, mode="positive", max_iter=10, bypass_safety=False):
     """按指定下注日生成指南：排位来自 bet_date-1 的前一个有排位日，评估用 bet_date
     
     安全校验：如果 bet_date 已有 order_history（已确认下单），禁止重算。
+    bypass_safety=True 时跳过此校验（仅用于只写 sim_guides 不写 order_history 的场景）。
     """
-    data = load_data(90)
+    data = load_data(0)  # backfill 需要全量历史数据（首次加载后缓存命中）
     if not data:
         return {"error": "无数据"}
 
     # ── 安全闸：该日期已有下单记录或已开奖 → 禁止重算 ──
-    db_check = sqlite3.connect(FUNDS_DB)
-    try:
-        existing = db_check.execute(
-            "SELECT 1 FROM order_history WHERE action_date=? OR date=? LIMIT 1",
-            (bet_date, bet_date)
-        ).fetchone()
-        if existing:
+    if not bypass_safety:
+        db_check = sqlite3.connect(FUNDS_DB)
+        try:
+            existing = db_check.execute(
+                "SELECT 1 FROM order_history WHERE action_date=? OR date=? LIMIT 1",
+                (bet_date, bet_date)
+            ).fetchone()
+            if existing:
+                db_check.close()
+                return {"error": f"日{bet_date}已有下单记录，禁止重算。请查看历史记录。"}
+        finally:
             db_check.close()
-            return {"error": f"日{bet_date}已有下单记录，禁止重算。请查看历史记录。"}
-    finally:
-        db_check.close()
 
     # 找 bet_date 前最近的有排位日
     pred_day = None
@@ -2116,8 +2138,8 @@ def generate_guides_only(from_date, to_date):
             continue
 
         try:
-            pos = run_daily_guide_for_date(bet_date, "positive", max_iter=10)
-            neg = run_daily_guide_for_date(bet_date, "negative", max_iter=10)
+            pos = run_daily_guide_for_date(bet_date, "positive", max_iter=10, bypass_safety=True)
+            neg = run_daily_guide_for_date(bet_date, "negative", max_iter=10, bypass_safety=True)
         except Exception as e:
             errors.append(f"{bet_date}: 算法失败 {e}")
             continue
@@ -2154,8 +2176,8 @@ def run_single_guide(bet_date):
         return {"ok": False, "date": bet_date, "error": "已有缓存", "skip": True}
 
     try:
-        pos = run_daily_guide_for_date(bet_date, "positive", max_iter=10)
-        neg = run_daily_guide_for_date(bet_date, "negative", max_iter=10)
+        pos = run_daily_guide_for_date(bet_date, "positive", max_iter=10, bypass_safety=True)
+        neg = run_daily_guide_for_date(bet_date, "negative", max_iter=10, bypass_safety=True)
     except Exception as e:
         return {"ok": False, "date": bet_date, "error": f"算法失败: {e}"}
 
