@@ -689,6 +689,17 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
         <h3 style="margin:0">📋 下单记录 · 纯历史对应表</h3>
         <span id="order-history-freshness" style="font-size:12px;font-weight:600;color:#1e3a5f"></span>
       </div>
+      <!-- 门店筛选 + 月份范围 -->
+      <div id="order-history-store-chips" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-bottom:10px">
+        <span onclick="selectHistoryStore(null)" id="oh-chip-all" style="padding:3px 10px;border-radius:14px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid #cdd7e5;background:#1e3a5f;color:#fff">全部</span>
+      </div>
+      <div style="display:flex;gap:4px;align-items:center;margin-bottom:10px;font-size:11px;color:#5a6b85">
+        <span>📅</span>
+        <input type="month" id="oh-date-from" onchange="onDateRangeChange()" style="width:110px;padding:3px 6px;border:1px solid #cdd7e5;border-radius:8px;font-size:11px;background:#fff" title="起始月份">
+        <span>→</span>
+        <input type="month" id="oh-date-to" onchange="onDateRangeChange()" style="width:110px;padding:3px 6px;border:1px solid #cdd7e5;border-radius:8px;font-size:11px;background:#fff" title="结束月份">
+        <button onclick="clearDateRange()" style="padding:3px 8px;border-radius:8px;border:1px solid #cdd7e5;background:#fff;font-size:10px;color:#8899b0;cursor:pointer">✕</button>
+      </div>
       <div id="order-history-content" style="font-size:13px;line-height:1.7;color:#1e3a5f"></div>
       <div class="modal-btns" style="margin-top:12px">
         <button onclick="loadOrderHistory()" style="flex:1;background:#e8f5e9;color:#2e7d32;font-size:13px">🔄 刷新</button>
@@ -4699,14 +4710,24 @@ function syncOrderNumbers() {
   var btn = document.getElementById('sync-order-btn');
   if (!btn) return;
   btn.disabled = true;
-  btn.textContent = '⏳ 拉取号码...';
+  btn.textContent = '⏳ 算法演算...';
   var dateInput = document.getElementById('order-date-input');
   var syncDate = dateInput ? dateInput.value : orderSheetDate;
 
-  // 只拉号码 → 刷新下单页（下单数据从 sim_guides 缓存读，兜底用目标日期窗口无前视偏差）
-  var url = '/api/simulate/pull-numbers';
-  if (syncDate) url += '?date=' + encodeURIComponent(syncDate);
-  authFetch(url, {method:'POST'}).then(r => r.json())
+  // 步骤1: 先生成 sim_guides 缓存（正反帮扶排位）
+  authFetch('/api/simulate/generate-guides', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({from_date: syncDate, to_date: syncDate})
+  }).then(function(r) { return r.json(); })
+    .then(function(gres) {
+      console.log('[generate-guides]', gres);
+      btn.textContent = '⏳ 拉取号码...';
+      // 步骤2: 拉号码
+      var url = '/api/simulate/pull-numbers';
+      if (syncDate) url += '?date=' + encodeURIComponent(syncDate);
+      return authFetch(url, {method:'POST'}).then(r => r.json());
+    })
     .then(function(res){
       if (!res.ok) {
         showAlert('号码无数据', '拉取号码失败', function(){
@@ -6488,16 +6509,26 @@ var _guidePageSize = 30;
 
 function showOrderHistory() { loadOrderHistory(1); }  // 兼容旧调用
 var _ohPage = 1, _ohPageSize = 50;
+var _selectedHistoryStores = [];  // 选中的门店名列表，空=全部
+var _storeChipsBuilt = false;      // chip是否已初始化
+var _dateFrom = '';                // 起始月份 YYYY-MM
+var _dateTo = '';                  // 结束月份 YYYY-MM
 function loadOrderHistory(page) {
   if (page === undefined) page = _ohPage;
   else _ohPage = page;
+  buildStoreChips();  // 确保门店chip已初始化
   var offset = (_ohPage - 1) * _ohPageSize;
   var modal = document.getElementById('order-history-modal');
   var container = document.getElementById('order-history-content');
   container.innerHTML = '<div style="color:#8899b0;text-align:center;padding:20px">⏳ 加载中...</div>';
   modal.classList.remove('hide');
 
-  authFetch('/api/simulate/order-history?limit=' + _ohPageSize + '&offset=' + offset + '&_t=' + Date.now())
+  var url = '/api/simulate/order-history?limit=' + _ohPageSize + '&offset=' + offset;
+  if (_selectedHistoryStores.length > 0) url += '&stores=' + encodeURIComponent(_selectedHistoryStores.join(','));
+  if (_dateFrom) url += '&date_from=' + encodeURIComponent(_dateFrom + '-01');
+  if (_dateTo) url += '&date_to=' + encodeURIComponent(_dateTo + '-31');
+  url += '&_t=' + Date.now();
+  authFetch(url)
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var rows = data.rows || [];
@@ -6551,7 +6582,8 @@ function loadOrderHistory(page) {
       // 按月汇总卡片
       var ms = data.monthly_summary || [];
       if (ms.length > 0) {
-        summary += '<div style="margin-top:8px;font-size:10px;font-weight:700;color:#1e3a5f">📆 按月盈亏</div>';
+        var mTitle = _selectedHistoryStores.length > 0 ? ('📆 按月盈亏 · ' + _selectedHistoryStores.join('+')) : '📆 按月盈亏';
+        summary += '<div style="margin-top:8px;font-size:10px;font-weight:700;color:#1e3a5f">' + mTitle + '</div>';
         summary += '<table style="width:100%;font-size:10px;border-collapse:collapse;margin-top:4px">';
         summary += '<tr style="color:#8899b0;font-size:9px"><td>月份</td><td style="text-align:right">盈亏</td><td style="text-align:right">盈/亏天</td><td style="text-align:right">胜率</td></tr>';
         ms.forEach(function(m){
@@ -6751,6 +6783,70 @@ function loadOrderHistory(page) {
     .catch(function(e) {
       container.innerHTML = '<div style="color:#e53e3e;text-align:center">加载失败: ' + e.message + '</div>';
     });
+}
+
+// ── 门店筛选（下单记录弹窗）──
+var STORE_NAMES_OH = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
+
+function buildStoreChips() {
+  var container = document.getElementById('order-history-store-chips');
+  if (!container || _storeChipsBuilt) return;
+  container.innerHTML = '<span onclick="selectHistoryStore(null)" id="oh-chip-all" style="padding:3px 10px;border-radius:14px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid #cdd7e5;background:#1e3a5f;color:#fff">全部</span>';
+  STORE_NAMES_OH.forEach(function(s) {
+    var chip = document.createElement('span');
+    chip.textContent = s;
+    chip.id = 'oh-chip-' + s;
+    chip.onclick = function() { selectHistoryStore(s); };
+    chip.style.cssText = 'padding:3px 10px;border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid #cdd7e5;background:#fff;color:#5a6b85';
+    container.appendChild(chip);
+  });
+  _storeChipsBuilt = true;
+}
+
+function selectHistoryStore(store) {
+  if (store === null) {
+    // 点「全部」：清空所有选中
+    _selectedHistoryStores = [];
+  } else {
+    // 多选切换：已选则移除，未选则添加
+    var idx = _selectedHistoryStores.indexOf(store);
+    if (idx >= 0) {
+      _selectedHistoryStores.splice(idx, 1);
+    } else {
+      _selectedHistoryStores.push(store);
+    }
+  }
+  // 更新 chip 样式
+  var isAll = _selectedHistoryStores.length === 0;
+  document.querySelectorAll('#order-history-store-chips span').forEach(function(c) {
+    if (c.id === 'oh-chip-all') {
+      c.style.background = isAll ? '#1e3a5f' : '#fff';
+      c.style.color = isAll ? '#fff' : '#5a6b85';
+    } else {
+      var sName = c.id.replace('oh-chip-', '');
+      var isSel = _selectedHistoryStores.indexOf(sName) >= 0;
+      c.style.background = isSel ? '#1e3a5f' : '#fff';
+      c.style.color = isSel ? '#fff' : '#5a6b85';
+    }
+  });
+  _ohPage = 1;
+  loadOrderHistory(1);
+}
+
+function onDateRangeChange() {
+  _dateFrom = document.getElementById('oh-date-from').value;
+  _dateTo = document.getElementById('oh-date-to').value;
+  _ohPage = 1;
+  loadOrderHistory(1);
+}
+
+function clearDateRange() {
+  document.getElementById('oh-date-from').value = '';
+  document.getElementById('oh-date-to').value = '';
+  _dateFrom = '';
+  _dateTo = '';
+  _ohPage = 1;
+  loadOrderHistory(1);
 }
 
 function ackOrderHistory(actionDate) {

@@ -675,10 +675,10 @@ async def api_get_order_amounts(request: Request, date: str = None, list_all: bo
 
 # ── 下单历史（独立表）──
 @app.get("/api/simulate/order-history")
-async def api_get_order_history(request: Request, limit: int = 30, offset: int = 0):
+async def api_get_order_history(request: Request, limit: int = 30, offset: int = 0, store: str = None, stores: str = None, date_from: str = None, date_to: str = None):
     await require_auth(request)
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(_executor, lambda: get_order_history(limit, offset))
+    result = await loop.run_in_executor(_executor, lambda: get_order_history(limit, offset, store, stores, date_from, date_to))
     return JSONResponse(content=result, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.post("/api/simulate/order-history/confirm")

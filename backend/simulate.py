@@ -1617,15 +1617,27 @@ def save_order_history(date, stores_data, amounts=None):
             "draw_number": draw_number}
 
 
-def get_order_history(limit=30, offset=0):
-    """读取下单历史（独立表），含命中率计算 + 实际结果（从 sim_guides）"""
+def get_order_history(limit=30, offset=0, store=None, stores=None, date_from=None, date_to=None):
+    """读取下单历史（独立表），含命中率计算 + 实际结果（从 sim_guides）。
+    store: 可选，单个门店名（如 '一店'），兼容旧接口。
+    stores: 可选，逗号分隔的多门店（如 '一店,二店'），monthly_summary 按选中门店组合计算。
+    date_from/date_to: 可选，日期范围过滤（YYYY-MM-DD），影响月度汇总和行数据。"""
     db = sqlite3.connect(FUNDS_DB)
     db.row_factory = sqlite3.Row
+    # 构建日期过滤
+    date_where = ""
+    date_params = []
+    if date_from:
+        date_where += " AND date >= ?"
+        date_params.append(date_from)
+    if date_to:
+        date_where += " AND date <= ?"
+        date_params.append(date_to)
     # 全量总数
-    total_count = db.execute("SELECT COUNT(*) FROM order_history").fetchone()[0]
+    total_count = db.execute(f"SELECT COUNT(*) FROM order_history WHERE 1=1{date_where}", date_params).fetchone()[0]
     rows = db.execute(
-        "SELECT * FROM order_history ORDER BY date DESC, id DESC LIMIT ? OFFSET ?",
-        (limit, offset)
+        f"SELECT * FROM order_history WHERE 1=1{date_where} ORDER BY date DESC, id DESC LIMIT ? OFFSET ?",
+        date_params + [limit, offset]
     ).fetchall()
     db.close()
 
@@ -1768,21 +1780,21 @@ def get_order_history(limit=30, offset=0):
                 dt = onr["date"]
                 cid = onr["collection_id"]
                 th = onr["threshold"]
-                store = COLLECTION_TO_STORE.get(cid)
-                if not store:
+                order_store = COLLECTION_TO_STORE.get(cid)
+                if not order_store:
                     continue
                 try:
                     nums = json.loads(onr["numbers_json"])
                 except Exception:
                     nums = []
-                store_num_map.setdefault(dt, {}).setdefault(store, {})
-                store_num_map[dt][store]["top25" if th == 25 else "top24"] = nums
+                store_num_map.setdefault(dt, {}).setdefault(order_store, {})
+                store_num_map[dt][order_store]["top25" if th == 25 else "top24"] = nums
         db4.close()
 
     result = []
     pos_hits = pos_total = neg_hits = neg_total = 0
     for r in rows:
-        stores = json.loads(r["stores_json"] or "[]")
+        row_stores = json.loads(r["stores_json"] or "[]")
         rankings = {}
         try:
             rankings = json.loads(r["rankings_json"] or "{}")
@@ -1825,7 +1837,7 @@ def get_order_history(limit=30, offset=0):
         else:
             own_profit = own_profit or 0
             own_capital = own_capital or 0
-            for s in stores:
+            for s in row_stores:
                 store_name = s["store"]
                 store_mode = s.get("mode", "positive")
                 # 精准判定：draw_number 是否在各店购买的号码中
@@ -1861,7 +1873,7 @@ def get_order_history(limit=30, offset=0):
             "action_date": r["action_date"],
             "history_date": r["history_date"] or r["date"],
             "mode": r["mode"],
-            "stores": stores,
+            "stores": row_stores,
             "total_capital": r["total_capital"],
             "acknowledged": r["acknowledged"] if "acknowledged" in r.keys() else 0,
             "created_at": r["created_at"],
@@ -1884,29 +1896,123 @@ def get_order_history(limit=30, offset=0):
         "negative": {"hits": neg_hits, "total": neg_total,
                       "rate": round(neg_hits/neg_total*100,1) if neg_total>0 else 0},
     }
-    # 按月汇总 + 总汇总
-    db3 = sqlite3.connect(FUNDS_DB)
-    db3.row_factory = sqlite3.Row
-    m_rows = db3.execute("""
-        SELECT strftime('%Y-%m', date) as ym, 
-               SUM(own_profit) as pf, COUNT(*) as days,
-               SUM(CASE WHEN own_profit>0 THEN 1 ELSE 0 END) as win_days,
-               SUM(CASE WHEN own_profit<0 THEN 1 ELSE 0 END) as lose_days
-        FROM order_history WHERE own_profit IS NOT NULL
-        GROUP BY ym ORDER BY ym
-    """).fetchall()
-    db3.close()
+    # ── 解析选中门店 ──
+    selected_stores = []
+    if stores:
+        selected_stores = [s.strip() for s in stores.split(",") if s.strip()]
+    elif store:
+        selected_stores = [store]
+    # ── 按月汇总 + 总汇总 ──
     monthly = []
     total_pf = 0
-    for r in m_rows:
-        total_pf += r["pf"] or 0
-        monthly.append({
-            "month": r["ym"],
-            "profit": round(r["pf"] or 0),
-            "days": r["days"],
-            "win_days": r["win_days"],
-            "lose_days": r["lose_days"],
-        })
+    if selected_stores:
+        # 多店模式：全量查询所有行（不限分页），逐行计算选中门店合计盈亏
+        HIT_MULT_STORE = {"positive": 22, "negative": 23}
+        MISS_MULT_STORE = {"positive": 25, "negative": 24}
+        store_monthly = {}  # ym -> {profit, days, win_days, lose_days}
+        # 全量查询 order_history（用于月度汇总，不受分页限制）
+        db_all = sqlite3.connect(FUNDS_DB)
+        db_all.row_factory = sqlite3.Row
+        all_rows = db_all.execute(
+            f"SELECT id, date, stores_json, rankings_json, draw_number, action_date FROM order_history WHERE 1=1{date_where} ORDER BY date DESC",
+            date_params
+        ).fetchall()
+        db_all.close()
+        # 批量加载 store_num_map（精准命中判定）
+        all_action_dates = list(set(r["action_date"] for r in all_rows if r["action_date"]))
+        store_num_map_full = {}
+        if all_action_dates:
+            db5 = sqlite3.connect(FUNDS_DB)
+            db5.row_factory = sqlite3.Row
+            ph_a = ",".join(["?" for _ in all_action_dates])
+            on_all = db5.execute(
+                f"SELECT date, collection_id, threshold, numbers_json FROM order_numbers WHERE date IN ({ph_a})",
+                all_action_dates
+            ).fetchall()
+            db5.close()
+            for onr in on_all:
+                dt = onr["date"]
+                cid = onr["collection_id"]
+                th = onr["threshold"]
+                s_name = COLLECTION_TO_STORE.get(cid)
+                if not s_name:
+                    continue
+                try:
+                    nums = json.loads(onr["numbers_json"])
+                except Exception:
+                    nums = []
+                store_num_map_full.setdefault(dt, {}).setdefault(s_name, {})
+                store_num_map_full[dt][s_name]["top25" if th == 25 else "top24"] = nums
+        
+        for r in all_rows:
+            ym = r["date"][:7]
+            stores_list = json.loads(r["stores_json"] or "[]")
+            rankings = {}
+            try:
+                rankings = json.loads(r["rankings_json"] or "{}")
+            except Exception:
+                pass
+            draw_num = r["draw_number"] or 0
+            for store_name in selected_stores:
+                found = next((s for s in stores_list if s.get("store") == store_name), None)
+                if not found:
+                    continue
+                mode = found.get("mode", "positive")
+                capital = found.get("capital", 0)
+                # 精准命中判定
+                sm = store_num_map_full.get(r["action_date"], {}).get(store_name, {})
+                key = "top25" if mode == "positive" else "top24"
+                nums = sm.get(key, [])
+                if draw_num and draw_num > 0 and nums:
+                    hit = draw_num in nums
+                else:
+                    rk = rankings.get(store_name)
+                    if rk is not None:
+                        hit = (rk <= 25) if mode == "positive" else (rk > 25)
+                    else:
+                        hit = False
+                prof = capital * HIT_MULT_STORE[mode] if hit else -capital * MISS_MULT_STORE[mode]
+                if ym not in store_monthly:
+                    store_monthly[ym] = {"profit": 0, "days": 0, "win_days": 0, "lose_days": 0}
+                store_monthly[ym]["profit"] += prof
+                store_monthly[ym]["days"] += 1
+                if prof > 0:
+                    store_monthly[ym]["win_days"] += 1
+                elif prof < 0:
+                    store_monthly[ym]["lose_days"] += 1
+        for ym in sorted(store_monthly.keys()):
+            sm = store_monthly[ym]
+            total_pf += sm["profit"]
+            monthly.append({
+                "month": ym,
+                "profit": round(sm["profit"]),
+                "days": sm["days"],
+                "win_days": sm["win_days"],
+                "lose_days": sm["lose_days"],
+            })
+    else:
+        # 全店模式：原逻辑（含日期过滤）
+        db3 = sqlite3.connect(FUNDS_DB)
+        db3.row_factory = sqlite3.Row
+        sql = """
+            SELECT strftime('%Y-%m', date) as ym, 
+                   SUM(own_profit) as pf, COUNT(*) as days,
+                   SUM(CASE WHEN own_profit>0 THEN 1 ELSE 0 END) as win_days,
+                   SUM(CASE WHEN own_profit<0 THEN 1 ELSE 0 END) as lose_days
+            FROM order_history WHERE own_profit IS NOT NULL"""
+        sql += date_where
+        sql += " GROUP BY ym ORDER BY ym"
+        m_rows = db3.execute(sql, date_params).fetchall()
+        db3.close()
+        for r in m_rows:
+            total_pf += r["pf"] or 0
+            monthly.append({
+                "month": r["ym"],
+                "profit": round(r["pf"] or 0),
+                "days": r["days"],
+                "win_days": r["win_days"],
+                "lose_days": r["lose_days"],
+            })
     total_summary = {
         "profit": round(total_pf),
         "months": len(monthly),
