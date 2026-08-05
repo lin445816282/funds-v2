@@ -616,6 +616,10 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
         <button class="btn-clear" onclick="runDailyGuide()" id="sim-guide-btn">📋 下单指南</button>
         <button class="btn-clear" onclick="runDailyGuideNegative()" id="sim-guide-neg-btn" style="background:#fef2f2;color:#dc2626">📋 反帮扶</button>
       </div>
+      <div class="btn-row" style="margin-top:4px">
+        <button class="btn-clear" onclick="toggleYear2026()" id="sim-year-btn" style="background:#f0f7ff;color:#3b82f6;font-weight:600">📅 全量数据</button>
+        <button class="btn-save" onclick="runLe25Optimize()" id="sim-le25-btn" style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;flex:1">🎯 ≤25最优策略</button>
+      </div>
       <div style="text-align:center;font-size:10px;color:#8899b0;margin-top:2px">优化轮数: 10（坐标下降默认精度）</div>
       <div style="display:flex;align-items:center;gap:6px;margin-top:6px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px">
         <span style="font-size:11px;color:#92400e;white-space:nowrap;font-weight:600">📅 生成指南</span>
@@ -6063,6 +6067,49 @@ function runSimOptimize() {
   });
 }
 
+var simYear2026 = false;  // 默认全量数据
+function toggleYear2026() {
+  simYear2026 = !simYear2026;
+  var btn = document.getElementById('sim-year-btn');
+  if (simYear2026) {
+    btn.textContent = '📅 仅2026';
+    btn.style.background = '#dcfce7';
+    btn.style.color = '#16a34a';
+  } else {
+    btn.textContent = '📅 全量数据';
+    btn.style.background = '#f0f7ff';
+    btn.style.color = '#3b82f6';
+  }
+}
+
+function runLe25Optimize() {
+  var btn = document.getElementById('sim-le25-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 策略分析中...';
+  document.getElementById('sim-result').style.display = 'none';
+  document.getElementById('sim-daily').style.display = 'none';
+  
+  var body = { days: 90 };
+  if (simYear2026) body.year = 2026;
+  
+  authFetch('/api/simulate/le25-optimize', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  }).then(r => r.json()).then(function(d) {
+    simLastResult = d;
+    renderSimStoreTable();
+    renderSimResult(d);
+    renderSimDaily(d.daily);
+    btn.disabled = false;
+    btn.textContent = '🎯 ≤25最优策略';
+  }).catch(function(e) {
+    btn.disabled = false;
+    btn.textContent = '🎯 ≤25最优策略';
+    alert('≤25策略分析失败: '+e.message);
+  });
+}
+
 function runSimManual() {
   var btn = document.getElementById('sim-manual-btn');
   btn.disabled = true;
@@ -6106,9 +6153,9 @@ function runSimManual() {
 function renderSimResult(d) {
   var r = d.result;
   var profitClass = r.total_profit >= 0 ? 'color:#16a34a' : 'color:#dc2626';
-  var algoName = document.getElementById('sim-algo').selectedOptions[0].text;
+  var algoName = d.strategy === 'le25' ? '🎯 ≤25最优策略' : document.getElementById('sim-algo').selectedOptions[0].text;
   var html = '<div style="text-align:center;margin:4px 0">'+
-    '<div style="font-size:10px;color:#8899b0;margin-bottom:2px">算法：'+algoName+'</div>'+
+    '<div style="font-size:10px;color:#8899b0;margin-bottom:2px">算法：'+algoName+(d.strategy==='le25'?' <span style="color:#16a34a;font-weight:600">[仅正帮扶·阈≤25]</span>':'')+'</div>'+
     '<div style="font-size:28px;font-weight:700;'+profitClass+'">'+(r.total_profit>=0?'+':'')+Math.round(r.total_profit).toLocaleString()+'</div>'+
     '<div style="display:flex;justify-content:space-around;font-size:11px;color:#5a6b85;margin:8px 0">'+
       '<span>出手<b style="color:#1e3a5f">'+r.total_shots+'</b>次</span>'+

@@ -24,19 +24,26 @@ MISS_MULT = {"positive": 25, "negative": 24}
 # ═══════════════ 数据加载 ═══════════════════
 _load_data_cache = None  # 全量数据进程级缓存，避免重复 SQL 查询
 
-def load_data(days=90):
+def load_data(days=90, year=None):
     """返回 {date: {draw: int, rankings: {store: rank}}} 列表，按日期排序
     days=N → 只返回最近 N 天（从最新排位日往前算）
     days=0 或 None → 返回全量（backfill 等需要历史数据的场景）
+    year=2026 → 仅过滤该年份数据（2026-01-01 起）
     进程级缓存：首次全量加载后切片复用，后续调用 O(1)"""
     global _load_data_cache
     from datetime import datetime, timedelta
     
     # ── 缓存命中：直接切片返回 ──
     if _load_data_cache is not None:
+        from datetime import datetime, timedelta
+        result = _load_data_cache
+        # ── 年份过滤 ──
+        if year is not None:
+            year_prefix = f"{year}-"
+            result = [d for d in result if d["date"].startswith(year_prefix)]
         if days and days > 0:
-            return _load_data_cache[-days:]
-        return _load_data_cache[:]
+            return result[-days:]
+        return result[:]
     
     # ── 首次加载：始终全量（不管 days），缓存后再切片 ──
     
@@ -102,6 +109,12 @@ def load_data(days=90):
     
     # ── 缓存全量结果（切片复用）──
     _load_data_cache = result
+    
+    # ── 年份过滤（从全量数据中筛）──
+    if year is not None:
+        year_prefix = f"{year}-"
+        result = [d for d in result if d["date"].startswith(year_prefix)]
+    
     if days and days > 0:
         return result[-days:]
     return result
@@ -467,6 +480,117 @@ def run_optimize(days=90, mode="positive", algorithm="coordinate"):
         "store_details": store_details,
         "daily": result["daily"]
     }
+
+
+# ═══════════════ API：≤25最优策略 ═══════════════
+def run_le25_optimize(days=90, year=None):
+    """≤25最优策略：仅正帮扶，threshold限定≤25（1,5,10,15,20,25）
+    用坐标下降搜最优参数，只选排位≤25的店出手"""
+    data = load_data(days, year=year)
+    
+    # 仅正帮扶，threshold限定≤25
+    LE25_THRESHOLDS = [1, 5, 10, 15, 20, 25]
+    
+    # 训练数据：排除最后一天
+    last_day = data[-1] if data else None
+    train_data = [d for d in data if d["date"] != last_day["date"]] if last_day else data
+    
+    # 用坐标下降搜参，但threshold限定≤25
+    params, result = _le25_coordinate_optimize(train_data, LE25_THRESHOLDS)
+    
+    # 全量回测
+    stop_neg2 = False
+    full_result = simulate_full(params, data, stop_on_neg2=stop_neg2)
+    
+    # 逐店贡献
+    store_contrib = {s: {"shots": 0, "hits": 0, "profit": 0} for s in STORE_NAMES}
+    for day in full_result["daily"]:
+        for shot in day.get("shot_details", []):
+            sn = shot.get("store")
+            if sn in store_contrib:
+                store_contrib[sn]["shots"] += 1
+                if shot.get("hit"):
+                    store_contrib[sn]["hits"] += 1
+                    store_contrib[sn]["profit"] += shot.get("capital", 0) * HIT_MULT["positive"]
+                else:
+                    store_contrib[sn]["profit"] -= shot.get("capital", 0) * MISS_MULT["positive"]
+    
+    store_details = []
+    for s in STORE_NAMES:
+        p = params[s]
+        sc = store_contrib[s]
+        store_details.append({
+            "name": s,
+            "threshold": p["threshold"],
+            "capital": p["capital"],
+            "mode": "positive",
+            "qualified_days": sc["shots"],
+            "hits": sc["hits"],
+            "estimated_profit": round(sc["profit"], 2)
+        })
+    
+    return {
+        "mode": "positive",
+        "strategy": "le25",
+        "params": {s: params[s] for s in STORE_NAMES},
+        "result": {
+            "total_profit": full_result["total_profit"],
+            "total_shots": full_result["total_shots"],
+            "total_hits": full_result["total_hits"],
+            "hit_rate": full_result["hit_rate"],
+            "max_drawdown": full_result["max_drawdown"]
+        },
+        "store_details": store_details,
+        "daily": full_result["daily"]
+    }
+
+
+def _le25_coordinate_optimize(data, thresholds):
+    """≤25坐标下降：同_coordinate_optimize但threshold限定≤25且仅正帮扶"""
+    params = {s: {"threshold": 25, "capital": 40, "mode": "positive"} for s in STORE_NAMES}
+    best_params = {s: dict(params[s]) for s in STORE_NAMES}
+    best_profit = -float("inf")
+    
+    max_iter = 10
+    starters = [(25, 40), (20, 40), (15, 20), (25, 20), (10, 40)]
+    
+    # 使用 simulate_full 做真实评估（含 shots_per_day=3 约束）
+    for start_idx, (start_th, start_cap) in enumerate(starters):
+        for s in STORE_NAMES:
+            params[s] = {"threshold": start_th, "capital": start_cap, "mode": "positive"}
+        
+        for _ in range(max_iter):
+            improved = False
+            for store in STORE_NAMES:
+                best_store_profit = -float("inf")
+                best_combo = None
+                
+                for t in thresholds:
+                    for c in CAPITAL_OPTIONS:
+                        old = dict(params[store])
+                        params[store] = {"threshold": t, "capital": c, "mode": "positive"}
+                        
+                        # 用 simulate_full 真实评估
+                        result = simulate_full(params, data, shots_per_day=3)
+                        total_pf = result["total_profit"]
+                        
+                        if total_pf > best_store_profit:
+                            best_store_profit = total_pf
+                            best_combo = {"threshold": t, "capital": c}
+                        
+                        params[store] = old
+                
+                if best_combo:
+                    params[store] = best_combo
+                    if best_store_profit > best_profit:
+                        best_params = {s: dict(params[s]) for s in STORE_NAMES}
+                        best_profit = best_store_profit
+                        improved = True
+            
+            if not improved:
+                break
+    
+    return best_params, {"total_profit": best_profit}
 
 
 # ═══════════════ API：手动模拟 ═══════════════
