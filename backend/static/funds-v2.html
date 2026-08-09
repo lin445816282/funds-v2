@@ -380,6 +380,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     <button class="on" onclick="switchTab('alerts')">预警</button>
     <button onclick="switchTab('order')">下单</button>
     <button onclick="switchTab('sim')">模拟</button>
+    <button onclick="switchTab('kelly')">凯利</button>
     <button onclick="switchTab('ranking')">排位</button>
     <button onclick="switchTab('overview')">总览</button>
     <button onclick="switchTab('compare')">对比</button>
@@ -669,6 +670,25 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     </div>
   </div>
 
+  <!-- ====== Kelly 分析面板 ====== -->
+  <div class="panel" id="panel-kelly" style="padding-bottom:100px">
+    <div class="kelly-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span style="font-size:15px;font-weight:700;color:#1e3a5f">🎯 Kelly 仓位分析</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="kelly-capital" onchange="initKellyTab()" style="padding:4px 8px;border:1px solid #cdd7e5;border-radius:8px;font-size:11px;background:#f8fafc">
+          <option value="50000">5万</option>
+          <option value="100000" selected>10万</option>
+          <option value="200000">20万</option>
+          <option value="500000">50万</option>
+        </select>
+      </div>
+    </div>
+    <div id="kelly-summary" style="margin-bottom:10px"></div>
+    <div id="kelly-stores"></div>
+    <div id="kelly-projections" style="margin-top:12px"></div>
+    <div id="kelly-dynamic" style="margin-top:8px"></div>
+  </div>
+
   <!-- ====== 抽签记录面板 ====== -->
   <div class="panel" id="panel-records">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid #e5e7eb">
@@ -780,8 +800,8 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
         <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">四店</span>
         <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">五店</span>
         <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">六店</span>
-        <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">集合14</span>
-        <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">集合16</span>
+        <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">七店</span>
+        <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">八店</span>
       </div>
 
       <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">五、决策变量</h3>
@@ -3902,15 +3922,16 @@ function switchTab(tab) {
   currentTab = tab;
   var btns = document.querySelectorAll('.tab-bar button');
   btns.forEach(function(b,i){
-    b.className = ['alerts','order','sim','ranking','overview','compare','entry','mgmt','records'][i]===tab ? 'on' : '';
+    b.className = ['alerts','order','sim','kelly','ranking','overview','compare','entry','mgmt','records'][i]===tab ? 'on' : '';
   });
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('on'); });
   document.getElementById('panel-'+tab).classList.add('on');
   // FAB：排位/对比页隐藏
   var fab = document.getElementById('fab-btn');
-  if (fab) fab.classList.toggle('hide', tab==='ranking'||tab==='compare'||tab==='sim'||tab==='records');
+  if (fab) fab.classList.toggle('hide', tab==='ranking'||tab==='compare'||tab==='sim'||tab==='records'||tab==='kelly');
   if (tab === 'alerts') { fetchAlerts(); loadHitRates(); }
   if (tab === 'order') { initOrderSheet(); }
+  if (tab === 'kelly') { initKellyTab(); }
   if (tab === 'ranking') { loadRankingTo('rank-content'); updateRankStats(); }
   if (tab === 'sim') { initSimPanel(); }
   if (tab === 'compare') { initCmpCanvas(); drawCompare(); }
@@ -4870,7 +4891,7 @@ function showOrderDetailPopup(date) {
   overlay.innerHTML = '<div style="background:#fff;border-radius:16px;padding:20px;width:92%;max-width:420px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-weight:700;font-size:15px;color:#1e3a5f">📋 ' + date + ' 采集明细</span><button onclick="document.getElementById(\'order-detail-overlay\').remove()" style="border:none;background:none;font-size:20px;color:#999;cursor:pointer">✕</button></div><div id="order-detail-body" style="flex:1;overflow-y:auto;font-size:13px"><div style="text-align:center;padding:40px;color:#999">⏳ 加载中...</div></div></div>';
   overlay.style.display = 'flex';
 
-  var STORE_MAP = {'-23':'一店','-24':'二店','-25':'三店','-26':'四店','-28':'五店','-29':'六店','14':'集合14','16':'集合16'};
+  var STORE_MAP = {'-23':'一店','-24':'二店','-25':'三店','-26':'四店','-28':'五店','-29':'六店','14':'七店','16':'八店'};
   authFetch('/api/simulate/order-numbers-detail?date=' + encodeURIComponent(date))
     .then(function(r) { return r.json(); })
     .then(function(d) {
@@ -5293,7 +5314,7 @@ function computeRankStreaks() {
     byDate[r.date][r.store] = r.amount;
   });
   var dates = Object.keys(byDate).sort();
-  var storeOrder = stores && stores.length ? stores.slice(0) : ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
+  var storeOrder = stores && stores.length ? stores.slice(0) : ['一店','二店','三店','四店','五店','六店','七店','八店'];
   
   rankStreaks = {posMax: 0, negMax: 0, stores: {}};
   
@@ -5339,7 +5360,7 @@ function computeRankStreaks() {
 
 function renderStreakTable(el, title, key, globalMax) {
   if (globalMax < 3) return '';
-  var storeOrder = stores && stores.length ? stores.slice(0) : ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
+  var storeOrder = stores && stores.length ? stores.slice(0) : ['一店','二店','三店','四店','五店','六店','七店','八店'];
   
   var tableRows = [];
   for (var n = globalMax; n >= 3; n--) { tableRows.push(n); }
@@ -5930,7 +5951,7 @@ function switchGuideModeUI(mode) {
 var simMode = 'positive';
 var simData = null;        // 缓存数据
 var simLastResult = null;  // 最后结果
-var STORE_NAMES = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
+var STORE_NAMES = ['一店','二店','三店','四店','五店','六店','七店','八店'];
 
 function initSimPanel() {
   if (simData) { renderSimStoreTable(); updateAlgoHint(); initGenDates(); return; }
@@ -6275,8 +6296,8 @@ function storeRange(ds, hits, hasDraw) {
   details.forEach(function(d){ hitMap[d.store] = d.hit; });
   // hits 覆盖（下单历史用行动日真实命中）
   if (hits) { for (var k in hits) { hitMap[k] = hits[k]; } }
-  var order = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
-  var names = ['一','二','三','四','五','六','14','16'];
+  var order = ['一店','二店','三店','四店','五店','六店','七店','八店'];
+  var names = ['一','二','三','四','五','六','七','八'];
   var top = '', bot = '';
   order.forEach(function(s, i) {
     var c = caps[s] || 0;
@@ -6454,7 +6475,7 @@ function renderGuide(d) {
   var rankDate = d.ranking_date || offsetDate(d.date, -1);
   h += '<div style="font-size:11px;color:#8899b0;margin-bottom:3px">📅 '+d.date+' 出手（排位日 '+rankDate+'）</div>';
   h += '<div style="font-size:12px;font-weight:600">';
-  ['一店','二店','三店','四店','五店','六店','集合14','集合16'].forEach(function(s){
+  ['一店','二店','三店','四店','五店','六店','七店','八店'].forEach(function(s){
     var rankings = d.pred_rankings || d.today_rankings || {};
     h += s+':<b style="color:#2563eb">'+(rankings[s]||'?')+'</b> ';
   });
@@ -6658,7 +6679,7 @@ function loadOrderHistory(page) {
 
       // 缩写函数
       function abbr(store) {
-        var map = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','集合14':'14','集合16':'16'};
+        var map = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','七店':'七','八店':'八'};
         return map[store] || store;
       }
 
@@ -6833,7 +6854,7 @@ function loadOrderHistory(page) {
 }
 
 // ── 门店筛选（下单记录弹窗）──
-var STORE_NAMES_OH = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
+var STORE_NAMES_OH = ['一店','二店','三店','四店','五店','六店','七店','八店'];
 
 function buildStoreChips() {
   var container = document.getElementById('order-history-store-chips');
@@ -7399,8 +7420,8 @@ function loadDrawRecords(page) {
         return;
       }
       var h = '';
-      var storeOrder = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
-      var abbrMap = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','集合14':'14','集合16':'16'};
+      var storeOrder = ['一店','二店','三店','四店','五店','六店','七店','八店'];
+      var abbrMap = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','七店':'七','八店':'八'};
       rows.forEach(function(r) {
         var rankings = r.rankings || {};
         h += '<div style="padding:6px 8px;margin-bottom:3px;background:#f8fafc;border-radius:6px;font-size:12px">';
@@ -7455,6 +7476,366 @@ function syncDrawRecords() {
     .catch(function(e) { alert('同步失败: '+e.message); })
     .finally(function() { btn.disabled = false; btn.textContent = '🔄 同步'; });
 }
+// ═══════ Kelly 分析 ═══════
+var kellyData = null;
+var kellyWindow = '90'; // 当前查看的单窗口
+
+function initKellyTab() {
+  var capital = parseInt(document.getElementById('kelly-capital').value);
+  document.getElementById('kelly-summary').innerHTML = '<div class="empty">⏳ 加载中...</div>';
+  document.getElementById('kelly-stores').innerHTML = '';
+  document.getElementById('kelly-projections').innerHTML = '';
+
+  authFetch('/api/simulate/kelly-analysis?capital=' + capital)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      kellyData = d;
+      renderKellyAdvice(d);
+      renderKellyStores(d);
+      renderKellyWindows(d);
+      renderDynamicRisk(d);
+    })
+    .catch(function(e) {
+      document.getElementById('kelly-summary').innerHTML = '<div class="empty">❌ 加载失败</div>';
+    });
+}
+
+function renderKellyAdvice(d) {
+  var advice = d.consensus.advice;
+  var picks = d.consensus.final_picks;
+  
+  var h = '';
+  // 决策建议横幅
+  var hasPicks = (picks.positive.length > 0 || picks.negative.length > 0);
+  var stablePicks = 0;
+  ['positive','negative'].forEach(function(m) {
+    picks[m].forEach(function(p) { if (p.stability >= 2) stablePicks++; });
+  });
+  
+  h += '<div style="background:' + (stablePicks > 0 ? '#f0fdf4' : '#fef2f2') + ';border:1px solid ' + (stablePicks > 0 ? '#bbf7d0' : '#fecaca') + ';border-radius:12px;padding:12px;margin-bottom:10px">';
+  h += '<div style="font-size:14px;font-weight:700;color:' + (stablePicks > 0 ? '#16a34a' : '#dc2626') + ';margin-bottom:8px">' + (stablePicks > 0 ? '✅ 共识推荐' : '⚠️ 谨慎') + '</div>';
+  
+  advice.forEach(function(line) {
+    if (line.indexOf('✅') === 0) {
+      h += '<div style="font-size:12px;color:#166534;padding:2px 0;font-weight:600">' + line + '</div>';
+    } else if (line.indexOf('🛑') === 0) {
+      h += '<div style="font-size:12px;color:#dc2626;padding:2px 0;font-weight:600">' + line + '</div>';
+    } else if (line.indexOf('💡') === 0) {
+      h += '<div style="font-size:12px;color:#1e3a5f;padding:2px 0;margin-top:4px;font-weight:600;border-top:1px dashed #d1d5db;padding-top:6px">' + line + '</div>';
+    } else {
+      h += '<div style="font-size:11px;color:#5a6b85;padding:1px 0">' + line + '</div>';
+    }
+  });
+  h += '</div>';
+  
+  // 稳定性图例
+  h += '<div style="display:flex;gap:8px;font-size:10px;color:#8899b0;margin-bottom:8px;flex-wrap:wrap">';
+  h += '<span>🟢 3窗全可投=高置信</span>';
+  h += '<span>🟡 2窗可投=中置信</span>';
+  h += '<span>🔴 1窗可投=不稳定</span>';
+  h += '<span>📈 近期胜率上升</span>';
+  h += '<span>📉 近期胜率下降</span>';
+  h += '</div>';
+  
+  document.getElementById('kelly-summary').innerHTML = h;
+}
+
+function renderKellyStores(d) {
+  var stores = d.consensus.stores;
+  var picks = d.consensus.final_picks;
+  
+  // 构建快速查找
+  var pickMap = {};
+  ['positive','negative'].forEach(function(m) {
+    picks[m].forEach(function(p) {
+      pickMap[p.store + '|' + m] = p;
+    });
+  });
+  
+  var h = '<div style="font-size:13px;font-weight:700;color:#5a6b85;margin-bottom:6px">📋 门店共识对比（30/60/90天）</div>';
+  
+  stores.forEach(function(store) {
+    h += '<div style="background:#fff;border-radius:10px;padding:10px 12px;margin-bottom:6px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+    h += '<div style="font-size:14px;font-weight:700;color:#1a2438;margin-bottom:6px">' + store.store + '</div>';
+    
+    ['positive', 'negative'].forEach(function(mode) {
+      var md = store.modes[mode];
+      if (!md || Object.keys(md.windows).length === 0) return;
+      
+      var modeLabel = mode === 'positive' ? '🟢 正' : '🔵 反';
+      var stability = md.stability;
+      var stabilityColor = stability >= 3 ? '#16a34a' : stability >= 2 ? '#d97706' : '#ef4444';
+      var stabilityBg = stability >= 3 ? '#f0fdf4' : stability >= 2 ? '#fefce8' : '#fef2f2';
+      var trendEmoji = {'improving':'📈','declining':'📉'}[md.trend] || '➡️';
+      
+      h += '<div style="background:' + stabilityBg + ';border-radius:8px;padding:8px;margin-top:4px">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+      h += '<span style="font-size:12px;font-weight:600">' + modeLabel + '</span>';
+      h += '<span style="font-size:10px;color:' + stabilityColor + ';font-weight:600">稳定性 ' + stability + '/3 ' + trendEmoji + '</span>';
+      h += '</div>';
+      
+      // 三窗口胜率条
+      h += '<div style="display:flex;gap:4px">';
+      [30, 60, 90].forEach(function(w) {
+        var wd = md.windows[w];
+        if (!wd) {
+          h += '<div style="flex:1;background:#f3f4f6;border-radius:6px;padding:4px;text-align:center;font-size:9px;color:#d1d5db">' + w + 'd<br>—</div>';
+          return;
+        }
+        var isBet = wd.is_betable;
+        var barColor = isBet ? (wd.win_rate >= 53.2 ? '#22c55e' : '#eab308') : '#ef4444';
+        var bgColor = isBet ? '#f0fdf4' : '#fef2f2';
+        h += '<div style="flex:1;background:' + bgColor + ';border-radius:6px;padding:4px;text-align:center">';
+        h += '<div style="font-size:8px;color:#8899b0">' + w + 'd</div>';
+        h += '<div style="font-size:11px;font-weight:700;color:' + barColor + '">' + wd.win_rate + '%</div>';
+        h += '<div style="font-size:8px;color:#8899b0">' + (isBet ? 'K' + wd.kelly_full + '%' : '—') + '</div>';
+        h += '</div>';
+      });
+      h += '</div>';
+      
+      // 共识推荐
+      var pk = pickMap[store.store + '|' + mode];
+      if (pk && pk.stability >= 2) {
+        var confColor = pk.confidence === '高' ? '#16a34a' : '#d97706';
+        h += '<div style="margin-top:6px;font-size:10px;color:#1e3a5f;background:#eff6ff;border-radius:6px;padding:4px 8px">';
+        h += '🎯 共识：半Kelly <b>' + pk.half_kelly + '%</b> · 均胜率 ' + pk.wr + '% · <span style="color:' + confColor + '">' + pk.confidence + '置信</span>';
+        h += '</div>';
+      }
+      h += '</div>';
+    });
+    
+    h += '</div>';
+  });
+  
+  document.getElementById('kelly-stores').innerHTML = h;
+}
+
+function renderKellyWindows(d) {
+  var h = '<div style="font-size:13px;font-weight:700;color:#5a6b85;margin:12px 0 6px">📊 各窗口蒙特卡洛投影（共识门店）</div>';
+  
+  var picks = d.consensus.final_picks;
+  var allPicks = [];
+  ['positive','negative'].forEach(function(m) {
+    picks[m].forEach(function(p) {
+      if (p.stability >= 2) allPicks.push(p);
+    });
+  });
+  
+  // 找共识数据
+  var pickStoreMap = {};
+  d.consensus.stores.forEach(function(s) {
+    ['positive','negative'].forEach(function(mode) {
+      var md = s.modes[mode];
+      if (md && md.consensus) {
+        pickStoreMap[s.store + '|' + mode] = md.consensus;
+      }
+    });
+  });
+  
+  if (allPicks.length === 0) {
+    h += '<div style="background:#fff;border-radius:10px;padding:16px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+    h += '<div style="font-size:36px;margin-bottom:6px">⏸️</div>';
+    h += '<div style="font-size:13px;font-weight:600;color:#5a6b85">无多窗口共识门店</div>';
+    h += '<div style="font-size:11px;color:#8899b0;margin-top:2px">至少需要2个时间窗口同时推荐才纳入</div>';
+    h += '</div>';
+  } else {
+    h += '<div style="background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+    h += '<table style="width:100%;font-size:11px;border-collapse:collapse">';
+    h += '<thead><tr style="background:#f8fafc">';
+    h += '<th style="padding:6px 8px;text-align:left;font-weight:600;color:#5a6b85">门店</th>';
+    h += '<th style="padding:6px 8px;text-align:center;font-weight:600;color:#5a6b85">模式</th>';
+    h += '<th style="padding:6px 8px;text-align:right;font-weight:600;color:#5a6b85">胜率</th>';
+    h += '<th style="padding:6px 8px;text-align:right;font-weight:600;color:#5a6b85">半Kelly</th>';
+    h += '<th style="padding:6px 8px;text-align:right;font-weight:600;color:#5a6b85">建议投入</th>';
+    h += '<th style="padding:6px 8px;text-align:right;font-weight:600;color:#5a6b85">30天中位增长</th>';
+    h += '<th style="padding:6px 8px;text-align:center;font-weight:600;color:#5a6b85">置信</th>';
+    h += '</tr></thead><tbody>';
+    
+    allPicks.forEach(function(p) {
+      var cs = pickStoreMap[p.store + '|' + (['positive','negative'].find(function(m) {
+        return picks[m].indexOf(p) >= 0;
+      }) || 'positive')];
+      
+      // 找到consensus
+      var consensusData = null;
+      d.consensus.stores.forEach(function(s) {
+        if (s.store === p.store) {
+          ['positive','negative'].forEach(function(m) {
+            if (s.modes[m] && s.modes[m].consensus) {
+              var c = s.modes[m].consensus;
+              if (c.kelly_half_pct === p.half_kelly) consensusData = c;
+            }
+          });
+        }
+      });
+      
+      var proj = consensusData ? consensusData.projection : null;
+      var growth = proj ? proj.median_growth_pct : 0;
+      var growthColor = growth > 0 ? '#16a34a' : '#ef4444';
+      var confColor = p.confidence === '高' ? '#16a34a' : '#d97706';
+      
+      // find mode
+      var modeLabel = '';
+      ['positive','negative'].forEach(function(m) {
+        if (picks[m].indexOf(p) >= 0) modeLabel = m === 'positive' ? '正向' : '反向';
+      });
+      
+      h += '<tr>';
+      h += '<td style="padding:6px 8px;font-weight:600">' + p.store + '</td>';
+      h += '<td style="padding:6px 8px;text-align:center;font-size:10px">' + modeLabel + '</td>';
+      h += '<td style="padding:6px 8px;text-align:right;font-weight:600">' + p.wr + '%</td>';
+      h += '<td style="padding:6px 8px;text-align:right;font-weight:700;color:#1e3a5f">' + p.half_kelly + '%</td>';
+      h += '<td style="padding:6px 8px;text-align:right;font-weight:600;color:#1e3a5f">' + (consensusData ? consensusData.recommend_half_bet.toLocaleString() : '—') + '</td>';
+      h += '<td style="padding:6px 8px;text-align:right;font-weight:700;color:' + growthColor + '">' + (proj ? proj.median.toLocaleString() : '—') + ' <span style="font-size:9px">(' + (growth >= 0 ? '+' : '') + growth + '%)</span></td>';
+      h += '<td style="padding:6px 8px;text-align:center"><span style="background:' + confColor + ';color:#fff;padding:2px 6px;border-radius:8px;font-size:9px;font-weight:600">' + p.confidence + '</span></td>';
+      h += '</tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+  
+  // 策略说明
+  h += '<div style="background:#fffef5;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;margin-top:8px;font-size:11px;color:#92400e;line-height:1.7">';
+  h += '<b>💡 共识算法说明：</b><br>';
+  h += '• 同时跑 30/60/90 天三个窗口的Kelly<br>';
+  h += '• <b>稳定性 ≥ 2/3</b> 才推荐（至少2个窗口同时看多）<br>';
+  h += '• 取<b>最保守Kelly</b>（多窗口中最小值）防止过拟合<br>';
+  h += '• 趋势箭头：📈近期上升 / 📉近期下降 / ➡️稳定<br>';
+  h += '• 算法核心思想：单一窗口可能噪声大，多窗口<b>共识</b>才可靠';
+  h += '</div>';
+  
+  document.getElementById('kelly-projections').innerHTML = h;
+}
+
+function renderDynamicRisk(d) {
+  var capital = d.overview.bankroll;
+  var picks = d.consensus.final_picks;
+  var allStable = [];
+  ['positive','negative'].forEach(function(m) {
+    picks[m].forEach(function(p) { if (p.stability >= 2) allStable.push(p); });
+  });
+
+  var h = '<div style="font-size:13px;font-weight:700;color:#5a6b85;margin:16px 0 6px">⚡ 动态仓位管控</div>';
+
+  // ── 1. Kelly 自修正表 ──
+  h += '<div style="background:#fff;border-radius:10px;padding:10px 12px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:12px;font-weight:600;color:#1a2438;margin-bottom:8px">📐 Kelly 自修正曲线（本金变了，仓位自动跟着变）</div>';
+
+  if (allStable.length === 0) {
+    h += '<div style="font-size:11px;color:#8899b0;text-align:center;padding:8px">无共识门店，无需管控</div>';
+  } else {
+    h += '<table style="width:100%;font-size:10px;border-collapse:collapse">';
+    h += '<thead><tr style="background:#f8fafc">';
+    h += '<th style="padding:4px 6px;text-align:left;font-weight:600;color:#5a6b85">本金变动</th>';
+    h += '<th style="padding:4px 6px;text-align:right;font-weight:600;color:#5a6b85">总日投</th>';
+    h += '<th style="padding:4px 6px;text-align:right;font-weight:600;color:#5a6b85">一店(反)</th>';
+    h += '<th style="padding:4px 6px;text-align:right;font-weight:600;color:#5a6b85">四店(反)</th>';
+    h += '<th style="padding:4px 6px;text-align:right;font-weight:600;color:#5a6b85">五店(反)</th>';
+    h += '<th style="padding:4px 6px;text-align:center;font-weight:600;color:#5a6b85">状态</th>';
+    h += '</tr></thead><tbody>';
+
+    var top3 = allStable.slice(0, 3);
+    var scenarios = [
+      {label: '盈利+30%', mult: 1.3, cls: '#16a34a'},
+      {label: '盈利+10%', mult: 1.1, cls: '#22c55e'},
+      {label: '当前本金', mult: 1.0, cls: '#1e3a5f'},
+      {label: '亏损-10%', mult: 0.9, cls: '#f59e0b'},
+      {label: '亏损-20%', mult: 0.8, cls: '#ef4444'},
+      {label: '亏损-30%', mult: 0.7, cls: '#dc2626'},
+    ];
+
+    scenarios.forEach(function(sc) {
+      var br = Math.round(capital * sc.mult);
+      var total = 0;
+      h += '<tr style="' + (sc.mult === 1.0 ? 'background:#eff6ff' : '') + '">';
+      h += '<td style="padding:4px 6px;font-weight:600;color:' + sc.cls + '">' + sc.label + '<br><span style="font-size:9px;color:#8899b0">' + br.toLocaleString() + '</span></td>';
+
+      var rowTotal = 0;
+      top3.forEach(function(p) {
+        var bet = Math.round(br * p.half_kelly / 100);
+        rowTotal += bet;
+        h += '<td style="padding:4px 6px;text-align:right;color:' + (sc.mult >= 1.0 ? '#1e3a5f' : '#ef4444') + '">' + bet.toLocaleString() + '</td>';
+      });
+      total = rowTotal;
+      
+      var status = sc.mult >= 1.1 ? '🟢 加仓' : sc.mult >= 0.9 ? '🟡 维持' : sc.mult >= 0.8 ? '🟠 减仓' : '🔴 熔断';
+      h += '<td style="padding:4px 6px;text-align:center;font-size:10px">' + status + '</td>';
+      h += '</tr>';
+    });
+    h += '</tbody></table>';
+  }
+  h += '</div>';
+
+  // ── 2. 熔断规则 ──
+  h += '<div style="background:#fff;border-radius:10px;padding:10px 12px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:12px;font-weight:600;color:#1a2438;margin-bottom:6px">🛡️ 熔断规则（建议配合Kelly使用）</div>';
+  h += '<div style="font-size:11px;color:#5a6b85;line-height:1.8">';
+
+  var rules = [
+    {cond: '单日亏损 > 5%本金', action: '次日仓位减半'},
+    {cond: '连亏2天', action: '停1天观察'},
+    {cond: '连亏3天', action: '仓位降至¼ Kelly'},
+    {cond: '本金回撤 > 15%', action: '暂停所有出手，等3天'},
+    {cond: '本金回撤 > 25%', action: '停1周，复盘原因'},
+    {cond: '月度亏损 > 10%', action: '当月停止，下月重置'},
+  ];
+  rules.forEach(function(r, i) {
+    var bg = i < 3 ? '#f0fdf4' : '#fef2f2';
+    var borderColor = i < 3 ? '#bbf7d0' : '#fecaca';
+    h += '<div style="display:flex;gap:8px;align-items:center;padding:3px 0">';
+    h += '<span style="width:20px;height:20px;border-radius:50%;background:' + bg + ';border:2px solid ' + borderColor + ';text-align:center;line-height:16px;font-size:10px;font-weight:700;color:#5a6b85;flex-shrink:0">' + (i+1) + '</span>';
+    h += '<span style="flex:1"><b>' + r.cond + '</b> → ' + r.action + '</span>';
+    h += '</div>';
+  });
+  h += '</div></div>';
+
+  // ── 3. 连亏缩量计算器 ──
+  h += '<div style="background:#fff;border-radius:10px;padding:10px 12px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:12px;font-weight:600;color:#1a2438;margin-bottom:6px">📉 连亏缩量推演（假设每次亏损 = 投注额）</div>';
+
+  if (allStable.length === 0) {
+    h += '<div style="font-size:11px;color:#8899b0;text-align:center;padding:4px">无数据</div>';
+  } else {
+    var avgHalfKelly = 0;
+    allStable.forEach(function(p) { avgHalfKelly += p.half_kelly; });
+    avgHalfKelly = avgHalfKelly / allStable.length;
+
+    h += '<table style="width:100%;font-size:10px;border-collapse:collapse">';
+    h += '<thead><tr style="background:#f8fafc">';
+    h += '<th style="padding:4px 6px;font-weight:600;color:#5a6b85">连亏N天</th>';
+    h += '<th style="padding:4px 6px;text-align:right;font-weight:600;color:#5a6b85">剩余本金</th>';
+    h += '<th style="padding:4px 6px;text-align:right;font-weight:600;color:#5a6b85">下次Kelly投入</th>';
+    h += '<th style="padding:4px 6px;text-align:right;font-weight:600;color:#5a6b85">累计亏损</th>';
+    h += '</tr></thead><tbody>';
+
+    var br = capital;
+    var cumLoss = 0;
+    for (var day = 0; day <= 5; day++) {
+      var bet = Math.round(br * avgHalfKelly / 100);
+      var color = day === 0 ? '#1e3a5f' : (day <= 2 ? '#f59e0b' : '#ef4444');
+      h += '<tr style="' + (day === 0 ? 'background:#eff6ff' : '') + '">';
+      h += '<td style="padding:4px 6px;font-weight:600;color:' + color + '">' + (day === 0 ? '当前' : '亏' + day + '天') + '</td>';
+      h += '<td style="padding:4px 6px;text-align:right;color:' + color + '">' + br.toLocaleString() + '</td>';
+      h += '<td style="padding:4px 6px;text-align:right;font-weight:600;color:' + color + '">' + bet.toLocaleString() + '</td>';
+      h += '<td style="padding:4px 6px;text-align:right;color:#ef4444">' + (day === 0 ? '—' : '-' + cumLoss.toLocaleString()) + '</td>';
+      h += '</tr>';
+
+      // 模拟下一次亏损
+      br -= bet;
+      cumLoss += bet;
+    }
+    h += '</tbody></table>';
+  }
+  h += '</div>';
+
+  // ── 4. 一句话总结 ──
+  h += '<div style="background:#1e3a5f;border-radius:10px;padding:12px;color:#fff;font-size:12px;line-height:1.7">';
+  h += '<b>🎯 实战公式：</b><br>';
+  h += '每天开盘 → 看下单tab定门店 → 看凯利tab定仓位 → 交易中亏损触发熔断 → 收盘记录 → 次日Kelly自动更新';
+  h += '</div>';
+
+  document.getElementById('kelly-dynamic').innerHTML = h;
+}
+
 // ═══════ 全局未捕获 Promise 兜底 ═══════
 window.addEventListener('unhandledrejection', function(e) {
   console.error('[funds-v2] 未捕获异步错误:', e.reason);

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import FileResponse, JSONResponse
+import math, random
 
 _executor = ThreadPoolExecutor(max_workers=8)
 from fastapi.middleware.cors import CORSMiddleware
@@ -503,7 +504,7 @@ def check_external_key(request: Request):
 
 @app.post("/api/external/push")
 async def external_push(request: Request):
-    """外部系统推送流水记录 — 仅 records upsert（分类/门店由前端管理）"""
+    """外部系统推送流水记录 — upsert（新数据覆盖旧数据）"""
     check_external_key(request)
     data = await request.json()
     conn = get_db()
@@ -511,18 +512,22 @@ async def external_push(request: Request):
         rec_count = 0
         if "records" in data:
             for r in data["records"]:
-                # 用 UNIQUE(date,store,category) 去重，不依赖外部id（仓库传字符串id与INTEGER PK冲突）
-                existing = conn.execute(
-                    "SELECT id FROM records WHERE date=? AND store=? AND category=?",
-                    (str(r["date"]), str(r["store"]), str(r["category"]))
-                ).fetchone()
-                if not existing:
-                    conn.execute(
-                        "INSERT INTO records (store, date, category, amount, note) VALUES (?,?,?,?,?)",
-                        (str(r["store"]), str(r["date"]), str(r["category"]),
-                         float(r.get("amount",0)), str(r.get("note","")))
-                    )
-                    rec_count += 1
+                amount = float(r.get("amount", 0))
+                note = str(r.get("note", ""))
+                store = str(r["store"])
+                date = str(r["date"])
+                category = str(r["category"])
+                
+                # 跳过无效数据（amount=None/0 可能是未计算完成）
+                if amount is None or amount == 0:
+                    continue
+                    
+                conn.execute(
+                    "INSERT INTO records (store, date, category, amount, note) VALUES (?,?,?,?,?) "
+                    "ON CONFLICT(date,store,category) DO UPDATE SET amount=excluded.amount, note=excluded.note",
+                    (store, date, category, amount, note)
+                )
+                rec_count += 1
         conn.commit()
         log_op("外部推送", "-", f"recs={rec_count}")
         return {"ok": True, "records": rec_count}
@@ -1042,6 +1047,287 @@ def get_store_hit_rates(days=30):
         } if neg_total > 0 else None,
         "threshold": 53.2,
         "days": days
+    }
+
+# ═══════ Kelly 分析 ═══════
+@app.get("/api/simulate/kelly-analysis")
+async def api_kelly_analysis(request: Request, days: int = 90, capital: int = 100000):
+    """Kelly Criterion 分析 — 多窗口对比 + 共识推荐"""
+    await require_auth(request)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: compute_kelly_analysis(days, capital))
+
+def _compute_store_hit_rates(db, days):
+    """从 order_history 提取各门店×模式的命中统计"""
+    ODDS = {"positive": 22/25, "negative": 23/24}
+    STORE_ALIAS = {"集合14":"七店", "集合16":"八店"}
+
+    rows = db.execute(
+        f"SELECT action_date, stores_json, rankings_json, draw_number "
+        f"FROM order_history "
+        f"WHERE stores_json IS NOT NULL AND rankings_json IS NOT NULL "
+        f"AND action_date >= date('now', '-{days} days') "
+        f"ORDER BY action_date DESC"
+    ).fetchall()
+
+    store_data = {}
+    for r in rows:
+        try:
+            stores = json.loads(r["stores_json"]) if isinstance(r["stores_json"], str) else r["stores_json"]
+            rankings = json.loads(r["rankings_json"]) if isinstance(r["rankings_json"], str) else r["rankings_json"]
+        except Exception:
+            continue
+        draw = r["draw_number"] or 0
+        if draw <= 0 or not rankings:
+            continue
+
+        for s in stores:
+            name = s.get("store", "")
+            name = STORE_ALIAS.get(name, name)
+            mode = s.get("mode", "positive")
+            raw_rank = rankings.get(name) or rankings.get(s.get("store", ""))
+            if raw_rank is None:
+                continue
+
+            key = f"{name}|{mode}"
+            if key not in store_data:
+                store_data[key] = {"hits": 0, "misses": 0, "shares": 0, "total_capital": 0}
+
+            if mode == "positive":
+                hit = (raw_rank <= draw)
+            else:
+                hit = (raw_rank > draw)
+            if hit:
+                store_data[key]["hits"] += 1
+            else:
+                store_data[key]["misses"] += 1
+            store_data[key]["shares"] += 1
+            store_data[key]["total_capital"] += s.get("capital", 0)
+
+    # 构建结果
+    STORE_NAMES = ["一店","二店","三店","四店","五店","六店","七店","八店"]
+    result = {"stores": [], "days": days, "total_dates": len(rows)}
+
+    pos_betable, neg_betable = [], []
+    for store in STORE_NAMES:
+        entry = {"store": store, "positive": None, "negative": None}
+        for mode in ["positive", "negative"]:
+            key = f"{store}|{mode}"
+            s = store_data.get(key, {"hits": 0, "misses": 0, "shares": 0, "total_capital": 0})
+            total = s["hits"] + s["misses"]
+            if total < 5:
+                continue
+
+            wr = s["hits"] / total
+            b = ODDS[mode]
+            kelly_full = max(0, (b * wr - (1 - wr)) / b) if b > 0 else 0
+            is_betable = kelly_full > 0
+
+            entry[mode] = {
+                "hits": s["hits"], "total": total,
+                "win_rate": round(wr * 100, 1),
+                "kelly_full": round(kelly_full * 100, 1),
+                "kelly_half": round(kelly_full * 50, 1),
+                "is_betable": is_betable,
+                "shares": s["shares"],
+            }
+            if is_betable:
+                (pos_betable if mode == "positive" else neg_betable).append({
+                    "store": store, "kelly": round(kelly_full*100,1), "wr": round(wr*100,1)
+                })
+
+        result["stores"].append(entry)
+
+    result["positive_betable"] = sorted(pos_betable, key=lambda x: -x["kelly"])
+    result["negative_betable"] = sorted(neg_betable, key=lambda x: -x["kelly"])
+    return result
+
+def compute_kelly_analysis(days=90, bankroll=100000):
+    """多窗口 Kelly 对比 + 共识推荐"""
+    WINDOWS = [30, 60, 90]
+    db = get_db()
+
+    # 逐窗口计算
+    window_results = {}
+    for w in WINDOWS:
+        window_results[w] = _compute_store_hit_rates(db, w)
+    db.close()
+
+    STORE_NAMES = ["一店","二店","三店","四店","五店","六店","七店","八店"]
+    MODES = ["positive", "negative"]
+    ODDS = {"positive": 22/25, "negative": 23/24}
+
+    # ── 共识分析 ──
+    consensus_stores = []
+    final_picks = {"positive": [], "negative": []}
+
+    for store in STORE_NAMES:
+        entry = {"store": store, "modes": {}}
+        for mode in MODES:
+            mode_data = {"windows": {}, "stability": 0, "trend": "stable", "consensus": None}
+
+            # 收集各窗口数据
+            window_kellys = []
+            window_wrs = []
+            window_betable = []
+            for w in WINDOWS:
+                wr_data = window_results[w]
+                for s in wr_data["stores"]:
+                    if s["store"] == store and s[mode]:
+                        m = s[mode]
+                        window_kellys.append(m["kelly_full"])
+                        window_wrs.append(m["win_rate"])
+                        window_betable.append(m["is_betable"])
+                        mode_data["windows"][str(w)] = {
+                            "win_rate": m["win_rate"],
+                            "kelly_full": m["kelly_full"],
+                            "kelly_half": m["kelly_half"],
+                            "is_betable": m["is_betable"],
+                            "hits": m["hits"],
+                            "total": m["total"],
+                        }
+                        break
+                else:
+                    mode_data["windows"][str(w)] = None
+
+            if not window_kellys:
+                entry["modes"][mode] = mode_data
+                continue
+
+            # 稳定性 = 有多少窗口可投
+            mode_data["stability"] = sum(1 for b in window_betable if b)
+
+            # 趋势：比较30d和90d的胜率
+            if len(window_wrs) >= 2 and window_wrs[0] is not None and window_wrs[-1] is not None:
+                diff = window_wrs[0] - window_wrs[-1]  # 30d - 90d
+                if diff > 3:
+                    mode_data["trend"] = "improving"  # 近期更好
+                elif diff < -3:
+                    mode_data["trend"] = "declining"  # 近期变差
+
+            # 共识推荐：仅当稳定性≥2才推荐，取保守Kelly
+            betable_kellys = [k for i, k in enumerate(window_kellys) if window_betable[i]]
+            if betable_kellys and mode_data["stability"] >= 2:
+                conservative_kelly = min(betable_kellys)
+                avg_wr = sum(w for w in window_wrs if w) / max(1, sum(1 for w in window_wrs if w))
+                b_odds = 22/25 if mode == "positive" else 23/24
+
+                mc = _monte_carlo_projection(avg_wr/100, b_odds, conservative_kelly/100, bankroll)
+                mode_data["consensus"] = {
+                    "kelly_pct": conservative_kelly,
+                    "kelly_half_pct": round(conservative_kelly / 2, 1),
+                    "win_rate_avg": round(avg_wr, 1),
+                    "recommend_bet": round(bankroll * conservative_kelly / 100),
+                    "recommend_half_bet": round(bankroll * conservative_kelly / 200),
+                    "projection": mc,
+                    "confidence": "高" if mode_data["stability"] >= 3 else "中",
+                }
+                final_picks[mode].append({
+                    "store": store,
+                    "kelly": conservative_kelly,
+                    "half_kelly": round(conservative_kelly / 2, 1),
+                    "wr": round(avg_wr, 1),
+                    "stability": mode_data["stability"],
+                    "trend": mode_data["trend"],
+                    "confidence": mode_data["consensus"]["confidence"],
+                })
+
+            entry["modes"][mode] = mode_data
+        consensus_stores.append(entry)
+
+    # 排序
+    for mode in MODES:
+        final_picks[mode].sort(key=lambda x: (-x["stability"], -x["kelly"]))
+
+    # 生成最终建议文本
+    advice = _generate_advice(final_picks, bankroll)
+
+    return {
+        "overview": {"bankroll": bankroll, "windows": WINDOWS},
+        "windows": {
+            str(w): {
+                "days": w,
+                "total_dates": window_results[w]["total_dates"],
+                "positive_betable": window_results[w]["positive_betable"],
+                "negative_betable": window_results[w]["negative_betable"],
+                "stores": window_results[w]["stores"],
+            }
+            for w in WINDOWS
+        },
+        "consensus": {
+            "stores": consensus_stores,
+            "final_picks": final_picks,
+            "advice": advice,
+        }
+    }
+
+def _generate_advice(final_picks, bankroll):
+    """根据共识结果生成自然语言建议"""
+    lines = []
+    for mode, label in [("positive", "正向"), ("negative", "反向")]:
+        picks = final_picks.get(mode, [])
+        if not picks:
+            lines.append(f"❌ {label}：无稳定可投门店（所有窗口胜率不足保本线）")
+            continue
+
+        stable = [p for p in picks if p["stability"] >= 2]
+        if not stable:
+            lines.append(f"⚠️ {label}：无多窗口共识门店，不建议出手")
+            continue
+
+        top = stable[0]
+        trend_emoji = {"improving": "📈", "declining": "📉", "stable": "➡️"}
+        lines.append(
+            f"✅ {label}首选：{top['store']} "
+            f"（半Kelly {top['half_kelly']}%，胜率{top['wr']}%，"
+            f"稳定性{top['stability']}/3窗 {trend_emoji.get(top['trend'],'')}）"
+        )
+        for p in stable[1:3]:
+            lines.append(f"   备选：{p['store']}（半Kelly {p['half_kelly']}%，稳定性{p['stability']}/3）")
+
+    # 总建议
+    total_half_kelly = sum(p["half_kelly"] for mode_picks in final_picks.values() for p in mode_picks if p["stability"] >= 2)
+    if total_half_kelly > 0:
+        lines.append(f"\n💡 建议以半Kelly分散{len([p for mp in final_picks.values() for p in mp if p['stability']>=2])}家门店，"
+                     f"总仓位约{round(total_half_kelly,1)}%（{round(bankroll*total_half_kelly/100):,}元/{bankroll:,}元）")
+    else:
+        lines.append("\n🛑 当前无可投门店，建议观望等待胜率回升")
+
+    return lines
+
+def _monte_carlo_projection(win_rate, odds, kelly_fraction, bankroll, n_days=30, n_sims=2000):
+    """蒙特卡洛模拟：Kelly 仓位下 N 天后的资金分布"""
+    outcomes = []
+    for _ in range(n_sims):
+        br = bankroll
+        for _ in range(n_days):
+            bet = br * kelly_fraction
+            if random.random() < win_rate:
+                br += bet * odds  # win
+            else:
+                br -= bet         # lose
+        outcomes.append(br)
+
+    outcomes.sort()
+    p10 = outcomes[int(n_sims * 0.10)]
+    p25 = outcomes[int(n_sims * 0.25)]
+    p50 = outcomes[int(n_sims * 0.50)]
+    p75 = outcomes[int(n_sims * 0.75)]
+    p90 = outcomes[int(n_sims * 0.90)]
+    avg = sum(outcomes) / n_sims
+    growth = (p50 / bankroll - 1) * 100 if bankroll > 0 else 0
+
+    return {
+        "n_days": n_days,
+        "n_sims": n_sims,
+        "bankroll": bankroll,
+        "worst_p10": round(p10),
+        "worst_p25": round(p25),
+        "median": round(p50),
+        "best_p75": round(p75),
+        "best_p90": round(p90),
+        "average": round(avg),
+        "median_growth_pct": round(growth, 1),
     }
 
 # ═══════════════ 策略最优保存 & 回填 ═══════════════
