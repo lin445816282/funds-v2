@@ -387,6 +387,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     <button onclick="switchTab('entry')">录入</button>
     <button onclick="switchTab('mgmt')">管理</button>
     <button onclick="switchTab('records')">记录</button>
+    <button onclick="switchTab('ladder')">楼梯</button>
   </div>
 
   <!-- ====== 录入面板 ====== -->
@@ -739,6 +740,18 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     </div>
   </div>
 
+  <!-- ====== 楼梯面板 ====== -->
+  <div class="panel" id="panel-ladder">
+    <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:#f8fafc;border-radius:10px;margin-bottom:8px;font-size:12px">
+      <span style="color:#5a6b85;white-space:nowrap">📅 日期范围</span>
+      <input type="date" id="ld-date-from" onchange="renderLadder()" style="flex:1;padding:4px 6px;border-radius:6px;border:1px solid #cdd7e5;font-size:11px;background:#fff;min-width:0">
+      <span style="color:#8899b0">→</span>
+      <input type="date" id="ld-date-to" onchange="renderLadder()" style="flex:1;padding:4px 6px;border-radius:6px;border:1px solid #cdd7e5;font-size:11px;background:#fff;min-width:0">
+      <button onclick="document.getElementById('ld-date-from').value='';document.getElementById('ld-date-to').value='';renderLadder()" style="padding:4px 10px;border:1px solid #cdd7e5;border-radius:6px;background:#fff;font-size:11px;cursor:pointer;white-space:nowrap">全部</button>
+    </div>
+    <div id="ladder-content"><div class="empty">⏳ 加载中...</div></div>
+  </div>
+
   <!-- ====== 文档弹窗 ====== -->
   <div class="modal-mask hide" id="doc-popup" onclick="if(event.target===this)closeDocPopup()">
     <div class="modal-box" style="width:95%;max-width:520px;max-height:85vh;overflow-y:auto;padding:16px">
@@ -800,8 +813,8 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
         <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">四店</span>
         <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">五店</span>
         <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">六店</span>
-        <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">七店</span>
-        <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">八店</span>
+        <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">集合14</span>
+        <span style="background:#1e3a5f;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">集合16</span>
       </div>
 
       <h3 style="font-size:14px;color:#1e3a5f;margin:16px 0 6px;padding:4px 8px;background:#e8f0fe;border-left:3px solid #3b82f6;border-radius:0 4px 4px 0">五、决策变量</h3>
@@ -1173,6 +1186,9 @@ var API_BASE = window.location.pathname.startsWith('/funds-v2') ? '/funds-v2' : 
 
 // Token 管理
 var apiToken = localStorage.getItem('funds_token') || '';
+var serverToday = '';  // 服务器日期 YYYY-MM-DD，daysAgo 用它（避免手机时间偏差）
+var ladderCons = null; // sim_guides 共识缓存 {pos:{date:{store:votes}}, neg:{...}}
+var ladderConsLoading = false;
 
 // 统一请求方法：自动带 token + 401跳登录
 function authXHR(method, url, body, onOk, onErr, sync) {
@@ -1272,6 +1288,7 @@ function syncFromAPI() {
       if (data.p2n_store_on) p2nStoreOn = data.p2n_store_on;
       if (data.rank_store_on) rankStoreOn = data.rank_store_on;
       if (data.warn_combo_stores) warnComboStores = data.warn_combo_stores;
+      if (data.server_today) serverToday = data.server_today;
       // 新门店补回 warnComboStores
       stores.forEach(function(s){ if (!(s in warnComboStores)) warnComboStores[s] = true; });
       dataSource = 'api';
@@ -1454,6 +1471,7 @@ function syncFromAPIAsync(callback) {
         if (data.p2n_store_on) p2nStoreOn = data.p2n_store_on;
         if (data.rank_store_on) rankStoreOn = data.rank_store_on;
         if (data.warn_combo_stores) warnComboStores = data.warn_combo_stores;
+        if (data.server_today) serverToday = data.server_today;
         stores.forEach(function(s){ if (!(s in warnComboStores)) warnComboStores[s] = true; });
         dataSource = 'api';
         lastSyncTime = new Date().toLocaleString('zh-CN');
@@ -3922,7 +3940,7 @@ function switchTab(tab) {
   currentTab = tab;
   var btns = document.querySelectorAll('.tab-bar button');
   btns.forEach(function(b,i){
-    b.className = ['alerts','order','sim','kelly','ranking','overview','compare','entry','mgmt','records'][i]===tab ? 'on' : '';
+    b.className = ['alerts','order','sim','kelly','ranking','overview','compare','entry','mgmt','records','ladder'][i]===tab ? 'on' : '';
   });
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('on'); });
   document.getElementById('panel-'+tab).classList.add('on');
@@ -3938,6 +3956,7 @@ function switchTab(tab) {
   if (tab === 'mgmt') { fetchLogs(); fillExtInfo(); }
   if (tab === 'entry') { loadRankingTo('entry-rank'); }
   if (tab === 'records') { loadDrawRecords(); }
+  if (tab === 'ladder') { renderLadder(); }
 }
 
 function showDocPopup() {
@@ -4891,7 +4910,7 @@ function showOrderDetailPopup(date) {
   overlay.innerHTML = '<div style="background:#fff;border-radius:16px;padding:20px;width:92%;max-width:420px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-weight:700;font-size:15px;color:#1e3a5f">📋 ' + date + ' 采集明细</span><button onclick="document.getElementById(\'order-detail-overlay\').remove()" style="border:none;background:none;font-size:20px;color:#999;cursor:pointer">✕</button></div><div id="order-detail-body" style="flex:1;overflow-y:auto;font-size:13px"><div style="text-align:center;padding:40px;color:#999">⏳ 加载中...</div></div></div>';
   overlay.style.display = 'flex';
 
-  var STORE_MAP = {'-23':'一店','-24':'二店','-25':'三店','-26':'四店','-28':'五店','-29':'六店','14':'七店','16':'八店'};
+  var STORE_MAP = {'-23':'一店','-24':'二店','-25':'三店','-26':'四店','-28':'五店','-29':'六店','14':'集合14','16':'集合16'};
   authFetch('/api/simulate/order-numbers-detail?date=' + encodeURIComponent(date))
     .then(function(r) { return r.json(); })
     .then(function(d) {
@@ -5314,7 +5333,7 @@ function computeRankStreaks() {
     byDate[r.date][r.store] = r.amount;
   });
   var dates = Object.keys(byDate).sort();
-  var storeOrder = stores && stores.length ? stores.slice(0) : ['一店','二店','三店','四店','五店','六店','七店','八店'];
+  var storeOrder = stores && stores.length ? stores.slice(0) : ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
   
   rankStreaks = {posMax: 0, negMax: 0, stores: {}};
   
@@ -5360,7 +5379,7 @@ function computeRankStreaks() {
 
 function renderStreakTable(el, title, key, globalMax) {
   if (globalMax < 3) return '';
-  var storeOrder = stores && stores.length ? stores.slice(0) : ['一店','二店','三店','四店','五店','六店','七店','八店'];
+  var storeOrder = stores && stores.length ? stores.slice(0) : ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
   
   var tableRows = [];
   for (var n = globalMax; n >= 3; n--) { tableRows.push(n); }
@@ -5890,6 +5909,13 @@ if (localStorage.getItem('funds_v2')) {
     <div id="popup-content"></div>
   </div>
 </div>
+<!-- 楼梯连负详情弹窗 -->
+<div class="streak-popup-overlay" id="streak-detail-popup" style="display:none" onclick="if(event.target===this)closeStreakDetail()">
+  <div class="streak-popup-box" style="max-width:420px">
+    <button class="popup-close" onclick="closeStreakDetail()">✕</button>
+    <div id="streak-detail-body"></div>
+  </div>
+</div>
 <button class="fab-btn" id="fab-btn" title="记一笔">＋</button>
 <script>
 (function initFAB(){
@@ -5951,7 +5977,7 @@ function switchGuideModeUI(mode) {
 var simMode = 'positive';
 var simData = null;        // 缓存数据
 var simLastResult = null;  // 最后结果
-var STORE_NAMES = ['一店','二店','三店','四店','五店','六店','七店','八店'];
+var STORE_NAMES = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
 
 function initSimPanel() {
   if (simData) { renderSimStoreTable(); updateAlgoHint(); initGenDates(); return; }
@@ -6296,7 +6322,7 @@ function storeRange(ds, hits, hasDraw) {
   details.forEach(function(d){ hitMap[d.store] = d.hit; });
   // hits 覆盖（下单历史用行动日真实命中）
   if (hits) { for (var k in hits) { hitMap[k] = hits[k]; } }
-  var order = ['一店','二店','三店','四店','五店','六店','七店','八店'];
+  var order = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
   var names = ['一','二','三','四','五','六','七','八'];
   var top = '', bot = '';
   order.forEach(function(s, i) {
@@ -6475,7 +6501,7 @@ function renderGuide(d) {
   var rankDate = d.ranking_date || offsetDate(d.date, -1);
   h += '<div style="font-size:11px;color:#8899b0;margin-bottom:3px">📅 '+d.date+' 出手（排位日 '+rankDate+'）</div>';
   h += '<div style="font-size:12px;font-weight:600">';
-  ['一店','二店','三店','四店','五店','六店','七店','八店'].forEach(function(s){
+  ['一店','二店','三店','四店','五店','六店','集合14','集合16'].forEach(function(s){
     var rankings = d.pred_rankings || d.today_rankings || {};
     h += s+':<b style="color:#2563eb">'+(rankings[s]||'?')+'</b> ';
   });
@@ -6679,7 +6705,7 @@ function loadOrderHistory(page) {
 
       // 缩写函数
       function abbr(store) {
-        var map = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','七店':'七','八店':'八'};
+        var map = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','集合14':'七','集合16':'八'};
         return map[store] || store;
       }
 
@@ -6854,7 +6880,7 @@ function loadOrderHistory(page) {
 }
 
 // ── 门店筛选（下单记录弹窗）──
-var STORE_NAMES_OH = ['一店','二店','三店','四店','五店','六店','七店','八店'];
+var STORE_NAMES_OH = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
 
 function buildStoreChips() {
   var container = document.getElementById('order-history-store-chips');
@@ -7420,8 +7446,8 @@ function loadDrawRecords(page) {
         return;
       }
       var h = '';
-      var storeOrder = ['一店','二店','三店','四店','五店','六店','七店','八店'];
-      var abbrMap = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','七店':'七','八店':'八'};
+      var storeOrder = ['一店','二店','三店','四店','五店','六店','集合14','集合16'];
+      var abbrMap = {'一店':'一','二店':'二','三店':'三','四店':'四','五店':'五','六店':'六','集合14':'七','集合16':'八'};
       rows.forEach(function(r) {
         var rankings = r.rankings || {};
         h += '<div style="padding:6px 8px;margin-bottom:3px;background:#f8fafc;border-radius:6px;font-size:12px">';
@@ -7841,6 +7867,361 @@ window.addEventListener('unhandledrejection', function(e) {
   console.error('[funds-v2] 未捕获异步错误:', e.reason);
   showToast('⚠️ 网络异常，请重试');
 });
+
+// ====== 楼梯 Tab ======
+function daysAgo(dateStr) {
+  if (!dateStr) return '';
+  var parts = dateStr.split('-');
+  var d = new Date(parts[0], parts[1]-1, parts[2]);
+  var today;
+  if (serverToday) {
+    var tp = serverToday.split('-');
+    today = new Date(tp[0], tp[1]-1, tp[2]);
+  } else {
+    today = new Date(); today.setHours(0,0,0,0);
+  }
+  var diff = Math.floor((today - d) / 86400000);
+  return diff;
+}
+function loadLadderCons(cb) {
+  if (ladderCons) { cb(); return; }
+  if (ladderConsLoading) { setTimeout(function(){ loadLadderCons(cb); }, 300); return; }
+  ladderConsLoading = true;
+  var out = {pos: {}, neg: {}};
+  var done = 0;
+  function finish() { ladderCons = out; ladderConsLoading = false; cb(); }
+  function loadOne(mode) {
+    authFetch('/api/simulate/guide-history?limit=30&light=1&mode=' + mode)
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        (d.rows || []).forEach(function(row){
+          try {
+            var cons = {};
+            var arr = row.consensus;
+            if (!arr && row.result) arr = JSON.parse(row.result).consensus;
+            (arr || []).forEach(function(c){ cons[c.store] = c.votes; });
+            out[mode === 'positive' ? 'pos' : 'neg'][row.date] = cons;
+          } catch(e) {}
+        });
+        done++; if (done >= 2) finish();
+      })
+      .catch(function(){ done++; if (done >= 2) finish(); });
+  }
+  loadOne('positive');
+  loadOne('negative');
+}
+
+function renderLadder() {
+  var el = document.getElementById('ladder-content');
+  
+  // 收集排位数据: { date: { store: rank } }
+  var dayMap = {};
+  records.forEach(function(r) {
+    if (r.category !== 'cat_1783487972049') return;
+    if (!dayMap[r.date]) dayMap[r.date] = {};
+    dayMap[r.date][r.store] = r.amount;
+  });
+  
+  var dates = Object.keys(dayMap).sort();
+  if (!dates.length) { el.innerHTML = '<div class="empty">暂无排位数据</div>'; return; }
+  
+  // 日期范围过滤
+  var dateFrom = document.getElementById('ld-date-from').value;
+  var dateTo = document.getElementById('ld-date-to').value;
+  if (dateFrom || dateTo) {
+    dates = dates.filter(function(d) {
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+      return true;
+    });
+  }
+  if (!dates.length) { el.innerHTML = '<div class="empty">所选日期范围内无排位数据</div>'; return; }
+  
+  // 生成所有3店组合
+  var combos = [];
+  for (var i = 0; i < stores.length; i++) {
+    for (var j = i+1; j < stores.length; j++) {
+      for (var k = j+1; k < stores.length; k++) {
+        combos.push([stores[i], stores[j], stores[k]]);
+      }
+    }
+  }
+  
+  var TH = 25;
+  
+  // 计算每个组合的正反胜率+连胜
+  var results = [];
+  combos.forEach(function(trio) {
+    var posWins = 0, posLosses = 0;
+    var negWins = 0, negLosses = 0;
+    var posStreak = 0, posMaxStreak = 0, posStreakStart = '', posStreakEnd = '';
+    var negStreak = 0, negMaxStreak = 0, negStreakStart = '', negStreakEnd = '';
+    
+    // 记录连胜详情
+    var posStreakRuns = []; // [{start, end, count}]
+    var negStreakRuns = [];
+    
+    // 最近一次结果
+    var posLastDate = '', posLastResult = '-';
+    var negLastDate = '', negLastResult = '-';
+    // 上期（倒数第二）
+    var posPrevDate = '', negPrevDate = '';
+    
+    dates.forEach(function(d) {
+      var dMap = dayMap[d];
+      if (!dMap) return;
+      var a = dMap[trio[0]], b = dMap[trio[1]], c = dMap[trio[2]];
+      if (a === undefined || b === undefined || c === undefined) return;
+
+      // 正的：≥2家 ≤25 算赢（胜率/连胜/最近共用，3家全也算）
+      var posGood = (a <= TH ? 1 : 0) + (b <= TH ? 1 : 0) + (c <= TH ? 1 : 0);
+      if (posGood >= 2) {
+        posWins++;
+        posStreak++;
+        if (posStreak === 1) posStreakStart = d;
+        posStreakEnd = d;
+        if (posStreak > posMaxStreak) {
+          posMaxStreak = posStreak;
+        }
+        posPrevDate = posLastDate;
+        posLastDate = d;
+      } else {
+        posLosses++;
+        if (posStreak > 0) {
+          posStreakRuns.push({start: posStreakStart, end: posStreakEnd, count: posStreak});
+        }
+        posStreak = 0;
+      }
+      
+      // 负的：≥2家 >25 算赢（胜率/连胜/最近共用，3家全也算）
+      var negGood = (a > TH ? 1 : 0) + (b > TH ? 1 : 0) + (c > TH ? 1 : 0);
+      if (negGood >= 2) {
+        negWins++;
+        negStreak++;
+        if (negStreak === 1) negStreakStart = d;
+        negStreakEnd = d;
+        if (negStreak > negMaxStreak) {
+          negMaxStreak = negStreak;
+        }
+        negPrevDate = negLastDate;
+        negLastDate = d;
+      } else {
+        negLosses++;
+        if (negStreak > 0) {
+          negStreakRuns.push({start: negStreakStart, end: negStreakEnd, count: negStreak});
+        }
+        negStreak = 0;
+      }
+    });
+    
+    // ⭐ 正/负「最近」用排位判定：正=≥2家≤25，反=≥2家>25（3家全也算）
+    // 近30天限制：超过30天的胜不算（显示 -）
+    if (posLastDate && daysAgo(posLastDate) > 30) { posLastDate = ''; posPrevDate = ''; }
+    if (negLastDate && daysAgo(negLastDate) > 30) { negLastDate = ''; negPrevDate = ''; }
+    posLastResult = posLastDate ? '✓' : '-';
+    negLastResult = negLastDate ? '✓' : '-';
+    
+    // 收尾当前连胜
+    if (posStreak > 0) posStreakRuns.push({start: posStreakStart, end: posStreakEnd, count: posStreak});
+    if (negStreak > 0) negStreakRuns.push({start: negStreakStart, end: negStreakEnd, count: negStreak});
+    
+    // 最近一次连胜（当前进行中 > 最近完成的 > 0）
+    var posRecent = posStreak > 0 ? posStreak : (posStreakRuns.length ? posStreakRuns[posStreakRuns.length-1].count : 0);
+    var negRecent = negStreak > 0 ? negStreak : (negStreakRuns.length ? negStreakRuns[negStreakRuns.length-1].count : 0);
+    // 进行中连胜（还未结束的，用于预警）
+    var posOngoing = posStreak;
+    var negOngoing = negStreak;
+    
+    // 间隔天数（最近两次之间）
+    function dateGap(a, b) {
+      if (!a || !b) return 0;
+      var pa = a.split('-'), pb = b.split('-');
+      var da = new Date(pa[0], pa[1]-1, pa[2]);
+      var db = new Date(pb[0], pb[1]-1, pb[2]);
+      return Math.round((da - db) / 86400000);
+    }
+    var posGap = posPrevDate ? dateGap(posLastDate, posPrevDate) : 0;
+    var negGap = negPrevDate ? dateGap(negLastDate, negPrevDate) : 0;
+    
+    results.push({
+      trio: trio,
+      posWins: posWins, posLosses: posLosses,
+      negWins: negWins, negLosses: negLosses,
+      posMaxStreak: posMaxStreak,
+      negMaxStreak: negMaxStreak,
+      posRecentStreak: posRecent,
+      negRecentStreak: negRecent,
+      posOngoing: posOngoing,
+      negOngoing: negOngoing,
+      posLastResult: posLastResult,
+      negLastResult: negLastResult,
+      posLastDate: posLastDate,
+      negLastDate: negLastDate,
+      posPrevDate: posPrevDate,
+      negPrevDate: negPrevDate,
+      posGap: posGap,
+      negGap: negGap,
+      posStreakRuns: posStreakRuns,
+      negStreakRuns: negStreakRuns,
+      posRate: (posWins + posLosses) ? (posWins / (posWins + posLosses) * 100).toFixed(0) : '-',
+      negRate: (negWins + negLosses) ? (negWins / (negWins + negLosses) * 100).toFixed(0) : '-'
+    });
+  });
+  
+  // 渲染
+  var h = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">';
+  h += '<thead><tr style="background:#1e3a5f;color:#fff">';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">组合</th>';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">正·胜</th>';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">正·负</th>';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">正·胜率</th>';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">正·最大连胜</th>';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">正·最近</th>';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">反·胜</th>';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">反·负</th>';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">反·胜率</th>';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">反·最大连胜</th>';
+  h += '<th style="padding:6px 4px;text-align:center;white-space:nowrap">反·最近</th>';
+  h += '</tr></thead><tbody>';
+  
+  // 按正胜率排序
+  results.sort(function(a,b){ return (parseInt(b.posRate)||0) - (parseInt(a.posRate)||0); });
+  
+  results.forEach(function(r, idx) {
+    var bg = idx % 2 === 0 ? '#fff' : '#f8fafc';
+    // 进行中连胜≥7 整行标红
+    var rowAlert = (r.posOngoing >= 7 || r.negOngoing >= 7);
+    if (rowAlert) bg = '#fff5f5';
+    h += '<tr style="background:' + bg + '">';
+    h += '<td style="padding:5px 4px;text-align:center;font-weight:600;white-space:nowrap">' + r.trio.join('+') + '</td>';
+    h += '<td style="padding:5px 4px;text-align:center;color:#16a34a">' + r.posWins + '</td>';
+    h += '<td style="padding:5px 4px;text-align:center;color:#dc2626">' + r.posLosses + '</td>';
+    h += '<td style="padding:5px 4px;text-align:center;font-weight:600">' + r.posRate + '%</td>';
+    var posCls = r.posMaxStreak >= 7 ? 'color:#dc2626;font-weight:700;font-size:13px' : (r.posMaxStreak >= 5 ? 'color:#dc2626;font-weight:700' : (r.posMaxStreak >= 3 ? 'color:#f59e0b' : ''));
+    var posData = JSON.stringify(r.posStreakRuns).replace(/"/g, '&quot;');
+    h += '<td style="padding:5px 4px;text-align:center;cursor:pointer;' + posCls + '" onclick="showLadderStreak(\'' + r.trio.join(',') + '\',\'正\',\'' + posData + '\')">' + (r.posMaxStreak >= 7 ? '⚠️' : '') + r.posMaxStreak + '</td>';
+    h += '<td style="padding:5px 2px;text-align:center;font-size:12px;white-space:nowrap" title="组合:' + r.trio.join('+') + ' | 距今=' + daysAgo(r.posLastDate) + '天">' + (r.posLastResult === '✓' ? '<span style="color:#16a34a;font-weight:700">✓+</span>' : r.posLastResult === '✗' ? '<span style="color:#dc2626;font-weight:700">✗+</span>' : '-') + '<span style="font-size:10px;color:#8899b0">' + daysAgo(r.posLastDate) + '</span><br><span style="font-size:8px;color:#ccc">' + (r.posLastDate ? r.posLastDate.slice(5) : '—') + '</span></td>';
+    h += '<td style="padding:5px 4px;text-align:center;color:#16a34a">' + r.negWins + '</td>';
+    h += '<td style="padding:5px 4px;text-align:center;color:#dc2626">' + r.negLosses + '</td>';
+    h += '<td style="padding:5px 4px;text-align:center;font-weight:600">' + r.negRate + '%</td>';
+    var negCls = r.negMaxStreak >= 7 ? 'color:#dc2626;font-weight:700;font-size:13px' : (r.negMaxStreak >= 5 ? 'color:#dc2626;font-weight:700' : (r.negMaxStreak >= 3 ? 'color:#f59e0b' : ''));
+    var negData = JSON.stringify(r.negStreakRuns).replace(/"/g, '&quot;');
+    h += '<td style="padding:5px 4px;text-align:center;cursor:pointer;' + negCls + '" onclick="showLadderStreak(\'' + r.trio.join(',') + '\',\'反\',\'' + negData + '\')">' + (r.negMaxStreak >= 7 ? '⚠️' : '') + r.negMaxStreak + '</td>';
+    h += '<td style="padding:5px 2px;text-align:center;font-size:12px;white-space:nowrap" title="组合:' + r.trio.join('+') + ' | 距今=' + daysAgo(r.negLastDate) + '天">' + (r.negLastResult === '✓' ? '<span style="color:#16a34a;font-weight:700">✓+</span>' : r.negLastResult === '✗' ? '<span style="color:#dc2626;font-weight:700">✗+</span>' : '-') + '<span style="font-size:10px;color:#8899b0">' + daysAgo(r.negLastDate) + '</span><br><span style="font-size:8px;color:#ccc">' + (r.negLastDate ? r.negLastDate.slice(5) : '—') + '</span></td>';
+    h += '</tr>';
+  });
+  
+  h += '</tbody></table></div>';
+  
+  // 统计摘要 + 预警
+  var totalCombos = results.length;
+  var avgPosRate = results.reduce(function(s,r){ return s + (parseInt(r.posRate)||0); }, 0) / totalCombos;
+  var avgNegRate = results.reduce(function(s,r){ return s + (parseInt(r.negRate)||0); }, 0) / totalCombos;
+  
+  // 进行中连胜分布 + 预警
+  var posDist = {3:0,5:0,7:0}, negDist = {3:0,5:0,7:0};
+  var alert7 = [];
+  results.forEach(function(r) {
+    if (r.posOngoing >= 7) { posDist[7]++; alert7.push(r.trio.join('+')+' 正'+r.posOngoing); }
+    else if (r.posOngoing >= 5) posDist[5]++;
+    else if (r.posOngoing >= 3) posDist[3]++;
+    if (r.negOngoing >= 7) { negDist[7]++; alert7.push(r.trio.join('+')+' 反'+r.negOngoing); }
+    else if (r.negOngoing >= 5) negDist[5]++;
+    else if (r.negOngoing >= 3) negDist[3]++;
+  });
+  
+  // 最佳组合（正胜率最高+反胜率最高各取前3）
+  var bestPos = results.slice().sort(function(a,b){ return (parseInt(b.posRate)||0)-(parseInt(a.posRate)||0); }).slice(0,3);
+  var bestNeg = results.slice().sort(function(a,b){ return (parseInt(b.negRate)||0)-(parseInt(a.negRate)||0); }).slice(0,3);
+  
+  var rangeLabel = (dateFrom || dateTo) ? (' | 范围: ' + (dateFrom||'最早') + ' → ' + (dateTo||'最新')) : '';
+  
+  // 预警横幅
+  if (alert7.length) {
+    h += '<div style="margin-top:8px;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:11px">';
+    h += '🚨 <b>进行中连胜≥7预警</b>：' + alert7.join(' · ') + '</div>';
+  }
+  
+  // 统计卡片
+  h += '<div style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:6px">';
+  
+  // 正统计
+  h += '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px;font-size:10px">';
+  h += '<div style="font-weight:700;color:#16a34a;margin-bottom:4px">📈 正·统计</div>';
+  h += '<div>平均胜率 <b>' + avgPosRate.toFixed(0) + '%</b></div>';
+  h += '<div>进行中连胜 3~4: <b>' + posDist[3] + '</b>组 | 5~6: <b style="color:#f59e0b">' + posDist[5] + '</b>组 | ≥7: <b style="color:#dc2626">' + posDist[7] + '</b>组</div>';
+  h += '<div style="margin-top:2px;color:#5a6b85">🏆 ' + bestPos.map(function(r){ return r.trio.join('+')+' '+r.posRate+'%'; }).join(' · ') + '</div>';
+  h += '</div>';
+  
+  // 反统计
+  h += '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px;font-size:10px">';
+  h += '<div style="font-weight:700;color:#ea580c;margin-bottom:4px">📉 反·统计</div>';
+  h += '<div>平均胜率 <b>' + avgNegRate.toFixed(0) + '%</b></div>';
+  h += '<div>进行中连胜 3~4: <b>' + negDist[3] + '</b>组 | 5~6: <b style="color:#f59e0b">' + negDist[5] + '</b>组 | ≥7: <b style="color:#dc2626">' + negDist[7] + '</b>组</div>';
+  h += '<div style="margin-top:2px;color:#5a6b85">🏆 ' + bestNeg.map(function(r){ return r.trio.join('+')+' '+r.negRate+'%'; }).join(' · ') + '</div>';
+  h += '</div>';
+  
+  h += '</div>';
+  
+  // 底部摘要
+  h += '<div style="margin-top:6px;padding:8px 12px;background:#f0f3f8;border-radius:8px;font-size:11px;text-align:center">';
+  h += '共 <b>' + totalCombos + '</b> 组 | ' + dates.length + '天 | 阈值=<b>' + TH + '</b>' + rangeLabel;
+  h += ' | 服务器今天: <b>' + (serverToday || '未同步') + '</b>';
+  h += '</div>';
+  
+  // 更新楼梯tab按钮上的预警角标
+  updateLadderBadge(alert7.length);
+  
+  el.innerHTML = h;
+}
+
+function showLadderStreak(trio, dir, runsStr) {
+  var runs = [];
+  try {
+    var jsonStr = runsStr.replace(/&quot;/g, '"');
+    runs = JSON.parse(jsonStr);
+  } catch(e) { runs = []; }
+  var h = '<div style="padding:8px"><h4 style="margin:0 0 8px">' + trio + ' · ' + dir + ' 连胜详情</h4>';
+  if (!runs.length) {
+    h += '<div class="empty">无连胜记录</div>';
+  } else {
+    h += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    h += '<tr style="background:#1e3a5f;color:#fff"><th style="padding:4px">#</th><th style="padding:4px">开始</th><th style="padding:4px">结束</th><th style="padding:4px">连续天数</th></tr>';
+    runs.forEach(function(r, i) {
+      h += '<tr style="background:' + (i%2?'#f8fafc':'#fff') + '">';
+      h += '<td style="padding:4px;text-align:center">' + (i+1) + '</td>';
+      h += '<td style="padding:4px;text-align:center">' + r.start + '</td>';
+      h += '<td style="padding:4px;text-align:center">' + r.end + '</td>';
+      h += '<td style="padding:4px;text-align:center;font-weight:600;color:#dc2626">' + r.count + '</td>';
+      h += '</tr>';
+    });
+    h += '</table>';
+  }
+  h += '<div style="text-align:center;margin-top:10px"><button onclick="closeStreakDetail()" style="padding:6px 20px;border:1px solid #cdd7e5;border-radius:6px;background:#fff;cursor:pointer">关闭</button></div>';
+  h += '</div>';
+  
+  document.getElementById('streak-detail-body').innerHTML = h;
+  document.getElementById('streak-detail-popup').style.display = 'flex';
+}
+
+function closeStreakDetail() {
+  document.getElementById('streak-detail-popup').style.display = 'none';
+}
+
+function updateLadderBadge(count) {
+  var btn = document.querySelector('.tab-bar button[onclick*="ladder"]');
+  if (!btn) return;
+  // 移除旧角标
+  var old = btn.querySelector('.badge');
+  if (old) old.remove();
+  if (count > 0) {
+    var badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.style.cssText = 'display:inline-block;margin-left:2px;padding:0 5px;background:#dc2626;color:#fff;border-radius:10px;font-size:10px;font-weight:700;line-height:16px;min-width:16px;text-align:center';
+    badge.textContent = count;
+    btn.appendChild(badge);
+  }
+}
 </script>
 
 <!-- 投资计划弹框 -->

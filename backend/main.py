@@ -216,7 +216,6 @@ async def get_funds_data(request: Request):
     # 默认返回最近365天数据，避免全量超时
     since = request.query_params.get("since", "")
     if not since:
-        from datetime import datetime, timedelta
         since = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
     conn = get_db()
     try:
@@ -247,6 +246,7 @@ async def get_funds_data(request: Request):
             "alert_rules": alert_rules,
             "warn_store_on": warn_store_on,
             "profit_store_on": profit_store_on,
+            "server_today": datetime.now().strftime("%Y-%m-%d"),
         }
     finally:
         conn.close()
@@ -626,10 +626,10 @@ async def api_daily_guide(request: Request, days: int = 90, mode: str = "positiv
     return await loop.run_in_executor(_executor, lambda: run_daily_guide(days, mode, max_iter))
 
 @app.get("/api/simulate/guide-history")
-async def api_guide_history(request: Request, limit: int = 30, mode: str = None, offset: int = 0):
+async def api_guide_history(request: Request, limit: int = 30, mode: str = None, offset: int = 0, light: int = 0):
     await require_auth(request)
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, lambda: get_guide_history(limit, mode, offset))
+    return await loop.run_in_executor(_executor, lambda: get_guide_history(limit, mode, offset, bool(light)))
 
 @app.get("/api/simulate/optimization-log")
 async def api_optimization_log(request: Request, ):
@@ -889,13 +889,13 @@ async def api_save_order_daily_result(request: Request):
     return await loop.run_in_executor(_executor, lambda: save_order_daily_result(date, result))
 
 def get_order_daily_results():
-    """从 order_history 读取真实开奖数据，自动计算赢/亏（rank≤25=win），
+    """从 order_history 读取真实开奖数据，自动计算赢/亏（own_profit>0=win），
     同时合并 order_daily_results 中的手动覆盖。"""
     import json as _json
     conn = get_db()
     # 1. 读取 order_history（真实数据源）
     oh_rows = conn.execute("""
-        SELECT action_date as date, draw_number, amounts_json, created_at as created
+        SELECT action_date as date, draw_number, amounts_json, own_profit, created_at as created
         FROM order_history 
         WHERE draw_number > 0 AND amounts_json IS NOT NULL
         ORDER BY action_date DESC LIMIT 60
@@ -916,19 +916,17 @@ def get_order_daily_results():
             # 手动覆盖优先
             results.append({"date": date, "result": manual_map[date], "created": r["created"]})
         else:
-            # 自动计算：从 amounts 算 draw_number 的排位
+            # 自动计算：用真实盈亏 own_profit 判断（own_profit>0=win，≤0=loss）
             try:
-                amounts = _json.loads(r["amounts_json"])
-                draw = str(r["draw_number"])
-                draw_amt = amounts.get(draw, 0)
-                # 计算排位：比它大的有几个
-                rank = sum(1 for v in amounts.values() if v > draw_amt) + 1
-                result = "win" if rank <= 25 else "loss"
-                # 同时保存到 order_daily_results 供后续快速读取
-                conn.execute(
-                    "INSERT OR REPLACE INTO order_daily_results (date, result) VALUES (?,?)",
-                    (date, _json.dumps({"draw_number": r["draw_number"], "rank": rank}))
-                )
+                op = r["own_profit"]
+                if op is None:
+                    # own_profit 为空时从 amounts 现算（draw_amt*47 - total_bet）
+                    amounts = _json.loads(r["amounts_json"])
+                    draw = str(r["draw_number"])
+                    draw_amt = amounts.get(draw, 0)
+                    total_bet = sum(amounts.values())
+                    op = round(draw_amt * 47 - total_bet, 2)
+                result = "win" if (op > 0) else "loss"
             except Exception:
                 result = "loss"
             results.append({"date": date, "result": result, "created": r["created"]})
@@ -1060,7 +1058,7 @@ async def api_kelly_analysis(request: Request, days: int = 90, capital: int = 10
 def _compute_store_hit_rates(db, days):
     """从 order_history 提取各门店×模式的命中统计"""
     ODDS = {"positive": 22/25, "negative": 23/24}
-    STORE_ALIAS = {"集合14":"七店", "集合16":"八店"}
+    STORE_ALIAS = {"集合14":"集合14", "集合16":"集合16"}
 
     rows = db.execute(
         f"SELECT action_date, stores_json, rankings_json, draw_number "
@@ -1105,7 +1103,7 @@ def _compute_store_hit_rates(db, days):
             store_data[key]["total_capital"] += s.get("capital", 0)
 
     # 构建结果
-    STORE_NAMES = ["一店","二店","三店","四店","五店","六店","七店","八店"]
+    STORE_NAMES = ["一店","二店","三店","四店","五店","六店","集合14","集合16"]
     result = {"stores": [], "days": days, "total_dates": len(rows)}
 
     pos_betable, neg_betable = [], []
@@ -1153,7 +1151,7 @@ def compute_kelly_analysis(days=90, bankroll=100000):
         window_results[w] = _compute_store_hit_rates(db, w)
     db.close()
 
-    STORE_NAMES = ["一店","二店","三店","四店","五店","六店","七店","八店"]
+    STORE_NAMES = ["一店","二店","三店","四店","五店","六店","集合14","集合16"]
     MODES = ["positive", "negative"]
     ODDS = {"positive": 22/25, "negative": 23/24}
 

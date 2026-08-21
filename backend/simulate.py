@@ -11,7 +11,7 @@ WH_DB = "/home/xiaolin/projects/number-warehouse/backend/data/warehouse.db"
 
 # ── 常量 ────────────────────────────────────
 CAPITAL_OPTIONS = [10, 20, 40]       # 配资档位（万）
-POS_THRESHOLD_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45]  # 正帮最小5，杜绝"永不出手"退化
+POS_THRESHOLD_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45]  # 已废弃：2026-07-23优化已退回，正帮改回THRESHOLD_OPTIONS
 THRESHOLD_OPTIONS = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45]
 NEG_THRESHOLD_OPTIONS = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45]
 MODE_OPTIONS = ["positive", "negative"]
@@ -283,7 +283,7 @@ def _coordinate_optimize(data, mode, max_iter=10, stop_on_neg2=False):
     """坐标下降 + 5个均匀起点 → 取最优（确定性）"""
     # 5个均匀分布起点：(阈,资)，反帮扶去掉1/5
     starters = [(10,10),(15,20),(25,40),(35,20),(45,10)] if mode == "negative" else [(5,10),(15,20),(25,40),(35,20),(45,10)]
-    thresholds = NEG_THRESHOLD_OPTIONS if mode == "negative" else POS_THRESHOLD_OPTIONS
+    thresholds = NEG_THRESHOLD_OPTIONS if mode == "negative" else THRESHOLD_OPTIONS
     best_params = None
     best_result = None
     best_profit = -float("inf")
@@ -329,7 +329,7 @@ def _coordinate_optimize(data, mode, max_iter=10, stop_on_neg2=False):
 
 def _uniform_optimize(data, mode):
     """等权参数：暴力搜最优后逐店微调阈值（±相邻档），保留个体差异空间"""
-    thresholds = NEG_THRESHOLD_OPTIONS if mode == "negative" else POS_THRESHOLD_OPTIONS
+    thresholds = NEG_THRESHOLD_OPTIONS if mode == "negative" else THRESHOLD_OPTIONS
     best_params = None
     best_result = None
     best_profit = -float("inf")
@@ -344,21 +344,23 @@ def _uniform_optimize(data, mode):
                 best_result = result
                 best_params = sp
     
-    # 阶段2：逐店全量独立优化阈值+配资（允许从统一最优大幅偏离）
+    # 阶段2：逐店微调阈值（±相邻档→8×5=40次模拟）
     if best_params:
         opt = best_params[STORE_NAMES[0]]
-        best_mode = opt["mode"]
+        cap, best_mode = opt["capital"], opt["mode"]
+        base_t = opt["threshold"]
         for store in STORE_NAMES:
-            for t in thresholds:
-                for c in CAPITAL_OPTIONS:
-                    sp = {s: dict(best_params[s]) for s in STORE_NAMES}
-                    sp[store]["threshold"] = t
-                    sp[store]["capital"] = c
-                    result = simulate_full(sp, data)
-                    if result["total_profit"] > best_profit:
-                        best_profit = result["total_profit"]
-                        best_result = result
-                        best_params = sp
+            for dt in [-10, -5, 0, 5, 10]:
+                t = base_t + dt
+                if t not in THRESHOLD_OPTIONS:
+                    continue
+                sp = {s: dict(best_params[s]) for s in STORE_NAMES}
+                sp[store]["threshold"] = t
+                result = simulate_full(sp, data)
+                if result["total_profit"] > best_profit:
+                    best_profit = result["total_profit"]
+                    best_result = result
+                    best_params = sp
     
     return best_params, best_result
 
@@ -366,7 +368,7 @@ def _uniform_optimize(data, mode):
 def _positive_only_optimize(data, mode, max_iter=10):
     """仅指定模式：固定5个分布均匀起点 → 坐标下降 → 取最优（确定性）"""
     # 5个均匀分布起点：(阈,资)，反帮扶去掉1/5
-    thresholds = NEG_THRESHOLD_OPTIONS if mode == "negative" else POS_THRESHOLD_OPTIONS
+    thresholds = NEG_THRESHOLD_OPTIONS if mode == "negative" else THRESHOLD_OPTIONS
     starters = [(10,10),(15,20),(25,40),(35,20),(45,10)] if mode == "negative" else [(5,10),(15,20),(25,40),(35,20),(45,10)]
     best_params = None
     best_result = None
@@ -1319,8 +1321,8 @@ def get_optimization_log():
     except Exception as e:
         return {"logs": [], "error": str(e)}
 
-def get_guide_history(limit=20, mode=None, offset=0):
-    """获取历史下单指南 — 含盈亏(来自order_history)"""
+def get_guide_history(limit=20, mode=None, offset=0, light=False):
+    """获取历史下单指南 — 含盈亏(来自order_history)；light=True 只返回 consensus（楼梯 Tab 用，避免传 rankings/pred_rankings 等大字段）"""
     db = sqlite3.connect(FUNDS_DB)
     db.row_factory = sqlite3.Row
     if mode:
@@ -1329,6 +1331,20 @@ def get_guide_history(limit=20, mode=None, offset=0):
     else:
         rows = db.execute("SELECT s.*, o.own_profit, o.own_capital FROM sim_guides s LEFT JOIN order_history o ON s.date=o.action_date ORDER BY s.date DESC LIMIT ? OFFSET ?",(limit,offset)).fetchall()
         total = db.execute("SELECT COUNT(*) FROM sim_guides").fetchone()[0]
+    
+    if light:
+        result_rows = []
+        for r in rows:
+            row = dict(r)
+            cons = []
+            try:
+                rd = json.loads(row.get('result','{}'))
+                for c in rd.get('consensus',[]):
+                    cons.append({'store': c.get('store'), 'votes': c.get('votes', 0)})
+            except: pass
+            result_rows.append({'id': row['id'], 'date': row['date'], 'mode': row['mode'], 'consensus': cons})
+        db.close()
+        return {"rows": result_rows, "total": total}
     
     result_rows = []
     for r in rows:
