@@ -23,6 +23,7 @@ MISS_MULT = {"positive": 25, "negative": 24}
 
 # ═══════════════ 数据加载 ═══════════════════
 _load_data_cache = None  # 全量数据进程级缓存，避免重复 SQL 查询
+_load_data_cache_max_id = 0  # 缓存建立时的 records 最大 id（自愈检测）
 
 def load_data(days=90, year=None):
     """返回 {date: {draw: int, rankings: {store: rank}}} 列表，按日期排序
@@ -30,9 +31,20 @@ def load_data(days=90, year=None):
     days=0 或 None → 返回全量（backfill 等需要历史数据的场景）
     year=2026 → 仅过滤该年份数据（2026-01-01 起）
     进程级缓存：首次全量加载后切片复用，后续调用 O(1)"""
-    global _load_data_cache
+    global _load_data_cache, _load_data_cache_max_id
     from datetime import datetime, timedelta
     
+    # ── 自愈：records 有新数据（MAX(id) 变化）→ 缓存失效重建 ──
+    if _load_data_cache is not None:
+        try:
+            _chk = sqlite3.connect(FUNDS_DB)
+            _cur_max = _chk.execute("SELECT MAX(id) FROM records").fetchone()[0] or 0
+            _chk.close()
+            if _cur_max != _load_data_cache_max_id:
+                _load_data_cache = None
+        except Exception:
+            _load_data_cache = None  # 查询失败则重建，安全兜底
+
     # ── 缓存命中：直接切片返回 ──
     if _load_data_cache is not None:
         from datetime import datetime, timedelta
@@ -49,6 +61,7 @@ def load_data(days=90, year=None):
     
     fv = sqlite3.connect(FUNDS_DB)
     fv.row_factory = sqlite3.Row
+    _records_max_id = fv.execute("SELECT MAX(id) FROM records").fetchone()[0] or 0
     
     # 获取全量排位数据
     rankings = {}
@@ -109,6 +122,7 @@ def load_data(days=90, year=None):
     
     # ── 缓存全量结果（切片复用）──
     _load_data_cache = result
+    _load_data_cache_max_id = _records_max_id
     
     # ── 年份过滤（从全量数据中筛）──
     if year is not None:

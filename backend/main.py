@@ -12,7 +12,7 @@ import sqlite3
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "funds-v2.db")
-PASSWORD = "123456"
+PASSWORD = "8283103"
 EXTERNAL_API_KEY = "funds-v2-ext-2026"  # 给外部系统的对接密钥
 
 app = FastAPI(title="funds-v2", docs_url=None, redoc_url=None)
@@ -104,7 +104,49 @@ def init_db():
             draw_number INTEGER NOT NULL,
             synced_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        CREATE TABLE IF NOT EXISTS ladder_snapshot (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            calc_date TEXT NOT NULL,
+            action_date TEXT NOT NULL DEFAULT '',
+            scheme TEXT NOT NULL DEFAULT '',
+            chips_json TEXT NOT NULL,
+            numbers_json TEXT NOT NULL,
+            order_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(calc_date, action_date, scheme)
+        );
     """)
+    # 迁移：旧表无 scheme 列时重建（保留数据，scheme 从 order_json 提取）
+    _cols = [r[1] for r in conn.execute("PRAGMA table_info(ladder_snapshot)").fetchall()]
+    if "scheme" not in _cols:
+        conn.execute("ALTER TABLE ladder_snapshot RENAME TO ladder_snapshot_old")
+        conn.execute("""
+            CREATE TABLE ladder_snapshot (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                calc_date TEXT NOT NULL,
+                action_date TEXT NOT NULL DEFAULT '',
+                scheme TEXT NOT NULL DEFAULT '',
+                chips_json TEXT NOT NULL,
+                numbers_json TEXT NOT NULL,
+                order_json TEXT NOT NULL DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                UNIQUE(calc_date, action_date, scheme)
+            )
+        """)
+        _rows = conn.execute("SELECT * FROM ladder_snapshot_old ORDER BY id").fetchall()
+        for _r in _rows:
+            _scheme = ""
+            try:
+                _oj = json.loads(_r["order_json"]) if _r["order_json"] else {}
+                _scheme = _oj.get("scheme") or ""
+            except Exception:
+                _scheme = ""
+            conn.execute(
+                "INSERT INTO ladder_snapshot (id, calc_date, action_date, scheme, chips_json, numbers_json, order_json, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (_r["id"], _r["calc_date"], _r["action_date"], _scheme, _r["chips_json"], _r["numbers_json"], _r["order_json"], _r["created_at"])
+            )
+        conn.execute("DROP TABLE ladder_snapshot_old")
     conn.commit()
     conn.close()
 
@@ -721,6 +763,158 @@ async def api_ack_order_history(request: Request):
         raise HTTPException(400, "action_date required")
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, lambda: ack_order_history(action_date, acknowledged))
+
+
+# ═══════ 楼梯下单快照（56组筹码+号码投票+下单）═══════
+@app.post("/api/simulate/ladder-snapshot")
+async def api_save_ladder_snapshot(request: Request):
+    """保存楼梯下单三步快照（用户主动触发）"""
+    await require_auth(request)
+    body = await request.json()
+    calc_date = body.get("calc_date", "")
+    action_date = body.get("action_date", "")
+    scheme = body.get("scheme", "") or ""
+    chips = body.get("chips", None)
+    numbers = body.get("numbers", None)
+    order = body.get("order", None)
+    if not calc_date or chips is None:
+        raise HTTPException(400, "calc_date and chips required")
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO ladder_snapshot (calc_date, action_date, scheme, chips_json, numbers_json, order_json) "
+            "VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(calc_date, action_date, scheme) DO UPDATE SET "
+            "chips_json=excluded.chips_json, numbers_json=excluded.numbers_json, "
+            "order_json=excluded.order_json, created_at=datetime('now','localtime')",
+            (calc_date, action_date, scheme,
+             json.dumps(chips, ensure_ascii=False),
+             json.dumps(numbers, ensure_ascii=False),
+             json.dumps(order, ensure_ascii=False) if order is not None else "")
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.get("/api/simulate/ladder-snapshot")
+async def api_get_ladder_snapshot(request: Request, calc_date: str = None, scheme: str = None):
+    """读取楼梯下单快照（指定 calc_date 查该天，可加 scheme 区分方案；否则最新一份）"""
+    await require_auth(request)
+    conn = get_db()
+    try:
+        if calc_date:
+            if scheme:
+                row = conn.execute("SELECT * FROM ladder_snapshot WHERE calc_date=? AND scheme=? ORDER BY id DESC LIMIT 1", (calc_date, scheme)).fetchone()
+            else:
+                row = conn.execute("SELECT * FROM ladder_snapshot WHERE calc_date=? ORDER BY id DESC LIMIT 1", (calc_date,)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM ladder_snapshot ORDER BY id DESC LIMIT 1").fetchone()
+        if not row:
+            return {"ok": True, "snapshot": None}
+        return {"ok": True, "snapshot": {
+            "calc_date": row["calc_date"],
+            "action_date": row["action_date"],
+            "chips": json.loads(row["chips_json"]),
+            "numbers": json.loads(row["numbers_json"]),
+            "order": json.loads(row["order_json"]) if row["order_json"] else None,
+            "created_at": row["created_at"]
+        }}
+    finally:
+        conn.close()
+
+
+def _ladder_profit(order_json, draw_number):
+    """楼梯下单盈亏 = 开奖号下单额×47 − 总下单额（未买中开奖号则 −total）"""
+    try:
+        oj = json.loads(order_json) if order_json else {}
+        na = oj.get("numAmounts") or {}
+        total = oj.get("totalAmt") or 0
+        draw_amt = na.get(str(draw_number), 0)
+        return round(draw_amt * 47 - total, 2)
+    except Exception:
+        return None
+
+
+def _ladder_order_stats(conn):
+    """从 ladder_snapshot 算按月/按周统计（楼梯下单盈亏 numAmounts×47−total）"""
+    draw_rows = conn.execute("SELECT date, draw_number FROM draw_records").fetchall()
+    draw_map = {r["date"]: r["draw_number"] for r in draw_rows}
+    rows = conn.execute("SELECT calc_date, order_json FROM ladder_snapshot ORDER BY calc_date").fetchall()
+    monthly, weekly = {}, {}
+    for r in rows:
+        d = r["calc_date"]
+        dn = draw_map.get(d) or 0
+        if dn <= 0:
+            continue
+        op = _ladder_profit(r["order_json"], dn)
+        if op is None:
+            continue
+        m = d[:7]
+        monthly.setdefault(m, {"win": 0, "loss": 0, "profit": 0.0, "total": 0})
+        monthly[m]["total"] += 1
+        monthly[m]["profit"] = round(monthly[m]["profit"] + op, 2)
+        if op > 0:
+            monthly[m]["win"] += 1
+        else:
+            monthly[m]["loss"] += 1
+        try:
+            dd = datetime.strptime(d, "%Y-%m-%d")
+            monday = dd - timedelta(days=dd.weekday())
+            wkey = monday.strftime("%Y-%m-%d")
+            wlabel = monday.strftime("%m-%d")
+        except Exception:
+            wkey = d[:7]
+            wlabel = d[:7]
+        weekly.setdefault(wkey, {"win": 0, "loss": 0, "profit": 0.0, "total": 0, "label": wlabel})
+        weekly[wkey]["total"] += 1
+        weekly[wkey]["profit"] = round(weekly[wkey]["profit"] + op, 2)
+        if op > 0:
+            weekly[wkey]["win"] += 1
+        else:
+            weekly[wkey]["loss"] += 1
+    monthly_out = []
+    for k in sorted(monthly.keys()):
+        v = dict(monthly[k])
+        v["label"] = k
+        v["rate"] = round(v["win"] / v["total"] * 100, 1) if v["total"] else 0
+        monthly_out.append(v)
+    weekly_out = []
+    for k in sorted(weekly.keys()):
+        v = dict(weekly[k])
+        v["rate"] = round(v["win"] / v["total"] * 100, 1) if v["total"] else 0
+        weekly_out.append(v)
+    return {"monthly": monthly_out, "weekly": weekly_out}
+
+
+@app.get("/api/simulate/ladder-snapshots")
+async def api_list_ladder_snapshots(request: Request):
+    """列出所有楼梯下单快照（倒序），附带每天开奖结果 + 按月/周统计"""
+    await require_auth(request)
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT id, calc_date, action_date, scheme, created_at, order_json FROM ladder_snapshot ORDER BY id DESC").fetchall()
+        draw_rows = conn.execute("SELECT date, draw_number FROM draw_records").fetchall()
+        draw_map = {r["date"]: r["draw_number"] for r in draw_rows}
+        snapshots = []
+        for r in rows:
+            dn = draw_map.get(r["calc_date"]) or 0
+            own_profit = _ladder_profit(r["order_json"], dn) if dn > 0 else None
+            if dn > 0 and own_profit is not None:
+                result = "win" if own_profit > 0 else "loss"
+            else:
+                result = "pending"
+            snapshots.append({
+                "id": r["id"], "calc_date": r["calc_date"], "action_date": r["action_date"],
+                "scheme": r["scheme"], "created_at": r["created_at"],
+                "draw_number": dn, "own_profit": own_profit, "result": result
+            })
+        stats = _ladder_order_stats(conn)
+        return {"ok": True, "snapshots": snapshots, "monthly": stats["monthly"], "weekly": stats["weekly"]}
+    finally:
+        conn.close()
+
 
 # ═══════ 抽签记录（从 warehouse 同步）═══════
 @app.get("/api/draw-records")
