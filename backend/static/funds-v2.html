@@ -9779,6 +9779,10 @@ function showLadderOrderModal() {
   h += '<button onclick="divideLadderOrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#fef2f2;font-size:10px;color:#dc2626;cursor:pointer">÷ 除</button>';
   h += '<button onclick="resetLadderOrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer">🔄 重置</button>';
   h += '</div>';
+  h += '<div style="display:flex;gap:4px;justify-content:center;margin-bottom:4px">';
+  h += '<button onclick="showLadderTop24()" style="flex:1;padding:3px 6px;border:1px solid #2563eb;border-radius:4px;background:#eff6ff;font-size:10px;color:#1e40af;cursor:pointer">📌 前24号</button>';
+  h += '<button onclick="showLadderNonZero()" style="flex:1;padding:3px 6px;border:1px solid #16a34a;border-radius:4px;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer">📌 非0号</button>';
+  h += '</div>';
   h += '<table style="border-collapse:collapse;font-size:10px;margin:0 auto;line-height:1">';
   for (var n = 1; n <= 49; n++) {
     var amt = amounts[n] || 0;
@@ -9814,6 +9818,74 @@ function copyLadderOrderTable() {
   }).catch(function() {
     alert('复制失败，请手动选择');
   });
+}
+
+function getLadderSortedAmounts() {
+  var amounts = ladderOrderData.amounts || {};
+  var list = [];
+  for (var n = 1; n <= 49; n++) {
+    if ((amounts[n] || 0) > 0) list.push({ num: n, amt: amounts[n] });
+  }
+  list.sort(function(a, b) { return b.amt - a.amt; });
+  return list;
+}
+
+function copyLadderNums(list, btnSelector, restoreLabel) {
+  var nums = list.map(function(x) { return String(x.num).padStart(2, '0'); });
+  navigator.clipboard.writeText(nums.join('.')).then(function() {
+    var btns = document.querySelectorAll(btnSelector);
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].textContent = '✅ 已复制';
+      setTimeout(function(b) { b.textContent = restoreLabel; }, 1500, btns[i]);
+    }
+  }).catch(function() {
+    alert('复制失败，请手动选择');
+  });
+}
+
+function copyLadderTop24() {
+  copyLadderNums(getLadderSortedAmounts().slice(0, 24), '[onclick="copyLadderTop24()"]', '📋 复制号码');
+}
+
+function copyLadderNonZero() {
+  copyLadderNums(getLadderSortedAmounts(), '[onclick="copyLadderNonZero()"]', '📋 复制号码');
+}
+
+function copyLadderRest24() {
+  copyLadderNums(getLadderSortedAmounts().slice(24), '[onclick="copyLadderRest24()"]', '📋 复制非前24号码');
+}
+
+function showLadderNumPopup(title, list, copyFn, extraBtn) {
+  var overlay = document.createElement('div');
+  overlay.id = 'ladder-num-popup-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:10000;display:flex;align-items:center;justify-content:center';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+  var h = '<div style="background:#fff;border-radius:12px;padding:14px;max-width:320px;width:90%">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<span style="font-weight:700;font-size:13px;color:#1e3a5f">' + title + '（' + list.length + '个）</span>';
+  h += '<button onclick="document.getElementById(\'ladder-num-popup-overlay\').remove()" style="border:none;background:none;font-size:16px;color:#999;cursor:pointer;line-height:1">✕</button>';
+  h += '</div>';
+  h += '<div style="font-size:11px;line-height:1.9;word-break:break-all;color:#333;max-height:300px;overflow-y:auto">';
+  list.forEach(function(x, i) {
+    h += '<span style="white-space:nowrap">' + String(x.num).padStart(2, '0') + '号<span style="color:#dc2626;font-weight:700">' + x.amt + '</span>' + (i < list.length - 1 ? '　' : '') + '</span>';
+  });
+  h += '</div>';
+  h += '<div style="margin-top:10px;text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">';
+  h += '<button onclick="' + copyFn + '()" style="padding:6px 14px;border:1px solid #2563eb;border-radius:8px;background:#eff6ff;font-size:12px;color:#1e40af;cursor:pointer">📋 复制号码</button>';
+  if (extraBtn) h += extraBtn;
+  h += '</div>';
+  h += '</div>';
+  overlay.innerHTML = h;
+  document.body.appendChild(overlay);
+}
+
+function showLadderTop24() {
+  showLadderNumPopup('📌 筹码前24号', getLadderSortedAmounts().slice(0, 24), 'copyLadderTop24');
+}
+
+function showLadderNonZero() {
+  var extra = '<button onclick="copyLadderRest24()" style="padding:6px 14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;font-size:12px;color:#b45309;cursor:pointer">📋 复制非前24号码</button>';
+  showLadderNumPopup('📌 非0号', getLadderSortedAmounts(), 'copyLadderNonZero', extra);
 }
 
 function saveLadderOrderFactor(v) {
