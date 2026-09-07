@@ -9109,6 +9109,57 @@ var ladderOrderSheetData = null;   // 缓存的 order-sheet 数据（乘除后�
 var ladderOrderFactor = parseFloat(localStorage.getItem('ladder_order_factor')) || 2;  // 乘除因子（持久化，默认2）
 var ladderScheme = 'a';  // 楼梯下单方案：'a'=0-70(起点5+阈值70) / 'b'=40-100(起点40+保本止损)
 var ladderAutoDowngrade = true;  // 自动降档开关：触发降档/停手信号自动 B→A
+
+// ====== 资金指南卡片（2万本金滚动 + 下注缩放）======
+var guideCapital = parseFloat(localStorage.getItem('ladder_guide_capital')) || 20000;  // 当前本金（默认2万，真实盈亏滚动）
+var guideBase = parseFloat(localStorage.getItem('ladder_guide_base')) || 20000;  // 翻倍提取基准
+var guideWithdraw = parseFloat(localStorage.getItem('ladder_guide_withdraw')) || 0;  // 累计提取
+var guideLastDate = localStorage.getItem('ladder_guide_last_date') || '';  // 最后结算日期（空=首次）
+// 全自动本金结算：读 order_history 真实盈亏，逐日滚动，翻倍提取25%
+function settleGuideCapital(cb) {
+  authFetch('/api/simulate/order-history?limit=3000&_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var rows = (d.rows || []).slice().reverse();  // 升序（旧→新）
+      if (!rows.length) { if (cb) cb(); return; }
+      var latest = rows[rows.length - 1].date;
+      if (!guideLastDate) {  // 首次：只记录最新日期，本金20000不动
+        guideLastDate = latest;
+        localStorage.setItem('ladder_guide_last_date', guideLastDate);
+        if (cb) cb(); return;
+      }
+      var settled = false;
+      rows.forEach(function(o) {
+        if (o.date > guideLastDate && o.own_profit != null && o.own_profit !== undefined) {
+          guideCapital += o.own_profit;
+          if (guideCapital >= guideBase * 2) {  // 翻倍 → 提取25% → 剩75%
+            var wd = guideCapital * 0.25;
+            guideWithdraw += wd;
+            guideCapital = guideCapital * 0.75;
+            guideBase = guideCapital;
+          }
+          settled = true;
+        }
+      });
+      guideLastDate = latest;
+      localStorage.setItem('ladder_guide_capital', guideCapital);
+      localStorage.setItem('ladder_guide_base', guideBase);
+      localStorage.setItem('ladder_guide_withdraw', guideWithdraw);
+      localStorage.setItem('ladder_guide_last_date', guideLastDate);
+      if (settled) showToast('💰 本金已自动结算 → ' + Math.round(guideCapital).toLocaleString() + ' 元');
+      if (cb) cb();
+    })
+    .catch(function() { if (cb) cb(); });
+}
+function resetGuideCapital() {
+  guideCapital = 20000; guideBase = 20000; guideWithdraw = 0; guideLastDate = '';
+  localStorage.removeItem('ladder_guide_capital');
+  localStorage.removeItem('ladder_guide_base');
+  localStorage.removeItem('ladder_guide_withdraw');
+  localStorage.removeItem('ladder_guide_last_date');
+  showToast('💰 本金已重置为 2万');
+  if (ladderOrderSheetData) renderLadderOrderUI(ladderOrderSheetData);
+}
 function renderLadderOrder() {
   var el = document.getElementById('ladder-order-content');
   if (!el) return;
@@ -9120,7 +9171,7 @@ function renderLadderOrder() {
     .then(function(d) {
       if (d.error) { el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">⚠️ ' + d.error + '</div>'; return; }
       ladderOrderSheetData = d;
-      renderLadderOrderUI(d);
+      settleGuideCapital(function() { renderLadderOrderUI(d); });
       autoSaveLadderSnapshot();
     })
     .catch(function(e) {
@@ -9429,6 +9480,38 @@ function renderLadderOrderUI(d) {
   });
   h += '</div>';
   h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">总下单 <b style="color:#dc2626">' + totalAmt + '</b></div>';
+  h += '</div>';
+
+  // ═══ 资金指南卡片（全自动本金滚动 + 下注缩放）═══
+  var guideScale = guideCapital / 40000;
+  var guideBet = Math.round(totalAmt * guideScale);
+  h += '<div style="background:linear-gradient(135deg,#0f5132,#1e7a4f);border-radius:12px;padding:12px;margin:8px 12px;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.12)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<div style="font-size:13px;font-weight:700">💰 资金指南 · 本金滚动（全自动）</div>';
+  h += '<button onclick="resetGuideCapital()" style="border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer">🔄 重置2万</button>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:6px;margin-bottom:8px">';
+  h += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center">';
+  h += '<div style="font-size:10px;opacity:.85">当前本金</div>';
+  h += '<div style="font-size:17px;font-weight:800">' + Math.round(guideCapital).toLocaleString() + '</div>';
+  h += '</div>';
+  h += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center">';
+  h += '<div style="font-size:10px;opacity:.85">累计提取</div>';
+  h += '<div style="font-size:17px;font-weight:800;color:#ffd166">' + Math.round(guideWithdraw).toLocaleString() + '</div>';
+  h += '</div>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:6px;margin-bottom:8px">';
+  h += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center">';
+  h += '<div style="font-size:10px;opacity:.85">缩放系数</div>';
+  h += '<div style="font-size:15px;font-weight:800">' + guideScale.toFixed(3) + '</div>';
+  h += '</div>';
+  h += '<div style="flex:1;background:rgba(255,255,255,.22);border-radius:8px;padding:8px;text-align:center;border:1px solid rgba(255,255,255,.4)">';
+  h += '<div style="font-size:10px;opacity:.85">今日下注</div>';
+  h += '<div style="font-size:19px;font-weight:800;color:#ffd166">' + guideBet.toLocaleString() + '</div>';
+  h += '</div>';
+  h += '</div>';
+  h += '<div style="font-size:11px;opacity:.85;line-height:1.7">今日下注 = 演算' + totalAmt.toLocaleString() + ' × 系数' + guideScale.toFixed(2) + '（本金2万=半仓，本金4万=全仓）</div>';
+  h += '<div style="font-size:10px;opacity:.8;margin-top:6px;line-height:1.7">翻倍提取：本金×2 → 提取25% → 剩75%继续<br>2万→4万(提1万)→3万→6万(提1.5万)→4.5万→9万(提2.25万)→6.75万…</div>';
   h += '</div>';
 
   // 1-49 金额网格
