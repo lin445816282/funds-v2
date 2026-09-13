@@ -9850,6 +9850,17 @@ function renderLadderOrderUI(d) {
   h += '<div style="font-size:10px;opacity:.85;margin-top:6px">' + schemeName + ' · 追负(24号) · 2026-05起 · ' + chipsData.dates.length + '天</div>';
   h += '</div>';
 
+  // ⛔ 方案A 永久停手（2026-09-13 决策：连亏6天破历史极值、命中率随机无复出时机、负期望-4%）
+  if (ladderScheme === 'a') {
+    h += '<div style="margin:8px 12px 0;border-radius:12px;padding:14px 16px;background:linear-gradient(135deg,#7f1d1d,#b91c1c);color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.15)">';
+    h += '<div style="display:flex;align-items:center;gap:10px">';
+    h += '<span style="font-size:28px;line-height:1">⛔</span>';
+    h += '<div style="flex:1">';
+    h += '<div style="font-size:15px;font-weight:800;letter-spacing:.5px">方案A 已永久停手</div>';
+    h += '<div style="font-size:11px;opacity:.92;margin-top:3px">连亏6天 −17.4万 · 命中率随机无复出时机（负期望 −4%）· 止损保本，不再下单</div>';
+    h += '</div></div></div>';
+  }
+
   // ═══ 健康度状态灯 ═══
   var health = computeLadderHealth(ladderScheme);
   // 自动降档：方案B触发降档/停手信号 → 自动切方案A
