@@ -838,19 +838,23 @@ def _ladder_profit(order_json, draw_number):
 
 
 def _ladder_order_stats(conn):
-    """从 ladder_snapshot 算按月/按周统计（楼梯下单盈亏 numAmounts×47−total）"""
+    """从 ladder_snapshot 算按月/按周统计，按 scheme 独立分组（盈亏 numAmounts×47−total）"""
     draw_rows = conn.execute("SELECT date, draw_number FROM draw_records").fetchall()
     draw_map = {r["date"]: r["draw_number"] for r in draw_rows}
-    rows = conn.execute("SELECT calc_date, order_json FROM ladder_snapshot ORDER BY calc_date").fetchall()
-    monthly, weekly = {}, {}
+    rows = conn.execute("SELECT calc_date, scheme, order_json FROM ladder_snapshot ORDER BY calc_date").fetchall()
+    schemes = {}  # scheme -> {"monthly": {...}, "weekly": {...}}
     for r in rows:
         d = r["calc_date"]
+        sch = r["scheme"] or "default"
         dn = draw_map.get(d) or 0
         if dn <= 0:
             continue
         op = _ladder_profit(r["order_json"], dn)
         if op is None:
             continue
+        st = schemes.setdefault(sch, {"monthly": {}, "weekly": {}})
+        monthly = st["monthly"]
+        weekly = st["weekly"]
         m = d[:7]
         monthly.setdefault(m, {"win": 0, "loss": 0, "profit": 0.0, "total": 0})
         monthly[m]["total"] += 1
@@ -874,18 +878,20 @@ def _ladder_order_stats(conn):
             weekly[wkey]["win"] += 1
         else:
             weekly[wkey]["loss"] += 1
-    monthly_out = []
-    for k in sorted(monthly.keys()):
-        v = dict(monthly[k])
-        v["label"] = k
-        v["rate"] = round(v["win"] / v["total"] * 100, 1) if v["total"] else 0
-        monthly_out.append(v)
-    weekly_out = []
-    for k in sorted(weekly.keys()):
-        v = dict(weekly[k])
-        v["rate"] = round(v["win"] / v["total"] * 100, 1) if v["total"] else 0
-        weekly_out.append(v)
-    return {"monthly": monthly_out, "weekly": weekly_out}
+
+    def _fmt(m):
+        out = []
+        for k in sorted(m.keys()):
+            v = dict(m[k])
+            v["label"] = k
+            v["rate"] = round(v["win"] / v["total"] * 100, 1) if v["total"] else 0
+            out.append(v)
+        return out
+
+    out = {}
+    for sch, st in schemes.items():
+        out[sch] = {"monthly": _fmt(st["monthly"]), "weekly": _fmt(st["weekly"])}
+    return out
 
 
 @app.get("/api/simulate/ladder-snapshots")
@@ -911,7 +917,7 @@ async def api_list_ladder_snapshots(request: Request):
                 "draw_number": dn, "own_profit": own_profit, "result": result
             })
         stats = _ladder_order_stats(conn)
-        return {"ok": True, "snapshots": snapshots, "monthly": stats["monthly"], "weekly": stats["weekly"]}
+        return {"ok": True, "snapshots": snapshots, "stats": stats}
     finally:
         conn.close()
 
@@ -1636,7 +1642,164 @@ async def api_strategy_backfill(request: Request):
 
 # ── 算法优化日志 ──
 
+# ═══════════════ 方案A 自动同步 ═══════════════
+def sync_scheme_a_if_stale():
+    """方案A 数据落后于排位数据时，自动重算同步（结论 tab 每次加载前调用）"""
+    try:
+        conn = get_db()
+        latest_daily = conn.execute("SELECT MAX(date) FROM ladder_scheme_a_daily").fetchone()[0]
+        latest_records = conn.execute("SELECT MAX(date) FROM records WHERE category='cat_1783487972049'").fetchone()[0]
+        conn.close()
+        if latest_records and (not latest_daily or latest_records > latest_daily):
+            import regen_scheme_a
+            new_date = regen_scheme_a.sync_to_db()
+            return True, new_date
+        return False, latest_daily
+    except Exception:
+        return False, None
+
+
 # ═══════════════ Static + SPA ═══════════════
+@app.get("/api/track/ladder-scheme-a")
+async def api_ladder_scheme_a(request: Request):
+    """方案A 真实下单逐天数据（ladder_scheme_a_daily 表）"""
+    await require_auth(request)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: get_ladder_scheme_a())
+
+
+def get_ladder_scheme_a():
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT date, profit, capital, withdraw, bankrupt FROM ladder_scheme_a_daily ORDER BY date").fetchall()
+    conn.close()
+    if not rows:
+        return {"ok": False, "error": "无数据"}
+    daily = [{"date": r["date"], "profit": r["profit"], "capital": r["capital"],
+              "withdraw": r["withdraw"], "bankrupt": r["bankrupt"]} for r in rows]
+    monthly = {}
+    for r in daily:
+        monthly.setdefault(r["date"][:7], 0)
+        monthly[r["date"][:7]] += r["profit"]
+    last = daily[-1]
+    total_wd = sum(r["withdraw"] for r in daily)
+    return {
+        "ok": True,
+        "scheme": "方案A · 0-70（达朗贝尔±5 真实下单）",
+        "daily": daily,
+        "monthly": [{"month": k, "profit": monthly[k]} for k in sorted(monthly)],
+        "summary": {
+            "final_capital": last["capital"], "total_withdraw": total_wd,
+            "surface_profit": last["capital"] + total_wd, "bankrupt": last["bankrupt"],
+            "days": len(daily), "start": daily[0]["date"], "end": last["date"]
+        }
+    }
+
+
+@app.get("/api/track/ladder-scheme-a-full")
+async def api_ladder_scheme_a_full(request: Request, from_date: str = None, to_date: str = None):
+    """方案A 完整查询：逐日(含命中率) + 分月 + 分周 + 指标，支持日期段"""
+    await require_auth(request)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: get_ladder_scheme_a_full(from_date, to_date))
+
+
+def get_ladder_scheme_a_full(from_date=None, to_date=None):
+    import datetime as _dt
+    from collections import defaultdict
+    sync_scheme_a_if_stale()  # 结论 tab 自动更新：数据落后即重算
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT date, profit, order_amount, capital, withdraw, bankrupt, hits, total FROM ladder_scheme_a_daily ORDER BY date"
+    ).fetchall()
+    conn.close()
+
+    daily = [{"date": r["date"], "profit": r["profit"], "order_amount": r["order_amount"],
+              "capital": r["capital"], "withdraw": r["withdraw"], "bankrupt": r["bankrupt"],
+              "hits": r["hits"], "total": r["total"],
+              "rate": round(r["hits"] / r["total"] * 100, 1) if r["total"] else None} for r in rows]
+
+    if from_date:
+        daily = [d for d in daily if d["date"] >= from_date]
+    if to_date:
+        daily = [d for d in daily if d["date"] <= to_date]
+    if not daily:
+        return {"ok": True, "daily": [], "monthly": [], "weekly": [], "summary": None}
+
+    monthly = defaultdict(lambda: {"profit": 0, "order_amount": 0, "hits": 0, "total": 0})
+    for d in daily:
+        m = d["date"][:7]
+        monthly[m]["profit"] += d["profit"]
+        monthly[m]["order_amount"] += d["order_amount"]
+        monthly[m]["hits"] += d["hits"]
+        monthly[m]["total"] += d["total"]
+    monthly_out = [{"month": k, "profit": monthly[k]["profit"], "order_amount": monthly[k]["order_amount"],
+                    "hits": monthly[k]["hits"], "total": monthly[k]["total"],
+                    "rate": round(monthly[k]["hits"] / monthly[k]["total"] * 100, 1) if monthly[k]["total"] else None}
+                   for k in sorted(monthly)]
+
+    weekly = defaultdict(lambda: {"profit": 0, "order_amount": 0})
+    for d in daily:
+        dd = _dt.datetime.strptime(d["date"], "%Y-%m-%d")
+        monday = dd - _dt.timedelta(days=dd.weekday())
+        wk = monday.strftime("%Y-%m-%d")
+        weekly[wk]["profit"] += d["profit"]
+        weekly[wk]["order_amount"] += d["order_amount"]
+    weekly_out = [{"week": k, "profit": weekly[k]["profit"], "order_amount": weekly[k]["order_amount"]}
+                  for k in sorted(weekly)]
+
+    last = daily[-1]
+    total_profit = sum(d["profit"] for d in daily)
+    total_order = sum(d["order_amount"] for d in daily)
+    total_wd = sum(d["withdraw"] for d in daily)
+    total_hits = sum(d["hits"] for d in daily)
+    total_cnt = sum(d["total"] for d in daily)
+    peak = 0
+    max_dd = 0
+    for d in daily:
+        if d["capital"] > peak:
+            peak = d["capital"]
+        dd_ = peak - d["capital"]
+        if dd_ > max_dd:
+            max_dd = dd_
+    win_days = sum(1 for d in daily if d["profit"] > 0)
+    loss_days = sum(1 for d in daily if d["profit"] < 0)
+    summary = {
+        "start": daily[0]["date"], "end": last["date"], "days": len(daily),
+        "total_profit": total_profit, "total_order_amount": total_order,
+        "final_capital": last["capital"], "total_withdraw": total_wd,
+        "bankrupt": last["bankrupt"], "max_drawdown": max_dd,
+        "win_days": win_days, "loss_days": loss_days,
+        "hit_rate": round(total_hits / total_cnt * 100, 1) if total_cnt else None
+    }
+    return {"ok": True, "daily": daily, "monthly": monthly_out, "weekly": weekly_out, "summary": summary}
+
+@app.get("/api/track/ladder-scheme-a-detail")
+async def api_ladder_scheme_a_detail(request: Request, date: str):
+    """方案A 某天56组下单明细"""
+    await require_auth(request)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, lambda: get_ladder_scheme_a_detail(date))
+
+
+def get_ladder_scheme_a_detail(date):
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT trio, chip, nums_json, order_amt, neg_hit FROM ladder_scheme_a_detail WHERE date=? ORDER BY order_amt DESC",
+        (date,)
+    ).fetchall()
+    conn.close()
+    detail = [{"trio": r["trio"], "chip": r["chip"], "nums": json.loads(r["nums_json"] or "[]"),
+               "order_amt": r["order_amt"], "neg_hit": r["neg_hit"]} for r in rows]
+    total = sum(d["order_amt"] for d in detail)
+    hit = sum(1 for d in detail if d["neg_hit"])
+    return {"ok": True, "date": date, "detail": detail, "total_amt": total,
+            "count": len(detail), "hit_count": hit}
+
+
+
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 if os.path.isdir(STATIC_DIR):
     @app.get("/")

@@ -390,6 +390,8 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     <button onclick="switchTab('ladder')">楼梯</button>
     <button onclick="switchTab('ladder2')">楼梯2</button>
     <button onclick="switchTab('ladderorder')">楼梯下单</button>
+    <button onclick="switchTab('ladderorder2')">楼梯下单2</button>
+    <button onclick="switchTab('conclusions')">📋 结论</button>
   </div>
 
   <!-- ====== 录入面板 ====== -->
@@ -494,6 +496,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
 
   <!-- ====== 预警面板 ====== -->
   <div class="panel on" id="panel-alerts">
+    <div style="font-size:11px;color:#8899b0;margin-bottom:8px;padding:6px 10px;background:#f8fafc;border-radius:8px">📌 数据源：<b>2026-05-01 起</b>（5月突变后口径，连亏/连盈/排位/震荡均只统计此后数据）</div>
     <div class="alert-list" id="alert-list"><div class="empty">⏳ 加载中...</div></div>
     <div class="alert-rules" id="alert-rules"></div>
     <div id="hit-rate-section" style="margin-top:10px"></div>
@@ -785,6 +788,16 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   <!-- ====== 楼梯下单面板 ====== -->
   <div class="panel" id="panel-ladderorder">
     <div id="ladder-order-content"><div class="empty">⏳ 加载中...</div></div>
+  </div>
+
+  <!-- ====== 楼梯下单2面板（最优方案排名前三 · 选最优单组合/连负5期翻倍/周内择时）====== -->
+  <div class="panel" id="panel-ladderorder2">
+    <div id="ladder-order2-content"><div class="empty">⏳ 加载中...</div></div>
+  </div>
+
+  <!-- ====== 结论台账面板（已论证结论·事实层·不重复论证）====== -->
+  <div class="panel" id="panel-conclusions">
+    <div id="conclusions-content"><div class="empty">⏳ 加载中...</div></div>
   </div>
 
   <!-- ====== 文档弹窗 ====== -->
@@ -3391,6 +3404,9 @@ function genCmpSeries(storeName, y, m) {
 
 // ═══════════ 预警 ═══════════
 function renderAlerts() {
+  // 预警数据源：仅用 2026-05-01 之后的数据（5月突变后口径，与全历史突变前+16.6万/后-4.2万区分）
+  var _recordsBackup = records;
+  records = records.filter(function(r){ return r.date >= '2026-05-01'; });
   var ym = ovYear+'-'+String(ovMonth).padStart(2,'0');
   var catMap = {};
   categories.forEach(function(c){ catMap[c.id] = c; });
@@ -3710,6 +3726,7 @@ function renderAlerts() {
       + '<button style="font-size:12px;color:#c0c9d4;cursor:pointer;margin-left:4px;border:none;background:none;padding:0" onclick="deleteRule('+i+')">✕</button></div></div>';
   });
   document.getElementById('alert-rules').innerHTML = rhtml;
+  records = _recordsBackup;
 }
 
 // ── 预警详情弹窗 ──
@@ -3975,7 +3992,7 @@ function switchTab(tab) {
   currentTab = tab;
   var btns = document.querySelectorAll('.tab-bar button');
   btns.forEach(function(b,i){
-    b.className = ['alerts','order','sim','kelly','ranking','overview','compare','entry','mgmt','records','ladder','ladder2','ladderorder'][i]===tab ? 'on' : '';
+    b.className = ['alerts','order','sim','kelly','ranking','overview','compare','entry','mgmt','records','ladder','ladder2','ladderorder','ladderorder2','conclusions'][i]===tab ? 'on' : '';
   });
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('on'); });
   document.getElementById('panel-'+tab).classList.add('on');
@@ -3994,6 +4011,157 @@ function switchTab(tab) {
   if (tab === 'ladder') { renderLadder(); }
   if (tab === 'ladder2') { onL2SizeChange(); }
   if (tab === 'ladderorder') { renderLadderOrder(); }
+  if (tab === 'ladderorder2') { renderLadderOrder2(); }
+  if (tab === 'conclusions') { renderConclusions(); }
+}
+
+// ── 方案A 下单数据（楼梯下单方案A · 56组追负达朗贝尔±5）──
+function renderConclusions() {
+  var el = document.getElementById('conclusions-content');
+  var h = '';
+  h += '<div style="padding:10px 12px;background:linear-gradient(135deg,#1e3a5f,#3b82f6);border-radius:10px;color:#fff">';
+  h += '<div style="font-size:15px;font-weight:700">📋 方案A 下单数据</div>';
+  h += '<div style="font-size:10px;opacity:.85;margin-top:2px">楼梯下单方案A · 56组追负达朗贝尔±5 · 2026-05-01起</div>';
+  h += '</div>';
+  h += '<div id="schemea-box" style="margin-top:12px"><div class="empty">⏳ 加载方案A...</div></div>';
+  el.innerHTML = h;
+  loadLadderSchemeA();
+}
+
+// ── 方案A 真实下单查询（日期段 + 逐日/分月/分周 + 指标）──
+var schemeAFrom = '2026-05-01';
+var schemeATo = '';
+var schemeAView = 'daily';
+
+function loadLadderSchemeA(from, to) {
+  var box = document.getElementById('schemea-box');
+  if (!box) return;
+  if (from) schemeAFrom = from;
+  if (to !== undefined) schemeATo = to;
+  var qs = '?from_date=' + schemeAFrom + (schemeATo ? '&to_date=' + schemeATo : '');
+  authFetch('/api/track/ladder-scheme-a-full' + qs).then(function(r){ return r.json(); }).then(function(t){
+    if (!t.ok || !t.summary) { box.innerHTML = '<div class="empty">⚠️ 方案A数据加载失败</div>'; return; }
+    var s = t.summary;
+    var h = '';
+    h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:6px">📈 方案A 真实下单查询（' + s.start + ' ~ ' + s.end + '，共' + s.days + '天）</div>';
+    // 日期段选择
+    h += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">';
+    h += '<input type="date" id="sa-from" value="' + schemeAFrom + '" style="flex:1;padding:6px;border:1px solid #cdd7e5;border-radius:8px;font-size:12px">';
+    h += '<input type="date" id="sa-to" value="' + schemeATo + '" style="flex:1;padding:6px;border:1px solid #cdd7e5;border-radius:8px;font-size:12px">';
+    h += '<button onclick="loadLadderSchemeA(document.getElementById(\'sa-from\').value, document.getElementById(\'sa-to\').value)" style="padding:6px 10px;background:#1e3a5f;color:#fff;border:none;border-radius:8px;font-size:12px;white-space:nowrap">查询</button>';
+    h += '</div>';
+    // 指标卡
+    h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">';
+    h += _saCard('总盈亏', (s.total_profit>=0?'+':'')+s.total_profit.toLocaleString(), s.total_profit>=0?'#16a34a':'#dc2626');
+    h += _saCard('下单金额', (s.total_order_amount!=null?s.total_order_amount.toLocaleString():'—'), '#1e3a5f');
+    h += _saCard('命中率', (s.hit_rate!=null?s.hit_rate+'%':'—'), (s.hit_rate!=null&&s.hit_rate>=49.8)?'#16a34a':'#dc2626');
+    h += _saCard('爆仓', s.bankrupt+'次', '#d97706');
+    h += _saCard('最大回撤', s.max_drawdown.toLocaleString(), '#dc2626');
+    h += _saCard('胜/负天', s.win_days+'/'+s.loss_days, '#3a5070');
+    h += '</div>';
+    // 视图切换
+    h += '<div style="display:flex;gap:4px;margin-bottom:6px">';
+    [['daily','逐日'],['monthly','分月'],['weekly','分周']].forEach(function(v){
+      var on = schemeAView===v[0];
+      h += '<button onclick="schemeAView=\''+v[0]+'\';loadLadderSchemeA()" style="flex:1;padding:5px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;'+(on?'background:#1e3a5f;color:#fff':'background:#f0f4fa;color:#5a6b85')+'">'+v[1]+'</button>';
+    });
+    h += '</div>';
+    // 内容
+    if (schemeAView === 'monthly') h += _saMonthlyTable(t.monthly);
+    else if (schemeAView === 'weekly') h += _saWeeklyTable(t.weekly);
+    else h += _saDailyTable(t.daily);
+    box.innerHTML = h;
+  }).catch(function(){ box.innerHTML = '<div class="empty">⚠️ 方案A加载失败</div>'; });
+}
+
+function _saCard(label, val, color) {
+  return '<div style="flex:1;min-width:72px;padding:7px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;text-align:center">' +
+    '<div style="font-size:10px;color:#8899b0">' + label + '</div>' +
+    '<div style="font-size:13px;font-weight:800;color:' + color + '">' + val + '</div></div>';
+}
+
+function _saDailyTable(daily) {
+  var show = (daily||[]).slice().reverse();
+  var h = '<div style="max-height:300px;overflow-y:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:10px">';
+  h += '<thead><tr style="background:#f8fafc;color:#5a6b85;position:sticky;top:0"><th style="padding:4px 6px;text-align:left">日期</th><th style="padding:4px 6px;text-align:right">下单</th><th style="padding:4px 6px;text-align:right">盈亏</th><th style="padding:4px 6px;text-align:right">命中率</th><th style="padding:4px 6px;text-align:right">本金</th></tr></thead><tbody>';
+  show.forEach(function(r){
+    var pc = r.profit>0?'#16a34a':(r.profit<0?'#dc2626':'#64748b');
+    h += '<tr onclick="toggleSaDetail(\''+r.date+'\')" style="border-bottom:1px solid #f1f5f9;cursor:pointer">';
+    h += '<td style="padding:4px 6px;color:#334155">'+r.date.slice(5)+' <span style="color:#94a3b8">▾</span></td>';
+    h += '<td style="padding:4px 6px;text-align:right;color:#3a5070">'+(r.order_amount||0).toLocaleString()+'</td>';
+    h += '<td style="padding:4px 6px;text-align:right;color:'+pc+';font-weight:600">'+(r.profit>0?'+':'')+r.profit.toLocaleString()+'</td>';
+    h += '<td style="padding:4px 6px;text-align:right;color:#3a5070">'+(r.rate!=null?r.rate+'%':'—')+'</td>';
+    h += '<td style="padding:4px 6px;text-align:right;color:#1e3a5f">'+r.capital.toLocaleString()+'</td>';
+    h += '</tr>';
+    h += '<tr id="sa-detail-'+r.date+'" style="display:none"><td colspan="5" style="padding:0;background:#f8fafc"></td></tr>';
+  });
+  h += '</tbody></table></div>';
+  return h;
+}
+
+function toggleSaDetail(date) {
+  var row = document.getElementById('sa-detail-' + date);
+  if (!row) return;
+  if (row.dataset.loaded === '1') {
+    row.style.display = row.style.display === 'none' ? '' : 'none';
+    return;
+  }
+  var td = row.querySelector('td');
+  authFetch('/api/track/ladder-scheme-a-detail?date=' + date).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) { td.innerHTML = '<div style="padding:8px;color:#dc2626">加载失败</div>'; return; }
+    var h = '<div style="padding:8px 6px">';
+    h += '<div style="font-size:10px;color:#5a6b85;margin-bottom:4px;font-weight:600">'+d.date+' · '+d.count+'组 · 总下单 '+d.total_amt.toLocaleString()+' · 命中 '+d.hit_count+'组</div>';
+    h += '<table style="width:100%;border-collapse:collapse;font-size:9px">';
+    h += '<tr style="color:#8899b0"><th style="text-align:left;padding:2px 4px">三店组合</th><th style="text-align:right;padding:2px 4px">chip</th><th style="text-align:right;padding:2px 4px">号码数</th><th style="text-align:right;padding:2px 4px">下单</th><th style="text-align:right;padding:2px 4px">方向</th></tr>';
+    d.detail.forEach(function(x){
+      var color = x.neg_hit ? '#16a34a' : '#dc2626';
+      h += '<tr style="border-top:1px solid #eef2f7">';
+      h += '<td style="padding:2px 4px;color:#334155">'+x.trio+'</td>';
+      h += '<td style="padding:2px 4px;text-align:right;color:#3a5070">'+x.chip+'</td>';
+      h += '<td style="padding:2px 4px;text-align:right;color:#3a5070">'+x.nums.length+'</td>';
+      h += '<td style="padding:2px 4px;text-align:right;color:#1e3a5f">'+x.order_amt.toLocaleString()+'</td>';
+      h += '<td style="padding:2px 4px;text-align:right;color:'+color+'">'+(x.neg_hit?'命中':'未中')+'</td>';
+      h += '</tr>';
+    });
+    h += '</table></div>';
+    td.innerHTML = h;
+    row.dataset.loaded = '1';
+    row.style.display = '';
+  }).catch(function(){ td.innerHTML = '<div style="padding:8px;color:#dc2626">加载失败</div>'; });
+}
+
+function _saMonthlyTable(monthly) {
+  var h = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+  h += '<thead><tr style="background:#f8fafc;color:#5a6b85"><th style="padding:5px 8px;text-align:left">月份</th><th style="padding:5px 8px;text-align:right">下单</th><th style="padding:5px 8px;text-align:right">盈亏</th><th style="padding:5px 8px;text-align:right">命中率</th></tr></thead><tbody>';
+  (monthly||[]).forEach(function(m){
+    var pc = m.profit>0?'#16a34a':(m.profit<0?'#dc2626':'#64748b');
+    h += '<tr style="border-bottom:1px solid #f1f5f9">';
+    h += '<td style="padding:5px 8px;color:#334155">'+m.month+'</td>';
+    h += '<td style="padding:5px 8px;text-align:right;color:#3a5070">'+(m.order_amount||0).toLocaleString()+'</td>';
+    h += '<td style="padding:5px 8px;text-align:right;color:'+pc+';font-weight:700">'+(m.profit>0?'+':'')+m.profit.toLocaleString()+'</td>';
+    h += '<td style="padding:5px 8px;text-align:right;color:#3a5070">'+(m.rate!=null?m.rate+'%':'—')+'</td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+  return h;
+}
+
+function _saWeeklyTable(weekly) {
+  var h = '<div style="max-height:300px;overflow-y:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+  h += '<thead><tr style="background:#f8fafc;color:#5a6b85"><th style="padding:5px 8px;text-align:left">周（周一）</th><th style="padding:5px 8px;text-align:right">下单</th><th style="padding:5px 8px;text-align:right">盈亏</th></tr></thead><tbody>';
+  (weekly||[]).forEach(function(w){
+    var pc = w.profit>0?'#16a34a':(w.profit<0?'#dc2626':'#64748b');
+    h += '<tr style="border-bottom:1px solid #f1f5f9">';
+    h += '<td style="padding:5px 8px;color:#334155">'+w.week+'</td>';
+    h += '<td style="padding:5px 8px;text-align:right;color:#3a5070">'+(w.order_amount||0).toLocaleString()+'</td>';
+    h += '<td style="padding:5px 8px;text-align:right;color:'+pc+';font-weight:700">'+(w.profit>0?'+':'')+w.profit.toLocaleString()+'</td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+  return h;
 }
 
 // ── 自动同步下单（每天点进下单 tab 触发一次：同步正负下单 + 更新下单金额 + 记入历史）──
@@ -8322,7 +8490,7 @@ function renderLadder() {
 // 筹码策略演算：seq=0/1序列(1=命中)，strategy=策略名，wm=命中净赚倍数，lm=不中亏损倍数
 // stopWin=连赢N期后停手(0=不停手)，停手期不下注(delta=0)
 function mgSimulate(seq, strategy, wm, lm, stopWin) {
-  var profit = 0, peak = 0, maxdd = 0;
+  var profit = 0, peak = 0, maxdd = 0, bet = 0;
   var chip = 5, idx = 0;
   var mart = [5,10,20,40,80,160];
   var fib = [5,5,10,15,25,40,65,105];
@@ -8345,6 +8513,7 @@ function mgSimulate(seq, strategy, wm, lm, stopWin) {
     // dalembert/antimart/rdalembert 的 chip 由上一期更新决定
     var delta = win ? (chip * wm) : -(chip * lm);
     profit += delta;
+    bet += chip * lm;
     if (profit > peak) peak = profit;
     if (peak - profit > maxdd) maxdd = peak - profit;
     daily.push({chip: chip, win: win, delta: delta, cum: profit});
@@ -8358,7 +8527,7 @@ function mgSimulate(seq, strategy, wm, lm, stopWin) {
     else if (strategy === 'fib') idx = win ? Math.max(0, idx - 2) : Math.min(fib.length - 1, idx + 1);
     else if (strategy === 'antimart') chip = win ? Math.min(chip * 2, 320) : 40;
   }
-  return {profit: profit, maxdd: maxdd, daily: daily};
+  return {profit: profit, maxdd: maxdd, bet: bet, daily: daily};
 }
 
 var MG_STRATEGY = 'dalembert';
@@ -8369,63 +8538,81 @@ var MG_RESET_THRESHOLD = 70;  // 达朗贝尔5±5 重置阈值：chip累积超�
 // ===== 信号/标的/风控 演算函数 =====
 // 凯利：本金1万按比例下注
 function mgKelly(seq, f, wm, lm) {
-  var cap = 10000;
+  var cap = 10000, bet = 0, peak = 0, maxdd = 0;
   for (var i = 0; i < seq.length; i++) {
     var chip = cap * f / (lm === 25 ? 25 : 24);
+    bet += chip * lm;
     cap += seq[i] ? chip * wm : -chip * lm;
-    if (cap <= 0) return cap - 10000;
+    var net = cap - 10000;
+    if (net > peak) peak = net;
+    if (peak - net > maxdd) maxdd = peak - net;
+    if (cap <= 0) return {profit: cap - 10000, bet: bet, maxdd: maxdd};
   }
-  return cap - 10000;
+  return {profit: cap - 10000, bet: bet, maxdd: maxdd};
 }
 // 滚动N天选优：过去N天正命中多→预测正
 function mgRolling(posSeq, negSeq, N) {
-  var tot = 0;
+  var tot = 0, bet = 0, peak = 0, maxdd = 0;
   for (var i = N; i < posSeq.length; i++) {
     var cnt = 0;
     for (var k = i - N; k < i; k++) cnt += posSeq[k];
     var predPos = cnt >= N / 2;
-    if (predPos) tot += 40 * (posSeq[i] ? 22 : -25);
-    else tot += 40 * (negSeq[i] ? 23 : -24);
+    var delta = predPos ? (posSeq[i] ? 40 * 22 : -40 * 25) : (negSeq[i] ? 40 * 23 : -40 * 24);
+    tot += delta;
+    bet += (predPos ? 40 * 25 : 40 * 24);
+    if (tot > peak) peak = tot;
+    if (peak - tot > maxdd) maxdd = peak - tot;
   }
-  return tot;
+  return {profit: tot, bet: bet, maxdd: maxdd};
 }
 // 追热/追冷：预测昨天方向（reverse=true 则反）
 function mgTrend(posSeq, negSeq, reverse) {
-  var tot = 0;
+  var tot = 0, bet = 0, peak = 0, maxdd = 0;
   for (var i = 1; i < posSeq.length; i++) {
     var predPos = reverse ? (1 - posSeq[i - 1]) : posSeq[i - 1];
-    if (predPos) tot += 40 * (posSeq[i] ? 22 : -25);
-    else tot += 40 * (negSeq[i] ? 23 : -24);
+    var delta = predPos ? (posSeq[i] ? 40 * 22 : -40 * 25) : (negSeq[i] ? 40 * 23 : -40 * 24);
+    tot += delta;
+    bet += (predPos ? 40 * 25 : 40 * 24);
+    if (tot > peak) peak = tot;
+    if (peak - tot > maxdd) maxdd = peak - tot;
   }
-  return tot;
+  return {profit: tot, bet: bet, maxdd: maxdd};
 }
 // 连负N期后追正
 function mgAfterLose(posSeq, N) {
-  var tot = 0;
+  var tot = 0, bet = 0, peak = 0, maxdd = 0;
   for (var i = N; i < posSeq.length; i++) {
     var allLose = true;
     for (var k = i - N; k < i; k++) { if (posSeq[k]) { allLose = false; break; } }
-    if (allLose) tot += 40 * (posSeq[i] ? 22 : -25);
+    if (allLose) {
+      var delta = posSeq[i] ? 40 * 22 : -40 * 25;
+      tot += delta;
+      bet += 40 * 25;
+      if (tot > peak) peak = tot;
+      if (peak - tot > maxdd) maxdd = peak - tot;
+    }
   }
-  return tot;
+  return {profit: tot, bet: bet, maxdd: maxdd};
 }
 // 止损线：达朗贝尔 + 回撤超X%停手
 function mgStopLoss(seq, wm, lm, stopPct) {
-  var profit = 0, peak = 0, chip = 5;
+  var profit = 0, peak = 0, maxdd = 0, bet = 0, chip = 5;
   for (var i = 0; i < seq.length; i++) {
     var delta = seq[i] ? chip * wm : -chip * lm;
     profit += delta;
+    bet += chip * lm;
     if (profit > peak) peak = profit;
+    if (peak - profit > maxdd) maxdd = peak - profit;
     if (peak > 0 && (peak - profit) / peak > stopPct) break;
     chip = seq[i] ? Math.max(5, chip - 5) : chip + 5;
   }
-  return profit;
+  return {profit: profit, bet: bet, maxdd: maxdd};
 }
 // 连负≥N期后，才用 10-20-40-80-160 翻倍追号（观察期不下注）
 function mgLose5Martingale(seq, wm, lm, threshold) {
   threshold = threshold || 5;
   var chips = [10, 20, 40, 80, 160];
-  var profit = 0, peak = 0, maxdd = 0;
+  var profit = 0, peak = 0, maxdd = 0, bet = 0;
   var loseStreak = 0, chipIdx = 0, active = false;
   var daily = [];
   for (var i = 0; i < seq.length; i++) {
@@ -8441,13 +8628,14 @@ function mgLose5Martingale(seq, wm, lm, threshold) {
     var chip = chips[chipIdx];
     var delta = win ? chip * wm : -chip * lm;
     profit += delta;
+    bet += chip * lm;
     if (profit > peak) peak = profit;
     if (peak - profit > maxdd) maxdd = peak - profit;
     daily.push({chip: chip, win: win, delta: delta, cum: profit});
     if (win) { active = false; loseStreak = 0; chipIdx = 0; }
     else { loseStreak++; chipIdx++; if (chipIdx >= chips.length) chipIdx = 0; }
   }
-  return {profit: profit, maxdd: maxdd, daily: daily};
+  return {profit: profit, maxdd: maxdd, bet: bet, daily: daily};
 }
 
 // 统一策略演算：返回 {profit, maxdd, daily}，renderMartingale 与 showMartingaleDetail 共用，保证两处一致
@@ -8876,74 +9064,85 @@ function isChipStrategy(k) {
 }
 
 // 单方案在单月的演算：返回总盈亏（追负为主，信号类用正负双序列）
-function mvComputeStrategy(strategy, allPos, allNeg, dates_m, dayMap, TH) {
-  var tot = 0;
+function mvComputeStrategy(strategy, allPos, allNeg, allPosCond, allNegCond, dates_m, dayMap, TH) {
+  var tot = 0, bet = 0, maxdd = 0;
   var i;
-  if (strategy === 'kelly') { for (i = 0; i < allNeg.length; i++) tot += mgKelly(allNeg[i], 0.00555, 23, 24); return tot; }
-  if (strategy === 'halfkelly') { for (i = 0; i < allNeg.length; i++) tot += mgKelly(allNeg[i], 0.0028, 23, 24); return tot; }
-  if (strategy === 'rolling') { for (i = 0; i < allPos.length; i++) tot += mgRolling(allPos[i], allNeg[i], 3); return tot; }
-  if (strategy === 'trend') { for (i = 0; i < allPos.length; i++) tot += mgTrend(allPos[i], allNeg[i], false); return tot; }
-  if (strategy === 'trendrev') { for (i = 0; i < allPos.length; i++) tot += mgTrend(allPos[i], allNeg[i], true); return tot; }
-  if (strategy === 'afterlose2') { for (i = 0; i < allPos.length; i++) tot += mgAfterLose(allPos[i], 2); return tot; }
-  if (strategy === 'afterlose3') { for (i = 0; i < allPos.length; i++) tot += mgAfterLose(allPos[i], 3); return tot; }
-  if (strategy === 'lose5mart') { for (i = 0; i < allNeg.length; i++) tot += mgLose5Martingale(allNeg[i], 23, 24, 5).profit; return tot; }
-  if (strategy === 'stoploss') { for (i = 0; i < allNeg.length; i++) tot += mgStopLoss(allNeg[i], 23, 24, 0.2); return tot; }
-  // 筹码类：mgSimulate 追负
-  for (i = 0; i < allNeg.length; i++) tot += mgSimulate(allNeg[i], strategy, 23, 24, 0).profit;
-  return tot;
+  // 筹码类（追负/追正）：改用前日预测今日的条件命中序列 allNegCond，修复前视偏差
+  if (strategy === 'kelly') { for (i = 0; i < allNegCond.length; i++) { var k = mgKelly(allNegCond[i], 0.00555, 23, 24); tot += k.profit; bet += k.bet; maxdd += k.maxdd; } return {profit: tot, bet: bet, maxdd: maxdd}; }
+  if (strategy === 'halfkelly') { for (i = 0; i < allNegCond.length; i++) { var hk = mgKelly(allNegCond[i], 0.0028, 23, 24); tot += hk.profit; bet += hk.bet; maxdd += hk.maxdd; } return {profit: tot, bet: bet, maxdd: maxdd}; }
+  if (strategy === 'rolling') { for (i = 0; i < allPos.length; i++) { var rl = mgRolling(allPos[i], allNeg[i], 3); tot += rl.profit; bet += rl.bet; maxdd += rl.maxdd; } return {profit: tot, bet: bet, maxdd: maxdd}; }
+  if (strategy === 'trend') { for (i = 0; i < allPos.length; i++) { var td = mgTrend(allPos[i], allNeg[i], false); tot += td.profit; bet += td.bet; maxdd += td.maxdd; } return {profit: tot, bet: bet, maxdd: maxdd}; }
+  if (strategy === 'trendrev') { for (i = 0; i < allPos.length; i++) { var tr = mgTrend(allPos[i], allNeg[i], true); tot += tr.profit; bet += tr.bet; maxdd += tr.maxdd; } return {profit: tot, bet: bet, maxdd: maxdd}; }
+  if (strategy === 'afterlose2') { for (i = 0; i < allPos.length; i++) { var a2 = mgAfterLose(allPos[i], 2); tot += a2.profit; bet += a2.bet; maxdd += a2.maxdd; } return {profit: tot, bet: bet, maxdd: maxdd}; }
+  if (strategy === 'afterlose3') { for (i = 0; i < allPos.length; i++) { var a3 = mgAfterLose(allPos[i], 3); tot += a3.profit; bet += a3.bet; maxdd += a3.maxdd; } return {profit: tot, bet: bet, maxdd: maxdd}; }
+  if (strategy === 'lose5mart') { for (i = 0; i < allNegCond.length; i++) { var l5 = mgLose5Martingale(allNegCond[i], 23, 24, 5); tot += l5.profit; bet += l5.bet; maxdd += l5.maxdd; } return {profit: tot, bet: bet, maxdd: maxdd}; }
+  if (strategy === 'stoploss') { for (i = 0; i < allNegCond.length; i++) { var sl = mgStopLoss(allNegCond[i], 23, 24, 0.2); tot += sl.profit; bet += sl.bet; maxdd += sl.maxdd; } return {profit: tot, bet: bet, maxdd: maxdd}; }
+  // 筹码类：mgSimulate 追负（条件命中序列）
+  for (i = 0; i < allNegCond.length; i++) { var ms = mgSimulate(allNegCond[i], strategy, 23, 24, 0); tot += ms.profit; bet += ms.bet; maxdd += ms.maxdd; }
+  return {profit: tot, bet: bet, maxdd: maxdd};
 }
 
 function mvGlobalProfit(strategy, dates_m, dayMap, TH, storesArr) {
-  var tot = 0, i, s, d, v;
+  var tot = 0, bet = 0, peak = 0, maxdd = 0, i, s, d, v;
+  function apply(delta, stake) { tot += delta; bet += stake; if (tot > peak) peak = tot; if (peak - tot > maxdd) maxdd = peak - tot; }
   var storeSeq = {};
   for (i = 0; i < storesArr.length; i++) {
     s = storesArr[i]; storeSeq[s] = [];
     for (d = 0; d < dates_m.length; d++) storeSeq[s].push(dayMap[dates_m[d]] ? dayMap[dates_m[d]][s] : undefined);
   }
   if (strategy === 'diversify') {
-    for (i = 0; i < storesArr.length; i++) {
-      s = storesArr[i];
-      for (d = 0; d < dates_m.length; d++) {
-        v = storeSeq[s][d]; if (v === undefined) continue;
-        tot += 40 * (v > TH ? 23 : -24);
-      }
-    }
-    return tot;
-  }
-  if (strategy === 'extreme') {
+    // 修复前视偏差：前日排位>25 → 押负，命中=今日排位>25
     for (i = 0; i < storesArr.length; i++) {
       s = storesArr[i];
       for (d = 1; d < dates_m.length; d++) {
         var prev = storeSeq[s][d-1], cur = storeSeq[s][d];
         if (prev === undefined || cur === undefined) continue;
-        if (prev > 40) tot += 40 * (cur > TH ? 23 : -24);
+        if (prev > TH) apply(40 * (cur > TH ? 23 : -24), 40 * 24);
       }
     }
-    return tot;
+    return {profit: tot, bet: bet, maxdd: maxdd};
   }
-  if (strategy === 'weekday') {
+  if (strategy === 'extreme') {
+    // 已是前日预测今日（prev>40 → cur>TH），保持
     for (i = 0; i < storesArr.length; i++) {
       s = storesArr[i];
-      for (d = 0; d < dates_m.length; d++) {
-        v = storeSeq[s][d]; if (v === undefined) continue;
-        var wd = new Date(dates_m[d] + 'T00:00:00').getDay();
-        if (wd === 5 || wd === 6 || wd === 0) tot += 40 * (v <= TH ? 22 : -25);
-        else tot += 40 * (v > TH ? 23 : -24);
+      for (d = 1; d < dates_m.length; d++) {
+        var prev = storeSeq[s][d-1], cur = storeSeq[s][d];
+        if (prev === undefined || cur === undefined) continue;
+        if (prev > 40) apply(40 * (cur > TH ? 23 : -24), 40 * 24);
       }
     }
-    return tot;
+    return {profit: tot, bet: bet, maxdd: maxdd};
+  }
+  if (strategy === 'weekday') {
+    // 修复前视偏差：周末(五六日)前日≤25→押正命中=今日≤25；工作日(一~四)前日>25→押负命中=今日>25
+    for (i = 0; i < storesArr.length; i++) {
+      s = storesArr[i];
+      for (d = 1; d < dates_m.length; d++) {
+        var prev = storeSeq[s][d-1], cur = storeSeq[s][d];
+        if (prev === undefined || cur === undefined) continue;
+        var wd = new Date(dates_m[d] + 'T00:00:00').getDay();
+        if (wd === 5 || wd === 6 || wd === 0) {
+          if (prev <= TH) apply(40 * (cur <= TH ? 22 : -25), 40 * 25);
+        } else {
+          if (prev > TH) apply(40 * (cur > TH ? 23 : -24), 40 * 24);
+        }
+      }
+    }
+    return {profit: tot, bet: bet, maxdd: maxdd};
   }
   if (strategy === 'highcorr') {
-    for (d = 0; d < dates_m.length; d++) {
-      var a = storeSeq['集合14'][d], b = storeSeq['集合16'][d];
-      if (a === undefined || b === undefined) continue;
-      var w = (a > TH && b > TH) ? 1 : 0;
-      tot += 40 * (w ? 23 : -24);
+    // 修复前视偏差：前日集合14+16都>25 → 押"都>25"，命中=今日都>25
+    for (d = 1; d < dates_m.length; d++) {
+      var aP = storeSeq['集合14'][d-1], bP = storeSeq['集合16'][d-1];
+      var aC = storeSeq['集合14'][d], bC = storeSeq['集合16'][d];
+      if (aP === undefined || bP === undefined || aC === undefined || bC === undefined) continue;
+      if (aP > TH && bP > TH) apply(40 * ((aC > TH && bC > TH) ? 23 : -24), 40 * 24);
     }
-    return tot;
+    return {profit: tot, bet: bet, maxdd: maxdd};
   }
   if (strategy === 'bestcombo') {
-    // 选负胜率最高的3店组合，固定40
+    // 修复前视偏差：选负胜率最高3店组合 + 结算都用前日预测今日
     var combos = [];
     for (var x = 0; x < storesArr.length; x++)
       for (var y = x+1; y < storesArr.length; y++)
@@ -8952,28 +9151,36 @@ function mvGlobalProfit(strategy, dates_m, dayMap, TH, storesArr) {
     var best = null, bestRate = -1;
     combos.forEach(function(trio) {
       var nh = 0, tt = 0;
-      dates_m.forEach(function(dd) {
-        var m = dayMap[dd]; if (!m) return;
-        var a = m[trio[0]], b = m[trio[1]], c = m[trio[2]];
-        if (a === undefined || b === undefined || c === undefined) return;
-        var pgood = (a <= TH ? 1 : 0) + (b <= TH ? 1 : 0) + (c <= TH ? 1 : 0);
-        tt++; if (pgood < 2) nh++;
-      });
+      for (var dd = 1; dd < dates_m.length; dd++) {
+        var mP = dayMap[dates_m[dd-1]], mC = dayMap[dates_m[dd]];
+        if (!mP || !mC) continue;
+        var aP = mP[trio[0]], bP = mP[trio[1]], cP = mP[trio[2]];
+        var aC = mC[trio[0]], bC = mC[trio[1]], cC = mC[trio[2]];
+        if (aP === undefined || bP === undefined || cP === undefined || aC === undefined || bC === undefined || cC === undefined) continue;
+        var prevGood = (aP <= TH ? 1 : 0) + (bP <= TH ? 1 : 0) + (cP <= TH ? 1 : 0);
+        if (prevGood >= 2) continue;
+        var curGood = (aC <= TH ? 1 : 0) + (bC <= TH ? 1 : 0) + (cC <= TH ? 1 : 0);
+        tt++; if (curGood < 2) nh++;
+      }
       var rate = tt ? nh / tt : 0;
       if (rate > bestRate) { bestRate = rate; best = trio; }
     });
     if (best) {
-      dates_m.forEach(function(dd) {
-        var m = dayMap[dd]; if (!m) return;
-        var a = m[best[0]], b = m[best[1]], c = m[best[2]];
-        if (a === undefined || b === undefined || c === undefined) return;
-        var pgood = (a <= TH ? 1 : 0) + (b <= TH ? 1 : 0) + (c <= TH ? 1 : 0);
-        tot += 40 * ((pgood < 2 ? 1 : 0) ? 23 : -24);
-      });
+      for (var dd = 1; dd < dates_m.length; dd++) {
+        var mP = dayMap[dates_m[dd-1]], mC = dayMap[dates_m[dd]];
+        if (!mP || !mC) continue;
+        var aP = mP[best[0]], bP = mP[best[1]], cP = mP[best[2]];
+        var aC = mC[best[0]], bC = mC[best[1]], cC = mC[best[2]];
+        if (aP === undefined || bP === undefined || cP === undefined || aC === undefined || bC === undefined || cC === undefined) continue;
+        var prevGood = (aP <= TH ? 1 : 0) + (bP <= TH ? 1 : 0) + (cP <= TH ? 1 : 0);
+        if (prevGood >= 2) continue;
+        var curGood = (aC <= TH ? 1 : 0) + (bC <= TH ? 1 : 0) + (cC <= TH ? 1 : 0);
+        apply(40 * ((curGood < 2) ? 23 : -24), 40 * 24);
+      }
     }
-    return tot;
+    return {profit: tot, bet: bet, maxdd: maxdd};
   }
-  return tot;
+  return {profit: tot, bet: bet, maxdd: maxdd};
 }
 
 function renderMonthlyVote() {
@@ -9006,28 +9213,45 @@ function renderMonthlyVote() {
   var monthAll = {};
   var votes = {};
   var cumProfit = {};
+  var cumBet = {};
+  var cumMaxDD = {};
   monthKeys.forEach(function(mo) {
     var dates_m = monthMap[mo];
     var allPos = [], allNeg = [];
+    var allPosCond = [], allNegCond = [];  // 前日预测今日的条件命中序列（修复前视偏差：不能用当天排位结算）
     combos.forEach(function(trio) {
       var pos = [], neg = [];
+      var posCond = [], negCond = [];
+      var prevGood = null;
       dates_m.forEach(function(d) {
-        var m = dayMap[d]; if (!m) return;
+        var m = dayMap[d]; if (!m) { prevGood = null; return; }
         var a = m[trio[0]], b = m[trio[1]], c = m[trio[2]];
-        if (a === undefined || b === undefined || c === undefined) return;
+        if (a === undefined || b === undefined || c === undefined) { prevGood = null; return; }
         var pgood = (a <= TH ? 1 : 0) + (b <= TH ? 1 : 0) + (c <= TH ? 1 : 0);
         pos.push(pgood >= 2 ? 1 : 0); neg.push(pgood < 2 ? 1 : 0);
+        if (prevGood !== null) {
+          var prevNeg = prevGood < 2 ? 1 : 0;
+          var curNeg = pgood < 2 ? 1 : 0;
+          if (prevNeg === 1) negCond.push(curNeg);      // 前日负→押负，命中=今日负
+          else posCond.push(1 - curNeg);                 // 前日正→押正，命中=今日正
+        }
+        prevGood = pgood;
       });
       allPos.push(pos); allNeg.push(neg);
+      allPosCond.push(posCond); allNegCond.push(negCond);
     });
     var res = {};
-    chipKeys.forEach(function(st) { res[st] = mvComputeStrategy(st, allPos, allNeg, dates_m, dayMap, TH); });
+    chipKeys.forEach(function(st) { res[st] = mvComputeStrategy(st, allPos, allNeg, allPosCond, allNegCond, dates_m, dayMap, TH); });
     globalKeys.forEach(function(st) { res[st] = mvGlobalProfit(st, dates_m, dayMap, TH, stores); });
-    var ranked = Object.keys(res).sort(function(a, b) { return res[b] - res[a]; });
-    monthTop5[mo] = ranked.slice(0, 5).map(function(k) { return {k: k, profit: res[k]}; });
-    monthAll[mo] = ranked.map(function(k) { return {k: k, profit: res[k]}; });
+    var ranked = Object.keys(res).sort(function(a, b) { return res[b].profit - res[a].profit; });
+    monthTop5[mo] = ranked.slice(0, 5).map(function(k) { return {k: k, profit: res[k].profit}; });
+    monthAll[mo] = ranked.map(function(k) { return {k: k, profit: res[k].profit}; });
     ranked.slice(0, 5).forEach(function(k) { votes[k] = (votes[k] || 0) + 1; });
-    Object.keys(res).forEach(function(k) { cumProfit[k] = (cumProfit[k] || 0) + res[k]; });
+    Object.keys(res).forEach(function(k) {
+      cumProfit[k] = (cumProfit[k] || 0) + res[k].profit;
+      cumBet[k] = (cumBet[k] || 0) + res[k].bet;
+      cumMaxDD[k] = (cumMaxDD[k] || 0) + res[k].maxdd;
+    });
   });
 
   // 渲染
@@ -9040,27 +9264,125 @@ function renderMonthlyVote() {
   // 累计盈亏排名（附投票数）
   var rankKeys = Object.keys(cumProfit).sort(function(a, b) { return cumProfit[b] - cumProfit[a]; });
   var displayKeys = MV_ONLY_POSITIVE ? rankKeys.filter(function(k) { return isChipStrategy(k); }) : rankKeys;
+  // ===== 投票排名（累计盈亏 · 下单按演算实际值 · 附进前5月数）=====
   h += '<div style="margin-top:8px;padding:8px 12px;background:#fff;border:1px solid #e5e7eb;border-radius:8px">';
-  h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">';
-  h += '<div style="font-size:12px;font-weight:700;color:#6d28d9">🏆 最优方案排名（累计盈亏 · 附进前5月数）</div>';
-  h += '<button onclick="MV_ONLY_POSITIVE=!MV_ONLY_POSITIVE;renderMonthlyVote()" style="padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid ' + (MV_ONLY_POSITIVE ? '#16a34a' : '#cdd7e5') + ';background:' + (MV_ONLY_POSITIVE ? '#dcfce7' : '#f8fafc') + ';color:' + (MV_ONLY_POSITIVE ? '#16a34a' : '#5a6b85') + '">' + (MV_ONLY_POSITIVE ? '✅ 只看筹码方案' : '全部方案') + '</button>';
-  h += '</div>';
-  displayKeys.forEach(function(k, idx) {
-    var medal = idx === 0 ? '🥇' : (idx === 1 ? '🥈' : (idx === 2 ? '🥉' : (idx + 1) + '.'));
+  h += '<div style="font-size:12px;font-weight:700;color:#6d28d9;margin-bottom:6px">🏆 投票排名（累计盈亏 · 下单按演算 · 附进前5月数）</div>';
+  var voteRows = displayKeys.map(function(k) {
     var cp = cumProfit[k];
-    var v = votes[k] || 0;
+    var cb = cumBet[k] || 0;
+    var cdd = cumMaxDD[k] || 0;
+    return { k: k, v: votes[k] || 0, cp: cp, cb: cb, cdd: cdd,
+      roi: cb > 0 ? (cp / cb * 100) : 0, rrr: cdd > 0 ? (cp / cdd) : 0, dr: cb > 0 ? (cdd / cb * 100) : 0 };
+  });
+  voteRows.sort(function(a, b) { return b.cp - a.cp; });
+  var vBestP = Math.max.apply(null, voteRows.map(function(r){ return r.cp; }));
+  var vBestB = Math.min.apply(null, voteRows.map(function(r){ return r.cb; }));
+  var vBestD = Math.min.apply(null, voteRows.map(function(r){ return r.cdd; }));
+  var vBestRoi = Math.max.apply(null, voteRows.map(function(r){ return r.roi; }));
+  var vBestRrr = Math.max.apply(null, voteRows.map(function(r){ return r.rrr; }));
+  var vBestDr = Math.min.apply(null, voteRows.map(function(r){ return r.dr; }));
+  voteRows.forEach(function(r, idx) {
+    var medal = idx === 0 ? '🥇' : (idx === 1 ? '🥈' : (idx === 2 ? '🥉' : (idx + 1) + '.'));
+    var cp = r.cp, cb = r.cb, cdd = r.cdd, v = r.v;
+    var roi = r.roi, rrr = r.rrr, dr = r.dr;
     var cpCls = cp >= 0 ? '#16a34a' : '#dc2626';
-    var rowBg = isChipStrategy(k) ? '#f0fdf4' : 'transparent';
+    var rowBg = isChipStrategy(r.k) ? '#f0fdf4' : 'transparent';
+    function vv(isBest, text, color) {
+      if (isBest) return '<b style="color:#2563eb;font-size:13px">' + text + '</b>';
+      return '<b style="color:' + color + ';font-size:11px">' + text + '</b>';
+    }
     var bar = '';
     for (var b = 0; b < v; b++) bar += '▮';
-    h += '<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;font-size:12px;border-bottom:1px solid #f3f4f6;background:' + rowBg + ';border-radius:6px;margin-bottom:2px">';
-    h += '<span style="width:32px;font-weight:700;color:' + (idx < 3 ? '#6d28d9' : '#8899b0') + '">' + medal + '</span>';
-    h += '<span style="flex:1;font-weight:600">' + (MG_STRATEGIES[k] ? MG_STRATEGIES[k].name : k) + '</span>';
-    h += '<span style="font-weight:700;color:' + cpCls + '">' + (cp >= 0 ? '+' : '') + cp.toLocaleString() + '</span>';
+    h += '<div style="padding:5px 8px;font-size:12px;border-bottom:1px solid #f3f4f6;background:' + rowBg + ';border-radius:6px;margin-bottom:3px">';
+    h += '<div style="display:flex;align-items:center;gap:8px">';
+    h += '<span style="width:28px;font-weight:700;color:' + (idx < 3 ? '#6d28d9' : '#8899b0') + '">' + medal + '</span>';
+    h += '<span style="flex:1;font-weight:600">' + (MG_STRATEGIES[r.k] ? MG_STRATEGIES[r.k].name : r.k) + '</span>';
+    h += '<span style="font-weight:700;color:' + cpCls + '">' + (cp >= 0 ? '+' : '') + Math.round(cp).toLocaleString() + '</span>';
     h += '<span style="color:#6d28d9;font-size:11px">' + v + '票</span>';
-    h += '<span style="color:#c4b5fd;font-size:11px;letter-spacing:1px">' + bar + '</span>';
+    h += '</div>';
+    h += '<div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;font-size:11px;color:#5a6b85">';
+    h += '<span>下单 ' + vv(cb === vBestB, Math.round(cb).toLocaleString(), '#5a6b85') + '</span>';
+    h += '<span>收益 ' + vv(cp === vBestP, (cp >= 0 ? '+' : '') + Math.round(cp).toLocaleString(), cpCls) + '</span>';
+    h += '<span>回撤 ' + vv(cdd === vBestD, Math.round(cdd).toLocaleString(), '#5a6b85') + '</span>';
+    h += '<span>投入产出比 ' + vv(roi === vBestRoi, (roi >= 0 ? '+' : '') + roi.toFixed(2) + '%', (roi >= 0 ? '#16a34a' : '#dc2626')) + '</span>';
+    h += '<span>风险收益比 ' + vv(rrr === vBestRrr, (rrr >= 0 ? '+' : '') + rrr.toFixed(2), (rrr >= 0 ? '#16a34a' : '#dc2626')) + '</span>';
+    h += '<span>回撤率 ' + vv(dr === vBestDr, dr.toFixed(2) + '%', '#d97706') + '</span>';
+    h += '</div>';
+    if (bar) h += '<div style="color:#c4b5fd;font-size:10px;letter-spacing:1px;margin-top:2px">' + bar + '</div>';
     h += '</div>';
   });
+  h += '</div>';
+
+  h += '<div style="margin-top:8px;padding:8px 12px;background:#fff;border:1px solid #e5e7eb;border-radius:8px">';
+  h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">';
+  h += '<div style="font-size:12px;font-weight:700;color:#6d28d9">🏆 最优方案排名（下单等额10万 · 收益/回撤/投入产出比/风险收益比/回撤率）</div>';
+  h += '<button onclick="MV_ONLY_POSITIVE=!MV_ONLY_POSITIVE;renderMonthlyVote()" style="padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid ' + (MV_ONLY_POSITIVE ? '#16a34a' : '#cdd7e5') + ';background:' + (MV_ONLY_POSITIVE ? '#dcfce7' : '#f8fafc') + ';color:' + (MV_ONLY_POSITIVE ? '#16a34a' : '#5a6b85') + '">' + (MV_ONLY_POSITIVE ? '✅ 只看筹码方案' : '全部方案') + '</button>';
+  h += '</div>';
+  h += '<div style="margin-bottom:6px;padding:6px 10px;background:#f5f3ff;border-radius:6px;font-size:11px;color:#5b21b6;line-height:1.9">';
+  h += '<b>📊 各指标多少最好</b>（下单已等额压制到 10 万，收益/回撤按比例折算）：';
+  h += '收益(等额) <b>↑越高越好</b> · ';
+  h += '回撤(等额) <b>↓越低越好</b> · ';
+  h += '投入产出比 <b>↑&gt;0% 才赚钱</b> · ';
+  h += '风险收益比 <b>↑&gt;1 赚&gt;回撤</b> · ';
+  h += '回撤率 <b>↓&lt;10% 稳 / &gt;20% 险</b>';
+  h += '</div>';
+  // 先算每方案指标值（下单金额压制到统一基准，收益/回撤按比例等额折算，公平比较）
+  var NORM_BASE = 100000;  // 等额下单基准（10万）
+  var metricRows = displayKeys.map(function(k) {
+    var cp = cumProfit[k];
+    var cb = cumBet[k] || 0;
+    var cdd = cumMaxDD[k] || 0;
+    var scale = cb > 0 ? (NORM_BASE / cb) : 1;
+    return {
+      k: k,
+      v: votes[k] || 0,
+      cb: cb,   // 实际下单（参考）
+      cp: cb > 0 ? (cp * scale) : cp,     // 等额收益
+      cdd: cb > 0 ? (cdd * scale) : cdd,  // 等额回撤
+      roi: cb > 0 ? (cp / cb * 100) : 0,
+      rrr: cdd > 0 ? (cp / cdd) : 0,
+      dr: cb > 0 ? (cdd / cb * 100) : 0
+    };
+  });
+  // 按等额收益降序排名（= 投入产出比，下单压制后公平）
+  metricRows.sort(function(a, b) { return b.cp - a.cp; });
+  var bestProfit = Math.max.apply(null, metricRows.map(function(r){ return r.cp; }));
+  var bestDD = Math.min.apply(null, metricRows.map(function(r){ return r.cdd; }));
+  var bestRoi = Math.max.apply(null, metricRows.map(function(r){ return r.roi; }));
+  var bestRrr = Math.max.apply(null, metricRows.map(function(r){ return r.rrr; }));
+  var bestDr = Math.min.apply(null, metricRows.map(function(r){ return r.dr; }));
+
+  metricRows.forEach(function(r, idx) {
+    var medal = idx === 0 ? '🥇' : (idx === 1 ? '🥈' : (idx === 2 ? '🥉' : (idx + 1) + '.'));
+    var cp = r.cp, cb = r.cb, cdd = r.cdd, v = r.v;
+    var roi = r.roi, rrr = r.rrr, dr = r.dr;
+    var cpCls = cp >= 0 ? '#16a34a' : '#dc2626';
+    var rowBg = isChipStrategy(r.k) ? '#f0fdf4' : 'transparent';
+    function val(isBest, text, color) {
+      if (isBest) return '<b style="color:#2563eb;font-size:13px">' + text + '</b>';
+      return '<b style="color:' + color + ';font-size:11px">' + text + '</b>';
+    }
+    var bar = '';
+    for (var b = 0; b < v; b++) bar += '▮';
+    h += '<div style="padding:5px 8px;font-size:12px;border-bottom:1px solid #f3f4f6;background:' + rowBg + ';border-radius:6px;margin-bottom:3px">';
+    h += '<div style="display:flex;align-items:center;gap:8px">';
+    h += '<span style="width:28px;font-weight:700;color:' + (idx < 3 ? '#6d28d9' : '#8899b0') + '">' + medal + '</span>';
+    h += '<span style="flex:1;font-weight:600">' + (MG_STRATEGIES[r.k] ? MG_STRATEGIES[r.k].name : r.k) + '</span>';
+    h += '<span style="font-weight:700;color:' + cpCls + '">' + (cp >= 0 ? '+' : '') + Math.round(cp).toLocaleString() + '</span>';
+    h += '<span style="color:#6d28d9;font-size:11px">' + v + '票</span>';
+    h += '</div>';
+    h += '<div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;font-size:11px;color:#5a6b85">';
+    h += '<span>下单(等额) <b>' + (NORM_BASE / 10000) + '万</b></span>';
+    h += '<span>收益(等额) ' + val(cp === bestProfit, (cp >= 0 ? '+' : '') + Math.round(cp).toLocaleString(), cpCls) + '</span>';
+    h += '<span>回撤(等额) ' + val(cdd === bestDD, Math.round(cdd).toLocaleString(), '#5a6b85') + '</span>';
+    h += '<span>投入产出比 ' + val(roi === bestRoi, (roi >= 0 ? '+' : '') + roi.toFixed(2) + '%', (roi >= 0 ? '#16a34a' : '#dc2626')) + '</span>';
+    h += '<span>风险收益比 ' + val(rrr === bestRrr, (rrr >= 0 ? '+' : '') + rrr.toFixed(2), (rrr >= 0 ? '#16a34a' : '#dc2626')) + '</span>';
+    h += '<span>回撤率 ' + val(dr === bestDr, dr.toFixed(2) + '%', '#d97706') + '</span>';
+    h += '</div>';
+    if (bar) h += '<div style="color:#c4b5fd;font-size:10px;letter-spacing:1px;margin-top:2px">' + bar + '</div>';
+    h += '</div>';
+  });
+
   if (displayKeys.length === 0) {
     h += '<div style="text-align:center;color:#8899b0;font-size:12px;padding:8px">暂无筹码方案</div>';
   }
@@ -9114,51 +9436,111 @@ var ladderAutoDowngrade = true;  // 自动降档开关：触发降档/停手信�
 var guideCapital = parseFloat(localStorage.getItem('ladder_guide_capital')) || 20000;  // 当前本金（默认2万，真实盈亏滚动）
 var guideBase = parseFloat(localStorage.getItem('ladder_guide_base')) || 20000;  // 翻倍提取基准
 var guideWithdraw = parseFloat(localStorage.getItem('ladder_guide_withdraw')) || 0;  // 累计提取
-var guideLastDate = localStorage.getItem('ladder_guide_last_date') || '';  // 最后结算日期（空=首次）
+var guideLog = [];  // 逐日记录 [{date, profit, capital, withdraw}]
+try { guideLog = JSON.parse(localStorage.getItem('ladder_guide_log') || '[]'); } catch(e) { guideLog = []; }
+var guideLogFrom = '';  // 日期段查询（起）
+var guideLogTo = '';    // 日期段查询（止）
+
 // 全自动本金结算：读 order_history 真实盈亏，逐日滚动，翻倍提取25%
 function settleGuideCapital(cb) {
   authFetch('/api/simulate/order-history?limit=3000&_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var rows = (d.rows || []).slice().reverse();  // 升序（旧→新）
-      if (!rows.length) { if (cb) cb(); return; }
-      var latest = rows[rows.length - 1].date;
-      if (!guideLastDate) {  // 首次：只记录最新日期，本金20000不动
-        guideLastDate = latest;
-        localStorage.setItem('ladder_guide_last_date', guideLastDate);
-        if (cb) cb(); return;
-      }
-      var settled = false;
-      rows.forEach(function(o) {
-        if (o.date > guideLastDate && o.own_profit != null && o.own_profit !== undefined) {
-          guideCapital += o.own_profit;
-          if (guideCapital >= guideBase * 2) {  // 翻倍 → 提取25% → 剩75%
-            var wd = guideCapital * 0.25;
-            guideWithdraw += wd;
-            guideCapital = guideCapital * 0.75;
-            guideBase = guideCapital;
-          }
-          settled = true;
-        }
+      var profitRows = rows.filter(function(o) {
+        return o.own_profit != null && o.own_profit !== undefined && !isNaN(o.own_profit);
       });
-      guideLastDate = latest;
+      if (!profitRows.length) { if (cb) cb(); return; }
+      // 全量重算：从起点逐日滚动本金（幂等，每次打开都重算）
+      var cap = 20000, base = 20000, wdTotal = 0, log = [];
+      profitRows.forEach(function(o) {
+        cap += o.own_profit;
+        var wd = 0;
+        if (cap >= base * 2) {  // 翻倍 → 提取25% → 剩75%
+          wd = cap * 0.25;
+          wdTotal += wd;
+          cap = cap * 0.75;
+          base = cap;
+        }
+        log.push({ date: o.date, profit: o.own_profit, capital: Math.round(cap), withdraw: Math.round(wd) });
+      });
+      guideCapital = cap;
+      guideBase = base;
+      guideWithdraw = wdTotal;
+      guideLog = log;
       localStorage.setItem('ladder_guide_capital', guideCapital);
       localStorage.setItem('ladder_guide_base', guideBase);
       localStorage.setItem('ladder_guide_withdraw', guideWithdraw);
-      localStorage.setItem('ladder_guide_last_date', guideLastDate);
-      if (settled) showToast('💰 本金已自动结算 → ' + Math.round(guideCapital).toLocaleString() + ' 元');
+      localStorage.setItem('ladder_guide_log', JSON.stringify(guideLog));
       if (cb) cb();
     })
     .catch(function() { if (cb) cb(); });
 }
 function resetGuideCapital() {
-  guideCapital = 20000; guideBase = 20000; guideWithdraw = 0; guideLastDate = '';
+  guideCapital = 20000; guideBase = 20000; guideWithdraw = 0; guideLog = [];
+  guideLogFrom = ''; guideLogTo = '';
   localStorage.removeItem('ladder_guide_capital');
   localStorage.removeItem('ladder_guide_base');
   localStorage.removeItem('ladder_guide_withdraw');
-  localStorage.removeItem('ladder_guide_last_date');
+  localStorage.removeItem('ladder_guide_log');
   showToast('💰 本金已重置为 2万');
   if (ladderOrderSheetData) renderLadderOrderUI(ladderOrderSheetData);
+}
+// 状态：连续亏损天数 + 是否可提取（翻倍）
+function computeGuideState() {
+  var lossStreak = 0;
+  for (var i = guideLog.length - 1; i >= 0; i--) {
+    var p = guideLog[i].profit;
+    if (p < 0) { lossStreak++; }
+    else if (p > 0) { break; }  // 盈利才打断连亏
+    // p == 0（未开奖/平）跳过，继续往前看
+  }
+  var canWithdraw = guideCapital >= guideBase * 2;
+  return { lossStreak: lossStreak, canWithdraw: canWithdraw };
+}
+// 逐日记录列表 HTML（含日期段查询）
+function guideLogHtml() {
+  var rows = guideLog.slice();
+  if (guideLogFrom) rows = rows.filter(function(r) { return r.date >= guideLogFrom; });
+  if (guideLogTo) rows = rows.filter(function(r) { return r.date <= guideLogTo; });
+  rows = rows.slice().reverse();  // 倒序（最新在上）
+  var hasFilter = !!(guideLogFrom || guideLogTo);
+  var show = hasFilter ? rows.slice(0, 200) : rows.slice(0, 30);  // 默认最近30条，筛选最多200条
+
+  var h = '';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">';
+  h += '<span>📜 本金逐日记录（' + (hasFilter ? '筛选 ' + show.length + ' / 共' + rows.length : '最近 ' + show.length + ' 天') + '）</span>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:4px;align-items:center;margin-bottom:8px;flex-wrap:wrap">';
+  h += '<input type="date" value="' + guideLogFrom + '" onchange="guideLogFrom=this.value;refreshGuideLog()" style="border:1px solid #e5e7eb;border-radius:6px;padding:4px 6px;font-size:11px;color:#1e3a5f">';
+  h += '<span style="font-size:11px;color:#5a6b85">→</span>';
+  h += '<input type="date" value="' + guideLogTo + '" onchange="guideLogTo=this.value;refreshGuideLog()" style="border:1px solid #e5e7eb;border-radius:6px;padding:4px 6px;font-size:11px;color:#1e3a5f">';
+  h += '<button onclick="guideLogFrom=\'\';guideLogTo=\'\';refreshGuideLog()" style="border:1px solid #e5e7eb;background:#f8fafc;color:#5a6b85;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">清除</button>';
+  h += '</div>';
+  h += '<div style="max-height:320px;overflow-y:auto;border:1px solid #f1f5f9;border-radius:8px">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+  h += '<thead><tr style="color:#5a6b85;border-bottom:1px solid #e5e7eb;background:#f8fafc">';
+  h += '<th style="padding:5px 6px;text-align:left">日期</th><th style="padding:5px 6px;text-align:right">当日盈亏</th><th style="padding:5px 6px;text-align:right">本金余额</th><th style="padding:5px 6px;text-align:right">提取</th>';
+  h += '</tr></thead><tbody>';
+  if (!show.length) {
+    h += '<tr><td colspan="4" style="padding:12px;text-align:center;color:#94a3b8">该日期段无记录</td></tr>';
+  }
+  show.forEach(function(r) {
+    var pc = r.profit > 0 ? '#16a34a' : (r.profit < 0 ? '#dc2626' : '#64748b');
+    var ps = (r.profit > 0 ? '+' : '') + r.profit.toLocaleString();
+    h += '<tr style="border-bottom:1px solid #f1f5f9">';
+    h += '<td style="padding:4px 6px;color:#334155">' + r.date + '</td>';
+    h += '<td style="padding:4px 6px;text-align:right;color:' + pc + ';font-weight:600">' + ps + '</td>';
+    h += '<td style="padding:4px 6px;text-align:right;font-weight:700;color:#1e3a5f">' + r.capital.toLocaleString() + '</td>';
+    h += '<td style="padding:4px 6px;text-align:right;color:#d97706;font-weight:600">' + (r.withdraw > 0 ? r.withdraw.toLocaleString() : '') + '</td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+  return h;
+}
+function refreshGuideLog() {
+  var el = document.getElementById('guide-log-box');
+  if (el) el.innerHTML = guideLogHtml();
 }
 function renderLadderOrder() {
   var el = document.getElementById('ladder-order-content');
@@ -9171,7 +9553,7 @@ function renderLadderOrder() {
     .then(function(d) {
       if (d.error) { el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">⚠️ ' + d.error + '</div>'; return; }
       ladderOrderSheetData = d;
-      settleGuideCapital(function() { renderLadderOrderUI(d); });
+      renderLadderOrderUI(d);
       autoSaveLadderSnapshot();
     })
     .catch(function(e) {
@@ -9230,8 +9612,95 @@ function computeLadderChips(scheme) {
   return {results: results, dates: dates};
 }
 
+// ── 方案A/B 指南跟踪：达朗贝尔演算盈亏 + 本金滚动（爆仓归零重来）──
+// 盈亏口径 = Σ56组 (追负命中 chip×23 / 未中 -chip×24)；本金 A=2万/B=4万，翻倍提取25%，爆仓(本金≤0)归零重来
+function computeLadderGuideTrack(scheme) {
+  var TH = 25;
+  var start = scheme === 'b' ? 40 : 5;
+  var useStopLoss = scheme === 'b';
+  var initCap = scheme === 'b' ? 40000 : 20000;  // 方案A 2万 / 方案B 4万
+  var dayMap = {};
+  records.forEach(function(r) {
+    if (r.category !== 'cat_1783487972049') return;
+    if (!dayMap[r.date]) dayMap[r.date] = {};
+    dayMap[r.date][r.store] = r.amount;
+  });
+  var dates = Object.keys(dayMap).filter(function(d) { return d >= '2026-05'; }).sort();
+  var combos = [];
+  for (var i = 0; i < stores.length; i++)
+    for (var j = i + 1; j < stores.length; j++)
+      for (var k = j + 1; k < stores.length; k++)
+        combos.push([stores[i], stores[j], stores[k]]);
+
+  // 回放每天盈亏（56组汇总）
+  var dayProfit = {};
+  combos.forEach(function(trio) {
+    var chip = start, profit = 0, peak = 0;
+    dates.forEach(function(dd) {
+      var m = dayMap[dd]; if (!m) return;
+      var a = m[trio[0]], b = m[trio[1]], c = m[trio[2]];
+      if (a === undefined || b === undefined || c === undefined) return;
+      var pgood = (a <= TH ? 1 : 0) + (b <= TH ? 1 : 0) + (c <= TH ? 1 : 0);
+      var negHit = pgood < 2 ? 1 : 0;
+      dayProfit[dd] = (dayProfit[dd] || 0) + (negHit ? chip * 23 : -chip * 24);
+      if (negHit) chip = Math.max(start, chip - 5);
+      else chip += 5;
+      if (useStopLoss) {
+        if (profit > peak) peak = profit;
+        if (peak > 0 && profit <= 0) { profit = 0; chip = start; peak = 0; }
+      } else {
+        if (chip > MG_RESET_THRESHOLD) chip = start;
+      }
+    });
+  });
+
+  // 本金滚动：爆仓归零重来 + 翻倍提取25%；同时追踪允许负本金的最低点（算最低本金需求）
+  var cap = initCap, base = initCap, wdTotal = 0, bankrupt = 0, minCap = initCap;
+  var cap2 = initCap, base2 = initCap, minCap2 = initCap;
+  var log = [];
+  dates.forEach(function(dd) {
+    var p = dayProfit[dd] || 0;
+    cap += p;
+    if (cap <= 0) { bankrupt++; cap = initCap; base = initCap; }
+    var wd = 0;
+    if (cap >= base * 2) { wd = cap * 0.25; wdTotal += wd; cap = cap * 0.75; base = cap; }
+    if (cap < minCap) minCap = cap;
+    cap2 += p;
+    if (cap2 >= base2 * 2) { cap2 *= 0.75; base2 = cap2; }
+    if (cap2 < minCap2) minCap2 = cap2;
+    log.push({ date: dd, profit: Math.round(p), capital: Math.round(cap), withdraw: Math.round(wd) });
+  });
+
+  return {
+    initCap: initCap, cap: cap, wdTotal: wdTotal, bankrupt: bankrupt,
+    minCap: minCap, needCapital: Math.round(initCap - minCap2), log: log, days: dates.length
+  };
+}
+
+// ── 逐日记录表（最近N天）──
+function guideLogTable(log) {
+  var show = log.slice().reverse().slice(0, 20);
+  var h = '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:12px;font-weight:700;color:#1e3a5f;margin-bottom:6px">📜 逐日记录（最近' + show.length + '天）</div>';
+  h += '<div style="max-height:240px;overflow-y:auto">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+  h += '<thead><tr style="color:#5a6b85;border-bottom:1px solid #e5e7eb;background:#f8fafc"><th style="padding:4px 6px;text-align:left">日期</th><th style="padding:4px 6px;text-align:right">当日盈亏</th><th style="padding:4px 6px;text-align:right">本金余额</th><th style="padding:4px 6px;text-align:right">提取</th></tr></thead><tbody>';
+  show.forEach(function(r) {
+    var pc = r.profit > 0 ? '#16a34a' : (r.profit < 0 ? '#dc2626' : '#64748b');
+    h += '<tr style="border-bottom:1px solid #f1f5f9">';
+    h += '<td style="padding:4px 6px;color:#334155">' + r.date + '</td>';
+    h += '<td style="padding:4px 6px;text-align:right;color:' + pc + ';font-weight:600">' + (r.profit > 0 ? '+' : '') + r.profit.toLocaleString() + '</td>';
+    h += '<td style="padding:4px 6px;text-align:right;font-weight:700;color:#1e3a5f">' + r.capital.toLocaleString() + '</td>';
+    h += '<td style="padding:4px 6px;text-align:right;color:#d97706;font-weight:600">' + (r.withdraw > 0 ? r.withdraw.toLocaleString() : '') + '</td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div></div>';
+  return h;
+}
+
 // ── 计算56组号码（每组3家24码≥2票 = 3选2）──
-function computeLadderNumbers(numbers) {
+function computeLadderNumbers(numbers, threshold) {
+  var th = String(threshold || 24);
   var combos = [];
   for (var i = 0; i < stores.length; i++)
     for (var j = i + 1; j < stores.length; j++)
@@ -9241,8 +9710,8 @@ function computeLadderNumbers(numbers) {
   combos.forEach(function(trio) {
     var vote = {};
     trio.forEach(function(st) {
-      var bot24 = (numbers[st] || {})['24'] || [];
-      bot24.forEach(function(n) { vote[n] = (vote[n] || 0) + 1; });
+      var bot = (numbers[st] || {})[th] || [];
+      bot.forEach(function(n) { vote[n] = (vote[n] || 0) + 1; });
     });
     var groupPicked = [];
     for (var n in vote) if (vote[n] >= 2) groupPicked.push(parseInt(n));
@@ -9482,37 +9951,29 @@ function renderLadderOrderUI(d) {
   h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">总下单 <b style="color:#dc2626">' + totalAmt + '</b></div>';
   h += '</div>';
 
-  // ═══ 资金指南卡片（全自动本金滚动 + 下注缩放）═══
-  var guideScale = guideCapital / 40000;
-  var guideBet = Math.round(totalAmt * guideScale);
-  h += '<div style="background:linear-gradient(135deg,#0f5132,#1e7a4f);border-radius:12px;padding:12px;margin:8px 12px;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.12)">';
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-  h += '<div style="font-size:13px;font-weight:700">💰 资金指南 · 本金滚动（全自动）</div>';
-  h += '<button onclick="resetGuideCapital()" style="border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer">🔄 重置2万</button>';
-  h += '</div>';
-  h += '<div style="display:flex;gap:6px;margin-bottom:8px">';
-  h += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center">';
-  h += '<div style="font-size:10px;opacity:.85">当前本金</div>';
-  h += '<div style="font-size:17px;font-weight:800">' + Math.round(guideCapital).toLocaleString() + '</div>';
-  h += '</div>';
-  h += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center">';
-  h += '<div style="font-size:10px;opacity:.85">累计提取</div>';
-  h += '<div style="font-size:17px;font-weight:800;color:#ffd166">' + Math.round(guideWithdraw).toLocaleString() + '</div>';
-  h += '</div>';
-  h += '</div>';
-  h += '<div style="display:flex;gap:6px;margin-bottom:8px">';
-  h += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center">';
-  h += '<div style="font-size:10px;opacity:.85">缩放系数</div>';
-  h += '<div style="font-size:15px;font-weight:800">' + guideScale.toFixed(3) + '</div>';
-  h += '</div>';
-  h += '<div style="flex:1;background:rgba(255,255,255,.22);border-radius:8px;padding:8px;text-align:center;border:1px solid rgba(255,255,255,.4)">';
-  h += '<div style="font-size:10px;opacity:.85">今日下注</div>';
-  h += '<div style="font-size:19px;font-weight:800;color:#ffd166">' + guideBet.toLocaleString() + '</div>';
-  h += '</div>';
-  h += '</div>';
-  h += '<div style="font-size:11px;opacity:.85;line-height:1.7">今日下注 = 演算' + totalAmt.toLocaleString() + ' × 系数' + guideScale.toFixed(2) + '（本金2万=半仓，本金4万=全仓）</div>';
-  h += '<div style="font-size:10px;opacity:.8;margin-top:6px;line-height:1.7">翻倍提取：本金×2 → 提取25% → 剩75%继续<br>2万→4万(提1万)→3万→6万(提1.5万)→4.5万→9万(提2.25万)→6.75万…</div>';
-  h += '</div>';
+  // ═══ 资金指南跟踪（方案A/B 各自独立 · 达朗贝尔演算盈亏 + 本金滚动）═══
+  var guideA = computeLadderGuideTrack('a');
+  var guideB = computeLadderGuideTrack('b');
+  function guideBlock(gt, name, color) {
+    var hb = '';
+    hb += '<div style="background:' + color + ';border-radius:12px;padding:12px;margin:8px 12px;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.12)">';
+    hb += '<div style="font-size:13px;font-weight:700;margin-bottom:8px">💰 资金指南 · ' + name + '（本金滚动全自动）</div>';
+    hb += '<div style="display:flex;gap:6px;margin-bottom:6px">';
+    hb += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;opacity:.85">本金起点</div><div style="font-size:16px;font-weight:800">' + (gt.initCap / 10000).toFixed(0) + '万</div></div>';
+    hb += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;opacity:.85">当前本金</div><div style="font-size:16px;font-weight:800">' + Math.round(gt.cap).toLocaleString() + '</div></div>';
+    hb += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;opacity:.85">累计提取</div><div style="font-size:16px;font-weight:800;color:#ffd166">' + Math.round(gt.wdTotal).toLocaleString() + '</div></div>';
+    hb += '</div>';
+    hb += '<div style="display:flex;gap:6px;margin-bottom:8px">';
+    hb += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;opacity:.85">爆仓次数</div><div style="font-size:16px;font-weight:800;color:' + (gt.bankrupt > 0 ? '#ffb3b3' : '#d1fae5') + '">' + gt.bankrupt + '次</div></div>';
+    hb += '<div style="flex:1;background:rgba(255,255,255,.14);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;opacity:.85">最低本金需求</div><div style="font-size:16px;font-weight:800;color:#ffd166">≈' + (gt.needCapital / 10000).toFixed(1) + '万</div></div>';
+    hb += '</div>';
+    hb += '<div style="font-size:10px;opacity:.85;line-height:1.7">达朗贝尔演算盈亏（56组：命中×23 / 未中×24）· 翻倍提取25% · 爆仓归零重来 · ' + gt.days + '天</div>';
+    hb += '</div>';
+    hb += guideLogTable(gt.log);
+    return hb;
+  }
+  h += guideBlock(guideA, '方案A · 0-70', 'linear-gradient(135deg,#0f5132,#1e7a4f)');
+  h += guideBlock(guideB, '方案B · 40-100', 'linear-gradient(135deg,#7c2d12,#c2410c)');
 
   // 1-49 金额网格
   h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
@@ -9540,6 +10001,680 @@ function renderLadderOrderUI(d) {
 
   el.innerHTML = h;
 }
+
+
+// ====== 楼梯下单2 Tab（最优方案排名前三 · 选最优单组合/连负5期翻倍/周内择时）======
+function l2BuildDayMap() {
+  var dayMap = {};
+  records.forEach(function(r) {
+    if (r.category !== 'cat_1783487972049') return;
+    if (!dayMap[r.date]) dayMap[r.date] = {};
+    dayMap[r.date][r.store] = r.amount;
+  });
+  return dayMap;
+}
+function l2BuildCombos() {
+  var combos = [];
+  for (var i = 0; i < stores.length; i++)
+    for (var j = i + 1; j < stores.length; j++)
+      for (var k = j + 1; k < stores.length; k++)
+        combos.push([stores[i], stores[j], stores[k]]);
+  return combos;
+}
+// 组合3选2号码：3家店 threshold(24/25)码 ≥2票
+function l2ComboNumbers(trio, numbers, threshold) {
+  var vote = {};
+  trio.forEach(function(st) {
+    var arr = (numbers[st] || {})[String(threshold)] || [];
+    arr.forEach(function(n) { vote[n] = (vote[n] || 0) + 1; });
+  });
+  var picked = [];
+  for (var n in vote) if (vote[n] >= 2) picked.push(parseInt(n));
+  picked.sort(function(a, b) { return a - b; });
+  return picked;
+}
+// 方案1：选最优单组合（2026-05起追负命中率最高的3店组合，固定40）
+function l2BestCombo(numbers) {
+  var TH = 25;
+  var dayMap = l2BuildDayMap();
+  var dates = Object.keys(dayMap).filter(function(d) { return d >= '2026-05'; }).sort();
+  var combos = l2BuildCombos();
+  var best = null, bestRate = -1;
+  combos.forEach(function(trio) {
+    var nh = 0, tt = 0;
+    dates.forEach(function(dd) {
+      var m = dayMap[dd]; if (!m) return;
+      var a = m[trio[0]], b = m[trio[1]], c = m[trio[2]];
+      if (a === undefined || b === undefined || c === undefined) return;
+      var pgood = (a <= TH ? 1 : 0) + (b <= TH ? 1 : 0) + (c <= TH ? 1 : 0);
+      tt++; if (pgood < 2) nh++;
+    });
+    var rate = tt ? nh / tt : 0;
+    if (rate > bestRate) { bestRate = rate; best = trio; }
+  });
+  var nums = best ? l2ComboNumbers(best, numbers, 24) : [];
+  return { trio: best, rate: bestRate, nums: nums, chip: 40, orderAmt: nums.length * 40 };
+}
+// 方案2：连负5期→10-20-40-80-160翻倍（触发追号的组合）
+function l2Lose5Mart(numbers) {
+  var TH = 25;
+  var dayMap = l2BuildDayMap();
+  var dates = Object.keys(dayMap).filter(function(d) { return d >= '2026-05'; }).sort();
+  var combos = l2BuildCombos();
+  var chips = [10, 20, 40, 80, 160];
+  var active = [];
+  combos.forEach(function(trio) {
+    var loseStreak = 0, chipIdx = 0, isActive = false;
+    dates.forEach(function(dd) {
+      var m = dayMap[dd]; if (!m) return;
+      var a = m[trio[0]], b = m[trio[1]], c = m[trio[2]];
+      if (a === undefined || b === undefined || c === undefined) return;
+      var pgood = (a <= TH ? 1 : 0) + (b <= TH ? 1 : 0) + (c <= TH ? 1 : 0);
+      var negHit = pgood < 2 ? 1 : 0;
+      if (!isActive) {
+        if (negHit) loseStreak = 0;
+        else { loseStreak++; if (loseStreak >= 5) { isActive = true; chipIdx = 0; } }
+      } else {
+        if (negHit) { isActive = false; loseStreak = 0; chipIdx = 0; }
+        else { loseStreak++; chipIdx++; if (chipIdx >= chips.length) chipIdx = 0; }
+      }
+    });
+    if (isActive) {
+      var nums = l2ComboNumbers(trio, numbers, 24);
+      active.push({ trio: trio, chip: chips[chipIdx], loseStreak: loseStreak, nums: nums, orderAmt: nums.length * chips[chipIdx] });
+    }
+  });
+  active.sort(function(a, b) { return b.chip - a.chip; });
+  return active;
+}
+// 方案3：周内择时（周末五六日追正25号，工作日追负24号，固定40）
+function l2Weekday(numbers) {
+  var dayMap = l2BuildDayMap();
+  var dates = Object.keys(dayMap).sort();
+  var lastDate = dates.length ? dates[dates.length - 1] : (serverToday || '');
+  var wd = new Date(lastDate + 'T00:00:00').getDay();
+  var isWeekend = (wd === 5 || wd === 6 || wd === 0);
+  var threshold = isWeekend ? 25 : 24;
+  var mode = isWeekend ? '追正(25号)' : '追负(24号)';
+  var allNums = {};
+  stores.forEach(function(st) {
+    var arr = (numbers[st] || {})[String(threshold)] || [];
+    arr.forEach(function(n) { allNums[n] = 1; });
+  });
+  var nums = Object.keys(allNums).map(Number).sort(function(a, b) { return a - b; });
+  return { mode: mode, wd: wd, lastDate: lastDate, threshold: threshold, nums: nums, chip: 40, orderAmt: nums.length * 40 };
+}
+function l2WeekName(wd) { return ['周日','周一','周二','周三','周四','周五','周六'][wd] || ''; }
+
+// 周内择时 56组筹码：周末追正25号 / 工作日追负24号，达朗贝尔5±5（命中-5/未中+5，>70重置）
+function l2WeekdayChips() {
+  var TH = 25;
+  var start = 5;
+  var dayMap = l2BuildDayMap();
+  var dates = Object.keys(dayMap).filter(function(d) { return d >= '2026-05'; }).sort();
+  var combos = l2BuildCombos();
+  var results = [];
+  combos.forEach(function(trio) {
+    var chip = start, streak = 0, lastWin = null, lastDate = '';
+    dates.forEach(function(dd) {
+      var m = dayMap[dd]; if (!m) return;
+      var a = m[trio[0]], b = m[trio[1]], c = m[trio[2]];
+      if (a === undefined || b === undefined || c === undefined) return;
+      var pgood = (a <= TH ? 1 : 0) + (b <= TH ? 1 : 0) + (c <= TH ? 1 : 0);
+      var wd2 = new Date(dd + 'T00:00:00').getDay();
+      var isWeekend = (wd2 === 5 || wd2 === 6 || wd2 === 0);
+      var hit = isWeekend ? (pgood >= 2 ? 1 : 0) : (pgood < 2 ? 1 : 0);
+      if (hit) { chip = Math.max(start, chip - 5); streak = 0; }
+      else { chip += 5; streak++; }
+      if (chip > MG_RESET_THRESHOLD) chip = start;
+      lastWin = hit; lastDate = dd;
+    });
+    results.push({trio: trio, chip: chip, streak: streak, lastWin: lastWin, lastDate: lastDate});
+  });
+  results.sort(function(a, b) { return b.chip - a.chip; });
+  return {results: results, dates: dates};
+}
+
+// 号码折叠：超过阈值只显示前 N 个 + 展开按钮，展开后 word-break 换行不超框
+var l2NumsFold = 10;
+var l2NumsStore = {};
+function l2NumsHtml(nums, uid) {
+  var n = (nums || []).slice();
+  var all = n.join('.');
+  if (!n.length) return '<span style="color:#8899b0">—</span>';
+  if (n.length <= l2NumsFold) {
+    return '<span style="color:#1e3a5f;font-weight:600;word-break:break-all">' + all + '</span>';
+  }
+  l2NumsStore[uid] = { all: all, count: n.length, head: n.slice(0, l2NumsFold).join('.') };
+  return '<span id="l2n-' + uid + '" style="color:#1e3a5f;font-weight:600;word-break:break-all">' + l2NumsStore[uid].head + ' …</span>' +
+         ' <button id="l2b-' + uid + '" onclick="l2ToggleNums(\'' + uid + '\')" style="border:none;background:#eef2ff;color:#2563eb;font-size:10px;padding:2px 8px;border-radius:8px;cursor:pointer;white-space:nowrap">展开 ' + n.length + ' 号</button>';
+}
+function l2ToggleNums(uid) {
+  var d = l2NumsStore[uid]; if (!d) return;
+  var span = document.getElementById('l2n-' + uid);
+  var btn = document.getElementById('l2b-' + uid);
+  if (!span || !btn) return;
+  if (btn.textContent.indexOf('展开') >= 0) {
+    span.innerHTML = d.all;
+    btn.textContent = '收起';
+  } else {
+    span.innerHTML = d.head + ' …';
+    btn.textContent = '展开 ' + d.count + ' 号';
+  }
+}
+
+function renderLadderOrder2() {
+  var el = document.getElementById('ladder-order2-content');
+  if (!el) return;
+  el.innerHTML = '<div class="empty">⏳ 加载中...</div>';
+  authFetch('/api/simulate/order-sheet?days=30&_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.error) { el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">⚠️ ' + d.error + '</div>'; return; }
+      ladderOrderSheetData = d;
+      renderLadderOrder2UI(d);
+      autoSaveLadderOrder2();
+    })
+    .catch(function(e) {
+      el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">加载失败: ' + e.message + '</div>';
+    });
+}
+
+function renderLadderOrder2UI(d) {
+  var el = document.getElementById('ladder-order2-content');
+  var numbers = d.numbers || {};
+  var h = '';
+
+  h += '<div style="background:linear-gradient(135deg,#7c3aed,#5b21b6);border-radius:12px;padding:10px 12px;margin:8px 12px;color:#fff">';
+  h += '<div style="font-size:13px;font-weight:700">📊 楼梯下单2 · 最优方案排名前三</div>';
+  h += '<div style="font-size:10px;opacity:.85;margin-top:4px">来源：最优方案排名（下单等额10万）前三 · 选最优单组合 / 连负5期翻倍 / 周内择时 · 数据 2026-05 起</div>';
+  h += '</div>';
+
+  // ── 方案1：选最优单组合 ──
+  var bc = l2BestCombo(numbers);
+  h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥇 ① 选最优单组合</div>';
+  h += '<button onclick="saveBestComboSnapshot()" style="padding:3px 10px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;border-radius:6px;font-size:11px;cursor:pointer">💾 存表快照</button>';
+  h += '</div>';
+  h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 8px">历史追负命中率最高的3店组合，固定 40 筹码追负(24号)</div>';
+  if (bc.trio) {
+    h += '<div style="font-size:11px;margin-bottom:6px">最优组合 <b style="color:#2563eb">' + bc.trio.join('+') + '</b> · 追负命中率 <b>' + (bc.rate * 100).toFixed(1) + '%</b></div>';
+    h += '<div style="font-size:11px;color:#5a6b85;margin-bottom:6px">🎯 号码（' + bc.nums.length + '号）：' + l2NumsHtml(bc.nums, 'bc') + '</div>';
+    h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">下单 ' + bc.nums.length + '号 × ' + bc.chip + ' = <b style="color:#dc2626">' + bc.orderAmt + '</b></div>';
+  } else {
+    h += '<div style="text-align:center;color:#8899b0;font-size:12px;padding:8px">暂无最优组合</div>';
+  }
+  h += '</div>';
+
+  // ── 方案2：连负5期→翻倍 ──
+  var lm = l2Lose5Mart(numbers);
+  var lmTotal = 0; lm.forEach(function(r) { lmTotal += r.orderAmt; });
+  h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥈 ② 连负5期→翻倍 10-20-40-80-160</div>';
+  h += '<div>';
+  h += '<button onclick="saveLose5MartSnapshot()" style="padding:3px 10px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;border-radius:6px;font-size:11px;cursor:pointer">💾 存表快照</button>';
+  h += '<button onclick="showLose5MartOrderModal()" style="padding:3px 10px;border:1px solid #e5e7eb;background:#f0f7ff;color:#2563eb;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">📋 列表</button>';
+  h += '</div>';
+  h += '</div>';
+  h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 8px">连负≥5期触发翻倍追号，命中即停；当前' + lm.length + '组处于追号中</div>';
+  if (lm.length) {
+    h += '<div style="max-height:280px;overflow-y:auto;margin-bottom:8px">';
+    lm.forEach(function(r, idx) {
+      h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px;border-bottom:1px solid #f3f4f6;font-size:11px">';
+      h += '<span style="font-weight:600">' + r.trio.join('+') + '</span>';
+      h += '<span style="color:#5a6b85">' + r.nums.length + '号 × <b style="color:#dc2626">' + r.chip + '</b></span>';
+      h += '<span style="font-weight:700;color:#dc2626">' + r.orderAmt + '</span>';
+      h += '</div>';
+      h += '<div style="font-size:10px;color:#5a6b85;padding:2px 4px 6px;line-height:1.6">' + l2NumsHtml(r.nums, 'lm' + idx) + '</div>';
+    });
+    h += '</div>';
+    h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">总下单 <b style="color:#dc2626">' + lmTotal + '</b></div>';
+  } else {
+    h += '<div style="text-align:center;color:#8899b0;font-size:12px;padding:8px">当前无组合触发追号（连负均未满5期）</div>';
+  }
+  h += '</div>';
+
+  // ── 方案3：周内择时（56组）──
+  var wd = l2Weekday(numbers);
+  var wchips = l2WeekdayChips();
+  var wGroupNums = computeLadderNumbers(numbers, wd.threshold).groupNums;
+  var wTotal = 0;
+  wchips.results.forEach(function(r) {
+    var nums = wGroupNums[r.trio.join('+')] || [];
+    r.nums = nums;
+    r.orderAmt = r.chip * nums.length;
+    wTotal += r.orderAmt;
+  });
+  h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥉 ③ 周内择时 · 56组</div>';
+  h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 6px">' + (wd.lastDate || '—') + ' · <b>' + l2WeekName(wd.wd) + '</b> → <b style="color:' + (wd.mode.indexOf('追正') >= 0 ? '#16a34a' : '#2563eb') + '">' + wd.mode + '</b> · 达朗贝尔5±5</div>';
+
+  // ① 筹码指导
+  h += '<div style="font-size:12px;font-weight:700;color:#1e3a5f;margin:6px 0 4px">① 筹码指导 · 56组</div>';
+  h += '<div style="max-height:220px;overflow-y:auto;margin-bottom:6px">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+  h += '<thead><tr style="background:#f0f3f8;position:sticky;top:0"><th style="padding:4px;text-align:left">组合</th><th style="padding:4px;text-align:center">筹码</th><th style="padding:4px;text-align:center">连亏</th><th style="padding:4px;text-align:center">最近</th></tr></thead><tbody>';
+  wchips.results.forEach(function(r, idx) {
+    var bg = idx % 2 === 0 ? '#fff' : '#f8fafc';
+    h += '<tr style="background:' + bg + '">';
+    h += '<td style="padding:3px 4px">' + r.trio.join('+') + '</td>';
+    h += '<td style="padding:3px;text-align:center;font-weight:700;color:' + (r.chip > 5 ? '#dc2626' : '#16a34a') + '">' + r.chip + '</td>';
+    h += '<td style="padding:3px;text-align:center">' + r.streak + '天</td>';
+    h += '<td style="padding:3px;text-align:center;color:' + (r.lastWin ? '#16a34a' : '#dc2626') + '">' + (r.lastWin ? '命中' : '未中') + '</td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+
+  // ② 号码
+  h += '<div style="font-size:12px;font-weight:700;color:#1e3a5f;margin:6px 0 4px">② 号码 · 每组3选2（' + wd.threshold + '码）</div>';
+  h += '<div style="max-height:220px;overflow-y:auto;margin-bottom:6px">';
+  wchips.results.forEach(function(r, idx) {
+    var nums = r.nums || [];
+    var bg = idx % 2 === 0 ? '#fff' : '#f8fafc';
+    h += '<div style="padding:4px;border-bottom:1px solid #f3f4f6;background:' + bg + '">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+    h += '<span style="font-weight:600;font-size:11px">' + r.trio.join('+') + '</span>';
+    h += '<span style="font-size:11px;color:#2563eb;font-weight:700">' + nums.length + '号</span>';
+    h += '</div>';
+    h += '<div style="font-size:10px;color:#5a6b85;line-height:1.6;margin-top:2px">' + l2NumsHtml(nums, 'wdg' + idx) + '</div>';
+    h += '</div>';
+  });
+  h += '</div>';
+
+  // ③ 形成下单
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0 4px">';
+  h += '<div style="font-size:12px;font-weight:700;color:#1e3a5f">③ 形成下单</div>';
+  h += '<div>';
+  h += '<button onclick="saveWeekdaySnapshot()" style="padding:3px 10px;border:1px solid #16a34a;background:#f0fdf4;color:#16a34a;border-radius:6px;font-size:11px;cursor:pointer">💾 存表快照</button>';
+  h += '<button onclick="showLadderSnapshots()" style="padding:3px 10px;border:1px solid #f59e0b;background:#fffbeb;color:#b45309;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">📂 存档</button>';
+  h += '<button onclick="showWeekdayOrderModal()" style="padding:3px 10px;border:1px solid #e5e7eb;background:#f0f7ff;color:#2563eb;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">📋 列表</button>';
+  h += '</div></div>';
+  h += '<div style="font-size:10px;color:#8899b0;margin-bottom:6px">每组 = 该组号码 × 该组筹码（独立下单）</div>';
+  h += '<div style="max-height:220px;overflow-y:auto;margin-bottom:8px">';
+  wchips.results.forEach(function(r, idx) {
+    var bg = idx % 2 === 0 ? '#fff' : '#f8fafc';
+    h += '<div style="display:flex;justify-content:space-between;padding:3px 4px;font-size:11px;border-bottom:1px solid #f3f4f6;background:' + bg + '">';
+    h += '<span>' + r.trio.join('+') + '</span>';
+    h += '<span style="color:#5a6b85">' + (r.nums ? r.nums.length : 0) + '号 × ' + r.chip + '</span>';
+    h += '<span style="font-weight:700;color:#dc2626">' + r.orderAmt + '</span>';
+    h += '</div>';
+  });
+  h += '</div>';
+  h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">总下单 <b style="color:#dc2626">' + wTotal + '</b></div>';
+  h += '</div>';
+
+  el.innerHTML = h;
+}
+
+
+// 方案1：选最优单组合存档（scheme='bestcombo'）
+function saveBestComboSnapshot(silent) {
+  var d = ladderOrderSheetData;
+  if (!d) { showToast('⚠️ 数据未加载'); return; }
+  var numbers = d.numbers || {};
+  var bc = l2BestCombo(numbers);
+  if (!bc.trio) { showToast('⚠️ 暂无最优组合'); return; }
+  var numAmounts = {};
+  bc.nums.forEach(function(n) { numAmounts[n] = bc.chip; });
+  var calcDate = d.date || '';
+  authFetch('/api/simulate/ladder-snapshot', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      calc_date: calcDate,
+      action_date: calcDate,
+      scheme: 'bestcombo',
+      chips: [{trio: bc.trio.join('+'), chip: bc.chip, streak: 0}],
+      numbers: {groupNums: {}},
+      order: {scheme: 'bestcombo', lines: [{trio: bc.trio.join('+'), chip: bc.chip, nums: bc.nums, orderAmt: bc.orderAmt}], numAmounts: numAmounts, totalAmt: bc.orderAmt}
+    })
+  }).then(function(r) { return r.json(); })
+    .then(function(res) { if (res.ok) showToast(silent ? '✅ 已自动存档 ' + calcDate : '✅ 选最优单组合已存表 ' + calcDate); else showToast('❌ 存表失败'); })
+    .catch(function(e) { showToast('❌ 存表失败: ' + e.message); });
+}
+
+// 方案2：连负5期翻倍存档（scheme='lose5mart'）
+function saveLose5MartSnapshot(silent) {
+  var d = ladderOrderSheetData;
+  if (!d) { showToast('⚠️ 数据未加载'); return; }
+  var numbers = d.numbers || {};
+  var lm = l2Lose5Mart(numbers);
+  var totalAmt = 0, numAmounts = {};
+  var lines = lm.map(function(r) {
+    totalAmt += r.orderAmt;
+    r.nums.forEach(function(n) { numAmounts[n] = (numAmounts[n] || 0) + r.chip; });
+    return {trio: r.trio.join('+'), chip: r.chip, nums: r.nums, orderAmt: r.orderAmt};
+  });
+  var calcDate = d.date || '';
+  authFetch('/api/simulate/ladder-snapshot', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      calc_date: calcDate,
+      action_date: calcDate,
+      scheme: 'lose5mart',
+      chips: lm.map(function(r) { return {trio: r.trio.join('+'), chip: r.chip, streak: r.loseStreak}; }),
+      numbers: {groupNums: {}},
+      order: {scheme: 'lose5mart', lines: lines, numAmounts: numAmounts, totalAmt: totalAmt}
+    })
+  }).then(function(r) { return r.json(); })
+    .then(function(res) { if (res.ok) showToast(silent ? '✅ 已自动存档 ' + calcDate : '✅ 连负5期翻倍已存表 ' + calcDate); else showToast('❌ 存表失败'); })
+    .catch(function(e) { showToast('❌ 存表失败: ' + e.message); });
+}
+
+// 周内择时存档（scheme='weekday'）
+function saveWeekdaySnapshot(silent) {
+  var d = ladderOrderSheetData;
+  if (!d) { showToast('⚠️ 数据未加载'); return; }
+  var numbers = d.numbers || {};
+  var wd = l2Weekday(numbers);
+  var wchips = l2WeekdayChips();
+  var wGroupNums = computeLadderNumbers(numbers, wd.threshold).groupNums;
+  var totalAmt = 0, numAmounts = {};
+  var lines = wchips.results.map(function(r) {
+    var key = r.trio.join('+');
+    var nums = wGroupNums[key] || [];
+    var orderAmt = r.chip * nums.length;
+    totalAmt += orderAmt;
+    nums.forEach(function(n) { numAmounts[n] = (numAmounts[n] || 0) + r.chip; });
+    return {trio: key, chip: r.chip, nums: nums, orderAmt: orderAmt};
+  });
+  var calcDate = d.date || '';
+  authFetch('/api/simulate/ladder-snapshot', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      calc_date: calcDate,
+      action_date: calcDate,
+      scheme: 'weekday',
+      chips: wchips.results.map(function(r) { return {trio: r.trio.join('+'), chip: r.chip, streak: r.streak}; }),
+      numbers: {groupNums: wGroupNums},
+      order: {scheme: 'weekday', lines: lines, numAmounts: numAmounts, totalAmt: totalAmt}
+    })
+  }).then(function(r) { return r.json(); })
+    .then(function(res) { if (res.ok) showToast(silent ? '✅ 已自动存档 ' + calcDate : '✅ 周内择时已存表 ' + calcDate); else showToast('❌ 存表失败'); })
+    .catch(function(e) { showToast('❌ 存表失败: ' + e.message); });
+}
+
+// 方案2：连负5期翻倍 列表弹窗（1-49金额网格 + 复制/乘除/前24号，功能对齐楼梯下单列表）
+var lose5OrderFactor = parseFloat(localStorage.getItem('lose5_order_factor') || '1') || 1;
+var lose5OrderManual = null;
+var lose5OrderData = {amounts: {}, total: 0, date: ''};
+
+function showLose5MartOrderModal() {
+  var d = ladderOrderSheetData;
+  if (!d) { showToast('⚠️ 数据未加载'); return; }
+  var numbers = d.numbers || {};
+  var lm = l2Lose5Mart(numbers);
+  var numAmounts = {}, total = 0, rows = '';
+  lm.forEach(function(r, idx) {
+    total += r.orderAmt;
+    r.nums.forEach(function(n) { numAmounts[n] = (numAmounts[n] || 0) + r.chip; });
+    var bg = idx % 2 === 0 ? '#fff' : '#f8fafc';
+    rows += '<tr style="background:' + bg + '"><td style="padding:3px 4px">' + r.trio.join('+') + '</td><td style="padding:3px;text-align:center;font-weight:700;color:#dc2626">' + r.chip + '</td><td style="padding:3px;text-align:center">' + r.nums.length + '</td><td style="padding:3px;text-align:center;color:#dc2626">' + r.orderAmt + '</td></tr>';
+  });
+  var useAmounts = numAmounts, useTotal = total;
+  if (lose5OrderManual) { useAmounts = lose5OrderManual.amounts; useTotal = lose5OrderManual.total; }
+  lose5OrderData = {amounts: useAmounts, total: useTotal, date: d.date || ''};
+
+  var overlay = document.getElementById('lose5-order-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'lose5-order-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  var grid = '<table style="border-collapse:collapse;font-size:10px;margin:0 auto;line-height:1">';
+  for (var n = 1; n <= 49; n++) {
+    var amt = useAmounts[n] || 0;
+    grid += '<tr>';
+    grid += '<td style="padding:0 6px;border:1px solid #e5e7eb;text-align:center;color:#333">' + n + '</td>';
+    grid += '<td style="padding:0 6px;border:1px solid #e5e7eb;text-align:right;color:#333">' + (amt || 0) + '</td>';
+    grid += '</tr>';
+  }
+  grid += '<tr><td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:center;font-weight:700;font-size:10px;color:#333">合计</td><td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:right;font-weight:700;font-size:10px;color:#333">' + useTotal + '</td></tr>';
+  grid += '</table>';
+  var h = '<div style="background:#fff;border-radius:12px;padding:12px;max-width:360px;width:92%;max-height:82vh;display:flex;flex-direction:column">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+  h += '<span style="font-weight:700;font-size:14px;color:#1e3a5f">💰 连负5期翻倍 · ' + (d.date || '') + '</span>';
+  h += '<div style="display:flex;gap:4px;align-items:center">';
+  h += '<button onclick="copyLose5OrderTable()" style="border:1px solid #e5e7eb;border-radius:6px;background:#f0f7ff;padding:2px 8px;font-size:11px;color:#2563eb;cursor:pointer;white-space:nowrap" title="复制全部49行到剪贴板">📋 复制</button>';
+  h += '<button onclick="document.getElementById(\'lose5-order-overlay\').remove()" style="border:none;background:none;font-size:18px;color:#999;cursor:pointer">✕</button>';
+  h += '</div></div>';
+  h += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;justify-content:center">';
+  h += '<input id="lose5-order-num-factor" type="text" inputmode="numeric" pattern="[0-9]*" value="' + lose5OrderFactor + '" oninput="saveLose5OrderFactor(this.value)" style="width:40px;padding:2px 4px;border:1px solid #e5e7eb;border-radius:4px;font-size:10px;text-align:center">';
+  h += '<button onclick="multiplyLose5OrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer">× 乘</button>';
+  h += '<button onclick="divideLose5OrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#fef2f2;font-size:10px;color:#dc2626;cursor:pointer">÷ 除</button>';
+  h += '<button onclick="resetLose5OrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer">🔄 重置</button>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:4px;justify-content:center;margin-bottom:6px">';
+  h += '<button onclick="showLose5Top24()" style="flex:1;padding:3px 6px;border:1px solid #2563eb;border-radius:4px;background:#eff6ff;font-size:10px;color:#1e40af;cursor:pointer">📌 前24号</button>';
+  h += '<button onclick="showLose5NonZero()" style="flex:1;padding:3px 6px;border:1px solid #16a34a;border-radius:4px;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer">📌 非0号</button>';
+  h += '</div>';
+  h += '<div style="flex:1;overflow-y:auto">';
+  h += '<div style="font-size:11px;font-weight:700;color:#1e3a5f;margin:4px 0 4px">💰 1-49 号下单金额</div>';
+  h += grid;
+  h += '<div style="font-size:11px;font-weight:700;color:#1e3a5f;margin:10px 0 4px">📋 追号组明细（' + lm.length + '组）</div>';
+  if (lm.length) {
+    h += '<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:#f0f3f8;position:sticky;top:0"><th style="padding:4px;text-align:left">组合</th><th style="padding:4px;text-align:center">筹码</th><th style="padding:4px;text-align:center">号码</th><th style="padding:4px;text-align:center">下单</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  } else {
+    h += '<div style="text-align:center;color:#94a3b8;font-size:12px;padding:12px">当前无组合触发追号（连负均未满5期）</div>';
+  }
+  h += '</div>';
+  h += '<div style="text-align:center;font-size:13px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">总下单 <b style="color:#dc2626">' + useTotal + '</b></div>';
+  h += '</div>';
+  overlay.innerHTML = h;
+  overlay.style.display = 'flex';
+}
+
+function copyLose5OrderTable() {
+  var amounts = lose5OrderData.amounts || {};
+  var total = lose5OrderData.total || 0;
+  var lines = [];
+  for (var n = 1; n <= 49; n++) lines.push(n + '\t' + (amounts[n] || 0));
+  lines.push('合计\t' + total);
+  navigator.clipboard.writeText(lines.join('\n')).then(function() {
+    var btns = document.querySelectorAll('[onclick="copyLose5OrderTable()"]');
+    for (var i = 0; i < btns.length; i++) { btns[i].textContent = '✅ 已复制'; setTimeout(function(b) { b.textContent = '📋 复制'; }, 1500, btns[i]); }
+  }).catch(function() { alert('复制失败，请手动选择'); });
+}
+function getLose5SortedAmounts() {
+  var amounts = lose5OrderData.amounts || {};
+  var list = [];
+  for (var n = 1; n <= 49; n++) if ((amounts[n] || 0) > 0) list.push({num: n, amt: amounts[n]});
+  list.sort(function(a, b) { return b.amt - a.amt; });
+  return list;
+}
+function copyLose5Top24() { copyLadderNums(getLose5SortedAmounts().slice(0, 24), '[onclick="copyLose5Top24()"]', '📋 复制号码'); }
+function copyLose5NonZero() { copyLadderNums(getLose5SortedAmounts(), '[onclick="copyLose5NonZero()"]', '📋 复制号码'); }
+function copyLose5Rest24() { copyLadderNums(getLose5SortedAmounts().slice(24), '[onclick="copyLose5Rest24()"]', '📋 复制非前24号码'); }
+function showLose5Top24() { showLadderNumPopup('📌 筹码前24号', getLose5SortedAmounts().slice(0, 24), 'copyLose5Top24'); }
+function showLose5NonZero() {
+  var extra = '<button onclick="copyLose5Rest24()" style="padding:6px 14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;font-size:12px;color:#b45309;cursor:pointer">📋 复制非前24号码</button>';
+  showLadderNumPopup('📌 非0号', getLose5SortedAmounts(), 'copyLose5NonZero', extra);
+}
+function saveLose5OrderFactor(v) {
+  var f = parseFloat(v);
+  if (!isNaN(f) && f > 0) { lose5OrderFactor = f; localStorage.setItem('lose5_order_factor', String(f)); }
+}
+function getLose5OrderFactor() {
+  var inp = document.getElementById('lose5-order-num-factor');
+  if (!inp) return null;
+  var v = parseFloat(inp.value);
+  return (isNaN(v) || v <= 0) ? null : v;
+}
+function applyLose5OrderTransform(op) {
+  var factor = getLose5OrderFactor();
+  if (!factor) return;
+  var amts = lose5OrderData.amounts || {};
+  var newAmounts = {}, newTotal = 0;
+  for (var n = 1; n <= 49; n++) {
+    if (amts[n] > 0) {
+      newAmounts[n] = Math.round(op === 'mul' ? amts[n] * factor : amts[n] / factor);
+      newTotal += newAmounts[n];
+    }
+  }
+  lose5OrderManual = {amounts: newAmounts, total: newTotal};
+  showLose5MartOrderModal();
+}
+function multiplyLose5OrderAmounts() { applyLose5OrderTransform('mul'); }
+function divideLose5OrderAmounts() { applyLose5OrderTransform('div'); }
+function resetLose5OrderAmounts() { lose5OrderManual = null; showLose5MartOrderModal(); }
+
+// 楼梯下单2 自动存档（打开 tab 每天三方案各存一次，防重复）
+function autoSaveLadderOrder2() {
+  var d = ladderOrderSheetData;
+  if (!d) return;
+  var numbers = d.numbers || {};
+  if (!numbers.matched) return;  // 号码未同步（回退旧号码）→ 不自动存档
+  var calcDate = d.date || '';
+  if (!calcDate) return;
+  var schemes = [
+    {name: 'bestcombo', fn: saveBestComboSnapshot},
+    {name: 'lose5mart', fn: saveLose5MartSnapshot},
+    {name: 'weekday', fn: saveWeekdaySnapshot}
+  ];
+  schemes.forEach(function(s) {
+    var key = 'ladder2_auto_' + calcDate + '_' + s.name;
+    if (localStorage.getItem(key)) return;
+    localStorage.setItem(key, '1');
+    s.fn(true);  // 静默自动存档
+  });
+}
+
+// 周内择时列表弹窗（56组明细 + 1-49金额网格 + 复制/乘除/前24号，功能对齐楼梯下单列表）
+var weekdayOrderFactor = parseFloat(localStorage.getItem('weekday_order_factor') || '1') || 1;
+var weekdayOrderManual = null;
+var weekdayOrderData = {amounts: {}, total: 0, date: ''};
+
+function showWeekdayOrderModal() {
+  var d = ladderOrderSheetData;
+  if (!d) { showToast('⚠️ 数据未加载'); return; }
+  var numbers = d.numbers || {};
+  var wd = l2Weekday(numbers);
+  var wchips = l2WeekdayChips();
+  var wGroupNums = computeLadderNumbers(numbers, wd.threshold).groupNums;
+  var numAmounts = {}, total = 0, rows = '';
+  wchips.results.forEach(function(r, idx) {
+    var nums = wGroupNums[r.trio.join('+')] || [];
+    var amt = r.chip * nums.length; total += amt;
+    nums.forEach(function(n) { numAmounts[n] = (numAmounts[n] || 0) + r.chip; });
+    var bg = idx % 2 === 0 ? '#fff' : '#f8fafc';
+    rows += '<tr style="background:' + bg + '"><td style="padding:3px 4px">' + r.trio.join('+') + '</td><td style="padding:3px;text-align:center;font-weight:700;color:#dc2626">' + r.chip + '</td><td style="padding:3px;text-align:center">' + nums.length + '</td><td style="padding:3px;text-align:center;color:#dc2626">' + amt + '</td></tr>';
+  });
+  // 手动缩放覆盖（乘除操作后）
+  var useAmounts = numAmounts, useTotal = total;
+  if (weekdayOrderManual) { useAmounts = weekdayOrderManual.amounts; useTotal = weekdayOrderManual.total; }
+  weekdayOrderData = {amounts: useAmounts, total: useTotal, date: wd.lastDate || ''};
+
+  var overlay = document.getElementById('weekday-order-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'weekday-order-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  // 1-49 号下单金额网格
+  var grid = '<table style="border-collapse:collapse;font-size:10px;margin:0 auto;line-height:1">';
+  for (var n = 1; n <= 49; n++) {
+    var amt = useAmounts[n] || 0;
+    grid += '<tr>';
+    grid += '<td style="padding:0 6px;border:1px solid #e5e7eb;text-align:center;color:#333">' + n + '</td>';
+    grid += '<td style="padding:0 6px;border:1px solid #e5e7eb;text-align:right;color:#333">' + (amt || 0) + '</td>';
+    grid += '</tr>';
+  }
+  grid += '<tr>';
+  grid += '<td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:center;font-weight:700;font-size:10px;color:#333">合计</td>';
+  grid += '<td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:right;font-weight:700;font-size:10px;color:#333">' + useTotal + '</td>';
+  grid += '</tr>';
+  grid += '</table>';
+  var h = '<div style="background:#fff;border-radius:12px;padding:12px;max-width:360px;width:92%;max-height:82vh;display:flex;flex-direction:column">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+  h += '<span style="font-weight:700;font-size:14px;color:#1e3a5f">💰 周内择时 · ' + (wd.lastDate || '') + ' · ' + wd.mode + '</span>';
+  h += '<div style="display:flex;gap:4px;align-items:center">';
+  h += '<button onclick="copyWeekdayOrderTable()" style="border:1px solid #e5e7eb;border-radius:6px;background:#f0f7ff;padding:2px 8px;font-size:11px;color:#2563eb;cursor:pointer;white-space:nowrap" title="复制全部49行到剪贴板">📋 复制</button>';
+  h += '<button onclick="document.getElementById(\'weekday-order-overlay\').remove()" style="border:none;background:none;font-size:18px;color:#999;cursor:pointer">✕</button>';
+  h += '</div></div>';
+  h += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;justify-content:center">';
+  h += '<input id="weekday-order-num-factor" type="text" inputmode="numeric" pattern="[0-9]*" value="' + weekdayOrderFactor + '" oninput="saveWeekdayOrderFactor(this.value)" style="width:40px;padding:2px 4px;border:1px solid #e5e7eb;border-radius:4px;font-size:10px;text-align:center">';
+  h += '<button onclick="multiplyWeekdayOrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer">× 乘</button>';
+  h += '<button onclick="divideWeekdayOrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#fef2f2;font-size:10px;color:#dc2626;cursor:pointer">÷ 除</button>';
+  h += '<button onclick="resetWeekdayOrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer">🔄 重置</button>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:4px;justify-content:center;margin-bottom:6px">';
+  h += '<button onclick="showWeekdayTop24()" style="flex:1;padding:3px 6px;border:1px solid #2563eb;border-radius:4px;background:#eff6ff;font-size:10px;color:#1e40af;cursor:pointer">📌 前24号</button>';
+  h += '<button onclick="showWeekdayNonZero()" style="flex:1;padding:3px 6px;border:1px solid #16a34a;border-radius:4px;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer">📌 非0号</button>';
+  h += '</div>';
+  h += '<div style="flex:1;overflow-y:auto">';
+  h += '<div style="font-size:11px;font-weight:700;color:#1e3a5f;margin:4px 0 4px">💰 1-49 号下单金额</div>';
+  h += grid;
+  h += '<div style="font-size:11px;font-weight:700;color:#1e3a5f;margin:10px 0 4px">📋 56 组明细</div>';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:#f0f3f8;position:sticky;top:0"><th style="padding:4px;text-align:left">组合</th><th style="padding:4px;text-align:center">筹码</th><th style="padding:4px;text-align:center">号码</th><th style="padding:4px;text-align:center">下单</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  h += '</div>';
+  h += '<div style="text-align:center;font-size:13px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">总下单 <b style="color:#dc2626">' + useTotal + '</b></div>';
+  h += '</div>';
+  overlay.innerHTML = h;
+  overlay.style.display = 'flex';
+}
+
+// 周内择时列表配套函数（复制/排序/前24号/非0号/乘除/重置）
+function copyWeekdayOrderTable() {
+  var amounts = weekdayOrderData.amounts || {};
+  var total = weekdayOrderData.total || 0;
+  var lines = [];
+  for (var n = 1; n <= 49; n++) lines.push(n + '\t' + (amounts[n] || 0));
+  lines.push('合计\t' + total);
+  navigator.clipboard.writeText(lines.join('\n')).then(function() {
+    var btns = document.querySelectorAll('[onclick="copyWeekdayOrderTable()"]');
+    for (var i = 0; i < btns.length; i++) { btns[i].textContent = '✅ 已复制'; setTimeout(function(b) { b.textContent = '📋 复制'; }, 1500, btns[i]); }
+  }).catch(function() { alert('复制失败，请手动选择'); });
+}
+function getWeekdaySortedAmounts() {
+  var amounts = weekdayOrderData.amounts || {};
+  var list = [];
+  for (var n = 1; n <= 49; n++) if ((amounts[n] || 0) > 0) list.push({num: n, amt: amounts[n]});
+  list.sort(function(a, b) { return b.amt - a.amt; });
+  return list;
+}
+function copyWeekdayTop24() { copyLadderNums(getWeekdaySortedAmounts().slice(0, 24), '[onclick="copyWeekdayTop24()"]', '📋 复制号码'); }
+function copyWeekdayNonZero() { copyLadderNums(getWeekdaySortedAmounts(), '[onclick="copyWeekdayNonZero()"]', '📋 复制号码'); }
+function copyWeekdayRest24() { copyLadderNums(getWeekdaySortedAmounts().slice(24), '[onclick="copyWeekdayRest24()"]', '📋 复制非前24号码'); }
+function showWeekdayTop24() { showLadderNumPopup('📌 筹码前24号', getWeekdaySortedAmounts().slice(0, 24), 'copyWeekdayTop24'); }
+function showWeekdayNonZero() {
+  var extra = '<button onclick="copyWeekdayRest24()" style="padding:6px 14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;font-size:12px;color:#b45309;cursor:pointer">📋 复制非前24号码</button>';
+  showLadderNumPopup('📌 非0号', getWeekdaySortedAmounts(), 'copyWeekdayNonZero', extra);
+}
+function saveWeekdayOrderFactor(v) {
+  var f = parseFloat(v);
+  if (!isNaN(f) && f > 0) { weekdayOrderFactor = f; localStorage.setItem('weekday_order_factor', String(f)); }
+}
+function getWeekdayOrderFactor() {
+  var inp = document.getElementById('weekday-order-num-factor');
+  if (!inp) return null;
+  var v = parseFloat(inp.value);
+  return (isNaN(v) || v <= 0) ? null : v;
+}
+function applyWeekdayOrderTransform(op) {
+  var factor = getWeekdayOrderFactor();
+  if (!factor) return;
+  var amts = weekdayOrderData.amounts || {};
+  var newAmounts = {}, newTotal = 0;
+  for (var n = 1; n <= 49; n++) {
+    if (amts[n] > 0) {
+      newAmounts[n] = Math.round(op === 'mul' ? amts[n] * factor : amts[n] / factor);
+      newTotal += newAmounts[n];
+    }
+  }
+  weekdayOrderManual = {amounts: newAmounts, total: newTotal};
+  showWeekdayOrderModal();
+}
+function multiplyWeekdayOrderAmounts() { applyWeekdayOrderTransform('mul'); }
+function divideWeekdayOrderAmounts() { applyWeekdayOrderTransform('div'); }
+function resetWeekdayOrderAmounts() { weekdayOrderManual = null; showWeekdayOrderModal(); }
 
 // ── 存表快照（56组筹码+号码+下单）──
 function saveLadderSnapshot(silent, scheme) {
@@ -9703,46 +10838,54 @@ function showLadderSnapshots() {
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var list = d.snapshots || [];
-      var monthly = d.monthly || [];
-      var weekly = d.weekly || [];
+      var stats = d.stats || {};
       var h = '<div style="background:#fff;border-radius:12px;padding:12px;max-width:360px;width:92%;max-height:82vh;overflow-y:auto">';
       h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
       h += '<span style="font-weight:700;font-size:14px;color:#1e3a5f">📂 楼梯下单存档</span>';
       h += '<button onclick="document.getElementById(\'ladder-snapshots-overlay\').remove()" style="border:none;background:none;font-size:18px;color:#999;cursor:pointer">✕</button>';
       h += '</div>';
 
-      // ── 按月统计 ──
-      if (monthly.length) {
-        h += '<div style="font-size:11px;font-weight:700;color:#1e3a5f;margin:6px 0 4px">📅 按月统计</div>';
-        h += '<div style="display:flex;flex-direction:column;gap:3px;margin-bottom:8px">';
-        monthly.slice().reverse().forEach(function(m) {
-          var pc = m.profit || 0;
-          var pcColor = pc > 0 ? '#16a34a' : (pc < 0 ? '#dc2626' : '#8899b0');
-          h += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;padding:5px 8px;background:#f8fafc;border-radius:6px">';
-          h += '<span style="color:#334155;font-weight:700;width:50px">' + m.label + '</span>';
-          h += '<span><span style="color:#16a34a;font-weight:600">' + m.win + '胜</span> <span style="color:#dc2626;font-weight:600">' + m.loss + '负</span></span>';
-          h += '<span style="color:' + pcColor + ';font-weight:700">' + (pc > 0 ? '+' : '') + pc + '</span>';
-          h += '<span style="color:#8899b0">' + m.rate + '%</span>';
-          h += '</div>';
+      // ── 各方案独立统计（按 scheme 分组）──
+      var schemeNames = {'a':'方案A · 0-70','b':'方案B · 40-100','weekday':'周内择时','bestcombo':'选最优单组合','lose5mart':'连负5期翻倍','default':'旧方案'};
+      var schemeColors = {'a':'#2563eb','b':'#ea580c','weekday':'#7c3aed','bestcombo':'#0ea5e9','lose5mart':'#db2777','default':'#64748b'};
+      var schemeKeys = Object.keys(stats).sort();
+      if (schemeKeys.length) {
+        schemeKeys.forEach(function(sch) {
+          var st = stats[sch];
+          var sName = schemeNames[sch] || sch;
+          var sColor = schemeColors[sch] || '#2563eb';
+          h += '<div style="font-size:11px;font-weight:700;margin:8px 0 2px;padding:4px 10px;background:' + sColor + ';color:#fff;border-radius:6px;display:inline-block">' + sName + '</div>';
+          if (st.monthly && st.monthly.length) {
+            h += '<div style="font-size:10px;font-weight:700;color:#1e3a5f;margin:4px 0 3px">📅 按月</div>';
+            h += '<div style="display:flex;flex-direction:column;gap:3px;margin-bottom:6px">';
+            st.monthly.slice().reverse().forEach(function(m) {
+              var pc = m.profit || 0;
+              var pcColor = pc > 0 ? '#16a34a' : (pc < 0 ? '#dc2626' : '#8899b0');
+              h += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;padding:5px 8px;background:#f8fafc;border-radius:6px">';
+              h += '<span style="color:#334155;font-weight:700;width:50px">' + m.label + '</span>';
+              h += '<span><span style="color:#16a34a;font-weight:600">' + m.win + '胜</span> <span style="color:#dc2626;font-weight:600">' + m.loss + '负</span></span>';
+              h += '<span style="color:' + pcColor + ';font-weight:700">' + (pc > 0 ? '+' : '') + pc + '</span>';
+              h += '<span style="color:#8899b0">' + m.rate + '%</span>';
+              h += '</div>';
+            });
+            h += '</div>';
+          }
+          if (st.weekly && st.weekly.length) {
+            h += '<div style="font-size:10px;font-weight:700;color:#1e3a5f;margin:4px 0 3px">📆 按周（近8周）</div>';
+            h += '<div style="display:flex;flex-direction:column;gap:3px;margin-bottom:6px">';
+            st.weekly.slice().reverse().slice(0, 8).forEach(function(w) {
+              var pc = w.profit || 0;
+              var pcColor = pc > 0 ? '#16a34a' : (pc < 0 ? '#dc2626' : '#8899b0');
+              h += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;padding:5px 8px;background:#f8fafc;border-radius:6px">';
+              h += '<span style="color:#334155;font-weight:700;width:50px">' + w.label + '周</span>';
+              h += '<span><span style="color:#16a34a;font-weight:600">' + w.win + '胜</span> <span style="color:#dc2626;font-weight:600">' + w.loss + '负</span></span>';
+              h += '<span style="color:' + pcColor + ';font-weight:700">' + (pc > 0 ? '+' : '') + pc + '</span>';
+              h += '<span style="color:#8899b0">' + w.rate + '%</span>';
+              h += '</div>';
+            });
+            h += '</div>';
+          }
         });
-        h += '</div>';
-      }
-
-      // ── 按周统计 ──
-      if (weekly.length) {
-        h += '<div style="font-size:11px;font-weight:700;color:#1e3a5f;margin:6px 0 4px">📆 按周统计（近8周）</div>';
-        h += '<div style="display:flex;flex-direction:column;gap:3px;margin-bottom:8px">';
-        weekly.slice().reverse().slice(0, 8).forEach(function(w) {
-          var pc = w.profit || 0;
-          var pcColor = pc > 0 ? '#16a34a' : (pc < 0 ? '#dc2626' : '#8899b0');
-          h += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;padding:5px 8px;background:#f8fafc;border-radius:6px">';
-          h += '<span style="color:#334155;font-weight:700;width:50px">' + w.label + '周</span>';
-          h += '<span><span style="color:#16a34a;font-weight:600">' + w.win + '胜</span> <span style="color:#dc2626;font-weight:600">' + w.loss + '负</span></span>';
-          h += '<span style="color:' + pcColor + ';font-weight:700">' + (pc > 0 ? '+' : '') + pc + '</span>';
-          h += '<span style="color:#8899b0">' + w.rate + '%</span>';
-          h += '</div>';
-        });
-        h += '</div>';
       }
 
       // ── 存档记录 ──
@@ -9751,7 +10894,7 @@ function showLadderSnapshots() {
         h += '<div style="text-align:center;color:#94a3b8;font-size:12px;padding:20px">暂无存档</div>';
       } else {
         list.forEach(function(s) {
-          var sLabel = s.scheme === 'b' ? '方案B' : (s.scheme === 'a' ? '方案A' : '');
+          var sLabel = s.scheme === 'b' ? '方案B' : (s.scheme === 'a' ? '方案A' : (s.scheme === 'weekday' ? '周内择时' : (s.scheme === 'bestcombo' ? '选最优单组合' : (s.scheme === 'lose5mart' ? '连负5期翻倍' : ''))));
           var resHtml = '';
           if (s.result === 'pending') {
             resHtml = '<span style="font-size:10px;color:#94a3b8">开奖' + (s.draw_number > 0 ? s.draw_number : '—') + ' · 待开奖</span>';
@@ -9762,7 +10905,7 @@ function showLadderSnapshots() {
           }
           h += '<div onclick="showLadderSnapshotDetail(\'' + s.calc_date + '\', \'' + (s.scheme || '') + '\')" style="padding:8px;border-bottom:1px solid #f3f4f6;cursor:pointer">';
           h += '<div style="display:flex;justify-content:space-between;align-items:center">';
-          h += '<span style="font-weight:600;font-size:13px;color:#1e3a5f">' + s.calc_date + (sLabel ? ' <span style="font-size:10px;color:' + (s.scheme === 'b' ? '#ea580c' : '#2563eb') + '">' + sLabel + '</span>' : '') + '</span>';
+          h += '<span style="font-weight:600;font-size:13px;color:#1e3a5f">' + s.calc_date + (sLabel ? ' <span style="font-size:10px;color:' + (s.scheme === 'b' ? '#ea580c' : (s.scheme === 'weekday' ? '#7c3aed' : (s.scheme === 'bestcombo' ? '#0ea5e9' : (s.scheme === 'lose5mart' ? '#db2777' : '#2563eb')))) + '">' + sLabel + '</span>' : '') + '</span>';
           h += '<span style="font-size:10px;color:#8899b0">' + (s.created_at || '').slice(5, 16) + '</span>';
           h += '</div>';
           h += '<div style="margin-top:2px">' + resHtml + '</div>';
@@ -9799,7 +10942,7 @@ function showLadderSnapshotDetail(calc_date, scheme) {
       var lines = order.lines || [];
       var h = '<div style="background:#fff;border-radius:12px;padding:12px;max-width:360px;width:92%;max-height:78vh;display:flex;flex-direction:column">';
       h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
-      var schemeLabel = (order.scheme === 'b') ? ' · 方案B' : (order.scheme === 'a' ? ' · 方案A' : '');
+      var schemeLabel = (order.scheme === 'b') ? ' · 方案B' : (order.scheme === 'a' ? ' · 方案A' : (order.scheme === 'weekday' ? ' · 周内择时' : (order.scheme === 'bestcombo' ? ' · 选最优单组合' : (order.scheme === 'lose5mart' ? ' · 连负5期翻倍' : ''))));
       h += '<span style="font-weight:700;font-size:14px;color:#1e3a5f">📂 存档 ' + s.calc_date + schemeLabel + '</span>';
       h += '<button onclick="document.getElementById(\'ladder-snapshot-detail-overlay\').remove()" style="border:none;background:none;font-size:18px;color:#999;cursor:pointer">✕</button>';
       h += '</div>';
