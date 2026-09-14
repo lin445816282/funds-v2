@@ -4023,6 +4023,15 @@ function renderConclusions() {
   h += '<div style="font-size:15px;font-weight:700">📋 方案A 下单数据</div>';
   h += '<div style="font-size:10px;opacity:.85;margin-top:2px">楼梯下单方案A · 56组追负达朗贝尔±5 · 2026-05-01起</div>';
   h += '</div>';
+  // ⛔ 方案A 永久停手横幅（结论 tab 顶部常驻红字，2026-09-13 决策）
+  h += '<div style="margin-top:12px;border-radius:12px;padding:14px 16px;background:linear-gradient(135deg,#7f1d1d,#b91c1c);color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.15)">';
+  h += '<div style="display:flex;align-items:center;gap:10px">';
+  h += '<span style="font-size:28px;line-height:1">⛔</span>';
+  h += '<div style="flex:1">';
+  h += '<div style="font-size:15px;font-weight:800;letter-spacing:.5px">方案A 已永久停手（2026-09-13）</div>';
+  h += '<div style="font-size:11px;opacity:.92;margin-top:3px">连亏6天 −17.4万（09-08~09-13）· 单日最大 −46,950 · 命中率随机无复出时机</div>';
+  h += '<div style="font-size:11px;opacity:.85;margin-top:2px">负期望 −4%（命中47% < 平衡点51.06%）· 凯利 f*&lt;0（仓位为负）· 止损保本不再下单</div>';
+  h += '</div></div></div>';
   h += '<div id="schemea-box" style="margin-top:12px"><div class="empty">⏳ 加载方案A...</div></div>';
   el.innerHTML = h;
   loadLadderSchemeA();
