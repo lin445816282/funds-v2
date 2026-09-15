@@ -10873,6 +10873,275 @@ function showL3Daily(strategy) {
 }
 
 
+// ====== 方案④ 止损线达朗贝尔 存档（scheme='stoploss'）======
+function saveStopLossSnapshot(silent) {
+  var d = ladderOrderSheetData;
+  if (!d) { showToast('⚠️ 数据未加载'); return; }
+  var numbers = d.numbers || {};
+  var sl = l3StopLossChips();
+  var active = sl.filter(function(r){ return !r.stopped && r.chip > 0; });
+  var totalAmt = 0, numAmounts = {};
+  var lines = active.map(function(r) {
+    var nums = l2ComboNumbers(r.trio, numbers, 24);
+    var orderAmt = r.chip * nums.length;
+    totalAmt += orderAmt;
+    nums.forEach(function(n) { numAmounts[n] = (numAmounts[n] || 0) + r.chip; });
+    return {trio: r.trio.join('+'), chip: r.chip, nums: nums, orderAmt: orderAmt};
+  });
+  var calcDate = d.date || '';
+  authFetch('/api/simulate/ladder-snapshot', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      calc_date: calcDate,
+      action_date: calcDate,
+      scheme: 'stoploss',
+      chips: active.map(function(r) { return {trio: r.trio.join('+'), chip: r.chip, streak: r.streak}; }),
+      numbers: {groupNums: {}},
+      order: {scheme: 'stoploss', lines: lines, numAmounts: numAmounts, totalAmt: totalAmt}
+    })
+  }).then(function(r) { return r.json(); })
+    .then(function(res) { if (res.ok) showToast(silent ? '✅ 已自动存档 ' + calcDate : '✅ 止损线达朗贝尔已存表 ' + calcDate); else showToast('❌ 存表失败'); })
+    .catch(function(e) { showToast('❌ 存表失败: ' + e.message); });
+}
+
+// 楼梯下单3 自动存档（4方案各存一次，scheme 分家）
+function autoSaveLadderOrder3() {
+  var d = ladderOrderSheetData;
+  if (!d) return;
+  var numbers = d.numbers || {};
+  if (!numbers.matched) return;
+  var calcDate = d.date || '';
+  if (!calcDate) return;
+  var schemes = [
+    {name: 'bestcombo', fn: saveBestComboSnapshot},
+    {name: 'lose5mart', fn: saveLose5MartSnapshot},
+    {name: 'weekday', fn: saveWeekdaySnapshot},
+    {name: 'stoploss', fn: saveStopLossSnapshot},
+    {name: 'l3all', fn: saveL3AllSnapshot}
+  ];
+  schemes.forEach(function(s) {
+    var key = 'ladder3_auto_' + calcDate + '_' + s.name;
+    if (localStorage.getItem(key)) return;
+    localStorage.setItem(key, '1');
+    s.fn(true);
+  });
+}
+
+// ====== 4组汇总下单 ======
+// 4组下单数据（与楼梯下单3 展示口径一致）
+function l3AllOrder(numbers) {
+  var bc = l2BestCombo(numbers);
+  var lm = l2Lose5Mart(numbers);
+  var wd = l2Weekday(numbers);
+  var sl = l3StopLossChips();
+  var slActive = sl.filter(function(r){ return !r.stopped && r.chip > 0; });
+  var groups = [];
+  var numAmounts = {}, total = 0;
+  // ① bestcombo
+  if (bc.trio) {
+    var bcAmt = {};
+    bc.nums.forEach(function(n){ bcAmt[n] = bc.chip; });
+    groups.push({name: '① 选最优单组合', nums: bc.nums, chip: bc.chip, total: bc.orderAmt, amounts: bcAmt});
+  }
+  // ② lose5mart
+  var lmAmt = {}, lmNums = {}, lmTotal = 0;
+  lm.forEach(function(r){ lmTotal += r.orderAmt; r.nums.forEach(function(n){ lmAmt[n] = (lmAmt[n]||0) + r.chip; lmNums[n] = 1; }); });
+  groups.push({name: '② 连负5期翻倍', nums: Object.keys(lmNums).map(Number), chip: null, total: lmTotal, amounts: lmAmt});
+  // ③ weekday
+  var wdAmt = {};
+  wd.nums.forEach(function(n){ wdAmt[n] = wd.chip; });
+  groups.push({name: '③ 周内择时', nums: wd.nums, chip: wd.chip, total: wd.orderAmt, amounts: wdAmt});
+  // ④ stoploss
+  var slAmt = {}, slNums = {}, slTotal = 0;
+  slActive.forEach(function(r){ var nums = l2ComboNumbers(r.trio, numbers, 24); slTotal += r.chip * nums.length; nums.forEach(function(n){ slAmt[n] = (slAmt[n]||0) + r.chip; slNums[n] = 1; }); });
+  groups.push({name: '④ 止损线达朗贝尔', nums: Object.keys(slNums).map(Number), chip: null, total: slTotal, amounts: slAmt});
+  // 合并
+  groups.forEach(function(g){ Object.keys(g.amounts).forEach(function(n){ var k = parseInt(n); numAmounts[k] = (numAmounts[k]||0) + g.amounts[n]; total += g.amounts[n]; }); });
+  return {groups: groups, numAmounts: numAmounts, total: total};
+}
+
+// 4组汇总逐日（每天 4 方案盈亏/下单相加）
+function l3DailyAll() {
+  var keys = ['bestcombo','lose5mart','weekday','stoploss'];
+  var logs = {};
+  keys.forEach(function(k){ logs[k] = l3DailyLog(k); });
+  var dayMap = {};
+  keys.forEach(function(k) {
+    if (!logs[k]) return;
+    logs[k].rows.forEach(function(r) {
+      if (!dayMap[r.date]) dayMap[r.date] = {date: r.date, pnl: 0, cum: 0, dayBet: 0, hitCount: 0, betCount: 0, skipped: true};
+      var dd = dayMap[r.date];
+      dd.pnl += r.pnl || 0;
+      dd.dayBet += r.dayBet || 0;
+      dd.hitCount += r.hitCount || 0;
+      dd.betCount += r.betCount || 0;
+      if (!r.skipped) dd.skipped = false;
+    });
+  });
+  var rows = Object.keys(dayMap).sort().map(function(d){ return dayMap[d]; });
+  var cum = 0;
+  rows.forEach(function(r){ cum += r.pnl; r.cum = cum; });
+  return {rows: rows, total: cum, name: '4组汇总'};
+}
+
+// 4组汇总逐日列表弹窗
+function showL3AllDaily() {
+  var log = l3DailyAll();
+  if (!log || !log.rows.length) { showToast('暂无数据'); return; }
+  var overlay = document.getElementById('l3-all-daily-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'l3-all-daily-overlay';
+    overlay.className = 'modal-mask';
+    overlay.onclick = function() { overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  var rows = log.rows;
+  var actual = rows.filter(function(r){ return !r.skipped; });
+  var wins = 0, losses = 0, totalBet = 0, sumHit = 0, sumBet = 0;
+  actual.forEach(function(r){ if (r.pnl > 0) wins++; else if (r.pnl < 0) losses++; totalBet += (r.dayBet||0); sumHit += (r.hitCount||0); sumBet += (r.betCount||0); });
+  var hitRate = actual.length ? (wins / actual.length * 100) : 0;
+  var curLoss = 0, curWin = 0;
+  for (var i = rows.length-1; i>=0; i--) { if (rows[i].skipped) continue; if (rows[i].pnl < 0) curLoss++; else break; }
+  for (var j = rows.length-1; j>=0; j--) { if (rows[j].skipped) continue; if (rows[j].pnl > 0) curWin++; else break; }
+  var peak = 0, maxDD = 0;
+  rows.forEach(function(r){ if (r.cum > peak) peak = r.cum; var dd = peak - r.cum; if (dd > maxDD) maxDD = dd; });
+  var parts = [];
+  ['bestcombo','lose5mart','weekday','stoploss'].forEach(function(k){
+    var l = l3DailyLog(k);
+    if (l) parts.push((MG_STRATEGIES[k] ? MG_STRATEGIES[k].name : k) + ' ' + (l.total>=0?'+':'') + l.total.toLocaleString());
+  });
+
+  var h = '<div class="modal-box" onclick="event.stopPropagation()" style="width:95%;max-width:600px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+  h += '<div style="font-size:14px;font-weight:700;color:#1e3a5f">📜 4组汇总 · 每日记录</div>';
+  h += '<button onclick="document.getElementById(\'l3-all-daily-overlay\').remove()" style="background:none;border:none;font-size:18px;cursor:pointer;color:#94a3b8;padding:0 4px">✕</button>';
+  h += '</div>';
+  h += '<div style="font-size:11px;color:#8899b0;margin-bottom:8px">2026-05-01 起 · 共 ' + rows.length + ' 天（下注 ' + actual.length + ' 天 / 空仓 ' + (rows.length - actual.length) + ' 天）</div>';
+  h += '<div style="background:#f0f9ff;border:1px solid #dbeafe;border-radius:10px;padding:10px;margin-bottom:8px">';
+  h += '<div style="font-size:12px;font-weight:700;color:#1e40af;margin-bottom:6px">📊 4组汇总情况</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px">';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">累计盈亏</div><div style="font-weight:700;color:' + (log.total>=0?'#16a34a':'#dc2626') + '">' + (log.total>=0?'+':'') + log.total.toLocaleString() + '</div></div>';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">命中率(天)</div><div style="font-weight:700;color:#1e3a5f">' + hitRate.toFixed(1) + '%</div></div>';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">胜/负天数</div><div style="font-weight:700"><span style="color:#16a34a">' + wins + '</span>/<span style="color:#dc2626">' + losses + '</span></div></div>';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">当前' + (curLoss>0?'连亏':'连盈') + '</div><div style="font-weight:700;color:' + (curLoss>0?'#dc2626':'#16a34a') + '">' + (curLoss>0?curLoss:curWin) + ' 天</div></div>';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">累计下单额</div><div style="font-weight:700;color:#1e3a5f">' + totalBet.toLocaleString() + '</div></div>';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">最大回撤</div><div style="font-weight:700;color:#d97706">' + maxDD.toLocaleString() + '</div></div>';
+  h += '</div>';
+  h += '<div style="font-size:11px;color:#5a6b85;margin-top:6px">命中组数 <b>' + sumHit + '</b> / 下注组数 <b>' + sumBet + '</b>（' + (sumBet?(sumHit/sumBet*100).toFixed(1):0) + '%）</div>';
+  h += '</div>';
+  h += '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px;margin-bottom:8px">';
+  h += '<div style="font-size:12px;font-weight:700;color:#92400e;margin-bottom:6px">🔍 4组分析</div>';
+  parts.forEach(function(p){ h += '<div style="font-size:11px;color:#5a4a1a;line-height:1.7;padding:2px 0">· ' + p + '</div>'; });
+  h += '<div style="font-size:11px;color:#5a4a1a;line-height:1.7;padding:2px 0;font-weight:700">合计 ' + (log.total>=0?'+':'') + log.total.toLocaleString() + '（周内择时贡献最大，达朗贝尔类靠杠杆撑账面）</div>';
+  h += '</div>';
+  h += '<div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:10px">';
+  h += '<thead><tr style="background:#f0f3f8;position:sticky;top:0"><th style="padding:4px;text-align:left">日期</th><th style="padding:4px;text-align:right">下单</th><th style="padding:4px;text-align:center">命中/下注</th><th style="padding:4px;text-align:right">当日盈亏</th><th style="padding:4px;text-align:right">累计盈亏</th></tr></thead><tbody>';
+  var shown = rows.slice().reverse().slice(0, 400);
+  shown.forEach(function(r){
+    var pnlCls = r.pnl > 0 ? '#16a34a' : (r.pnl < 0 ? '#dc2626' : '#8899b0');
+    var cumCls = r.cum >= 0 ? '#16a34a' : '#dc2626';
+    h += '<tr style="' + (r.skipped ? 'opacity:.5' : '') + '">';
+    h += '<td style="padding:3px 4px">' + r.date + '</td>';
+    h += '<td style="padding:3px;text-align:right;color:#5a6b85">' + (r.dayBet || 0).toLocaleString() + '</td>';
+    h += '<td style="padding:3px;text-align:center;color:#5a6b85">' + (r.skipped ? '—' : (r.hitCount + '/' + r.betCount)) + '</td>';
+    h += '<td style="padding:3px;text-align:right;color:' + pnlCls + ';font-weight:700">' + (r.pnl>=0?'+':'') + r.pnl.toLocaleString() + '</td>';
+    h += '<td style="padding:3px;text-align:right;color:' + cumCls + ';font-weight:700">' + (r.cum>=0?'+':'') + r.cum.toLocaleString() + '</td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+  h += '</div>';
+  overlay.innerHTML = h;
+  overlay.classList.remove('hide');
+}
+
+// 4组汇总下单列表弹窗（合并号码 + 4组明细）
+function showL3AllModal() {
+  var d = ladderOrderSheetData;
+  if (!d) { showToast('⚠️ 数据未加载'); return; }
+  var numbers = d.numbers || {};
+  var all = l3AllOrder(numbers);
+  var overlay = document.getElementById('l3-all-order-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'l3-all-order-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  var grid = '<table style="border-collapse:collapse;font-size:10px;margin:0 auto;line-height:1">';
+  for (var n = 1; n <= 49; n++) {
+    var amt = all.numAmounts[n] || 0;
+    grid += '<tr><td style="padding:0 6px;border:1px solid #e5e7eb;text-align:center;color:#333">' + n + '</td><td style="padding:0 6px;border:1px solid #e5e7eb;text-align:right;color:#333">' + (amt || 0) + '</td></tr>';
+  }
+  grid += '<tr><td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:center;font-weight:700;font-size:10px;color:#333">合计</td><td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:right;font-weight:700;font-size:10px;color:#333">' + all.total + '</td></tr>';
+  grid += '</table>';
+  var h = '<div style="background:#fff;border-radius:12px;padding:12px;max-width:360px;width:92%;max-height:82vh;display:flex;flex-direction:column">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+  h += '<span style="font-weight:700;font-size:14px;color:#1e3a5f">💰 4组汇总下单 · ' + (d.date || '') + '</span>';
+  h += '<div style="display:flex;gap:4px;align-items:center">';
+  h += '<button onclick="copyL3AllOrderTable()" style="border:1px solid #e5e7eb;border-radius:6px;background:#f0f7ff;padding:2px 8px;font-size:11px;color:#2563eb;cursor:pointer;white-space:nowrap">📋 复制</button>';
+  h += '<button onclick="document.getElementById(\'l3-all-order-overlay\').remove()" style="border:none;background:none;font-size:18px;color:#999;cursor:pointer">✕</button>';
+  h += '</div></div>';
+  h += '<div style="flex:1;overflow-y:auto">';
+  all.groups.forEach(function(g){
+    var uid = 'l3all' + g.name.replace(/[^0-9]/g, '');
+    h += '<div style="font-size:11px;font-weight:700;color:#1e3a5f;margin:6px 0 3px">' + g.name + ' <span style="font-weight:400;color:#5a6b85">' + g.nums.length + '号 × ' + (g.chip !== null ? g.chip : '动态') + '</span></div>';
+    h += '<div style="font-size:10px;color:#5a6b85;margin-bottom:3px">' + l2NumsHtml(g.nums, uid) + '</div>';
+    h += '<div style="font-size:11px;font-weight:700;color:#dc2626;margin-bottom:6px">下单 ' + g.total.toLocaleString() + '</div>';
+  });
+  h += '<div style="font-size:11px;font-weight:700;color:#1e3a5f;margin:6px 0 4px">💰 合并 1-49 号下单金额（4组累加）</div>';
+  h += grid;
+  h += '</div>';
+  h += '<div style="text-align:center;font-size:13px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">4组总下单 <b style="color:#dc2626">' + all.total + '</b></div>';
+  h += '</div>';
+  overlay.innerHTML = h;
+  overlay.style.display = 'flex';
+}
+
+// 4组汇总下单复制
+function copyL3AllOrderTable() {
+  var d = ladderOrderSheetData;
+  if (!d) return;
+  var all = l3AllOrder(d.numbers || {});
+  var lines = [];
+  for (var n = 1; n <= 49; n++) lines.push(n + '\t' + (all.numAmounts[n] || 0));
+  lines.push('合计\t' + all.total);
+  navigator.clipboard.writeText(lines.join('\n')).then(function() {
+    var btns = document.querySelectorAll('[onclick="copyL3AllOrderTable()"]');
+    for (var i = 0; i < btns.length; i++) { btns[i].textContent = '✅ 已复制'; setTimeout(function(b) { b.textContent = '📋 复制'; }, 1500, btns[i]); }
+  }).catch(function() { alert('复制失败，请手动选择'); });
+}
+
+// 4组汇总存档（scheme='l3all'）
+function saveL3AllSnapshot(silent) {
+  var d = ladderOrderSheetData;
+  if (!d) { showToast('⚠️ 数据未加载'); return; }
+  var numbers = d.numbers || {};
+  var all = l3AllOrder(numbers);
+  var calcDate = d.date || '';
+  var lines = all.groups.map(function(g) {
+    return {trio: g.name, chip: g.chip || 0, nums: g.nums, orderAmt: g.total};
+  });
+  authFetch('/api/simulate/ladder-snapshot', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      calc_date: calcDate,
+      action_date: calcDate,
+      scheme: 'l3all',
+      chips: all.groups.map(function(g) { return {trio: g.name, chip: g.chip || 0, streak: 0}; }),
+      numbers: {groupNums: {}},
+      order: {scheme: 'l3all', lines: lines, numAmounts: all.numAmounts, totalAmt: all.total}
+    })
+  }).then(function(r) { return r.json(); })
+    .then(function(res) { if (res.ok) showToast(silent ? '✅ 已自动存档 ' + calcDate : '✅ 4组汇总已存表 ' + calcDate); else showToast('❌ 存表失败'); })
+    .catch(function(e) { showToast('❌ 存表失败: ' + e.message); });
+}
+
+
 function renderLadderOrder3() {
   var el = document.getElementById('ladder-order3-content');
   if (!el) return;
@@ -10885,6 +11154,7 @@ function renderLadderOrder3() {
       ladderOrderSheetData = d;
       if (!window._mvMetricRows) { renderMonthlyVote(); }
       renderLadderOrder3UI(d);
+      autoSaveLadderOrder3();
     })
     .catch(function(e){ el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">加载失败: ' + e.message + '</div>'; });
 }
@@ -10941,6 +11211,7 @@ function renderLadderOrder3UI(d) {
   h += '<div style="display:flex;justify-content:space-between;align-items:center">';
   h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥇 ① 选最优单组合 <span style="color:#0e7490;font-size:11px">投产比 42.68%</span></div>';
   h += '<button onclick="showL3Daily(\'bestcombo\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
+  h += '<button onclick="saveBestComboSnapshot()" style="padding:3px 10px;border:1px solid #059669;background:#ecfdf5;color:#059669;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">💾 存档</button>';
   h += '</div>';
   h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 8px">历史追负命中率最高的3店组合，固定40筹码追负(24号)</div>';
   if (bc.trio) {
@@ -10957,6 +11228,7 @@ function renderLadderOrder3UI(d) {
   h += '<div style="display:flex;justify-content:space-between;align-items:center">';
   h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥈 ② 连负5期→翻倍 10-20-40-80-160 <span style="color:#0e7490;font-size:11px">投产比 18.72%</span></div>';
   h += '<button onclick="showL3Daily(\'lose5mart\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
+  h += '<button onclick="saveLose5MartSnapshot()" style="padding:3px 10px;border:1px solid #059669;background:#ecfdf5;color:#059669;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">💾 存档</button>';
   h += '</div>';
   h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 8px">连负≥5期触发翻倍追号，命中即停；当前' + lm.length + '组处于追号中</div>';
   if (lm.length) {
@@ -10979,6 +11251,7 @@ function renderLadderOrder3UI(d) {
   h += '<div style="display:flex;justify-content:space-between;align-items:center">';
   h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥉 ③ 周内择时(周末正/工作日负) <span style="color:#0e7490;font-size:11px">投产比 9.64%</span></div>';
   h += '<button onclick="showL3Daily(\'weekday\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
+  h += '<button onclick="saveWeekdaySnapshot()" style="padding:3px 10px;border:1px solid #059669;background:#ecfdf5;color:#059669;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">💾 存档</button>';
   h += '</div>';
   h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 6px">' + (wd.lastDate||'—') + ' · <b>' + l2WeekName(wd.wd) + '</b> → <b style="color:' + (wd.mode.indexOf('追正')>=0?'#16a34a':'#2563eb') + '">' + wd.mode + '</b></div>';
   h += '<div style="font-size:11px;color:#5a6b85;margin-bottom:6px">🎯 号码（' + wd.nums.length + '号）：' + l2NumsHtml(wd.nums, 'l3wd') + '</div>';
@@ -10995,6 +11268,7 @@ function renderLadderOrder3UI(d) {
   h += '<div style="display:flex;justify-content:space-between;align-items:center">';
   h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">④ 止损线20%达朗贝尔(5±5) <span style="color:#0e7490;font-size:11px">投产比 5.73%</span></div>';
   h += '<button onclick="showL3Daily(\'stoploss\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
+  h += '<button onclick="saveStopLossSnapshot()" style="padding:3px 10px;border:1px solid #059669;background:#ecfdf5;color:#059669;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">💾 存档</button>';
   h += '</div>';
   h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 8px">达朗贝尔5±5 + 回撤>20%停手；当前 ' + slActive.length + '组活跃 · ' + slStopped.length + '组已停手</div>';
   if (slActive.length) {
@@ -11012,6 +11286,30 @@ function renderLadderOrder3UI(d) {
     h += '</div>';
     h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">总下单 <b style="color:#dc2626">' + slTotal + '</b></div>';
   } else { h += '<div style="text-align:center;color:#8899b0;font-size:12px;padding:8px">当前无活跃组合（全部停手）</div>'; }
+  h += '</div>';
+
+  // ====== 4组汇总下单 ======
+  var all = l3AllOrder(numbers);
+  h += '<div style="background:linear-gradient(135deg,#b45309,#92400e);border-radius:12px;padding:12px;margin:8px 12px;color:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+  h += '<div style="font-size:13px;font-weight:700">💰 4组汇总下单</div>';
+  h += '<div style="display:flex;gap:4px">';
+  h += '<button onclick="showL3AllDaily()" style="padding:3px 10px;border:1px solid #fff;background:rgba(255,255,255,.15);color:#fff;border-radius:6px;font-size:11px;cursor:pointer">📜 汇总列表</button>';
+  h += '<button onclick="showL3AllModal()" style="padding:3px 10px;border:1px solid #fff;background:rgba(255,255,255,.15);color:#fff;border-radius:6px;font-size:11px;cursor:pointer">📋 下单清单</button>';
+  h += '<button onclick="saveL3AllSnapshot()" style="padding:3px 10px;border:1px solid #fff;background:rgba(255,255,255,.15);color:#fff;border-radius:6px;font-size:11px;cursor:pointer">💾 存档</button>';
+  h += '</div></div>';
+  h += '<div style="font-size:10px;opacity:.85;margin-top:4px">4方案合并：号码并集 + 每号金额累加 · 统一落地跟踪</div>';
+  all.groups.forEach(function(g){
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;margin-top:6px;background:rgba(255,255,255,.1);border-radius:6px;padding:5px 8px">';
+    h += '<span style="font-weight:600">' + g.name + '</span>';
+    h += '<span style="opacity:.85">' + g.nums.length + '号</span>';
+    h += '<span style="font-weight:700">' + g.total.toLocaleString() + '</span>';
+    h += '</div>';
+  });
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-top:8px;border-top:1px solid rgba(255,255,255,.3);padding-top:8px">';
+  h += '<span style="font-weight:700">合计总下单</span>';
+  h += '<span style="font-weight:700;font-size:14px">' + all.total.toLocaleString() + '</span>';
+  h += '</div>';
   h += '</div>';
 
   el.innerHTML = h;
@@ -11319,8 +11617,8 @@ function showLadderSnapshots() {
       h += '</div>';
 
       // ── 各方案独立统计（按 scheme 分组）──
-      var schemeNames = {'a':'方案A · 0-70','b':'方案B · 40-100','weekday':'周内择时','bestcombo':'选最优单组合','lose5mart':'连负5期翻倍','default':'旧方案'};
-      var schemeColors = {'a':'#2563eb','b':'#ea580c','weekday':'#7c3aed','bestcombo':'#0ea5e9','lose5mart':'#db2777','default':'#64748b'};
+      var schemeNames = {'a':'方案A · 0-70','b':'方案B · 40-100','weekday':'周内择时','bestcombo':'选最优单组合','lose5mart':'连负5期翻倍','stoploss':'止损线达朗贝尔','l3all':'4组汇总','default':'旧方案'};
+      var schemeColors = {'a':'#2563eb','b':'#ea580c','weekday':'#7c3aed','bestcombo':'#0ea5e9','lose5mart':'#db2777','stoploss':'#059669','l3all':'#b45309','default':'#64748b'};
       var schemeKeys = Object.keys(stats).sort();
       if (schemeKeys.length) {
         schemeKeys.forEach(function(sch) {
@@ -11367,7 +11665,7 @@ function showLadderSnapshots() {
         h += '<div style="text-align:center;color:#94a3b8;font-size:12px;padding:20px">暂无存档</div>';
       } else {
         list.forEach(function(s) {
-          var sLabel = s.scheme === 'b' ? '方案B' : (s.scheme === 'a' ? '方案A' : (s.scheme === 'weekday' ? '周内择时' : (s.scheme === 'bestcombo' ? '选最优单组合' : (s.scheme === 'lose5mart' ? '连负5期翻倍' : ''))));
+          var sLabel = s.scheme === 'b' ? '方案B' : (s.scheme === 'a' ? '方案A' : (s.scheme === 'weekday' ? '周内择时' : (s.scheme === 'bestcombo' ? '选最优单组合' : (s.scheme === 'lose5mart' ? '连负5期翻倍' : (s.scheme === 'stoploss' ? '止损线达朗贝尔' : (s.scheme === 'l3all' ? '4组汇总' : ''))))));
           var resHtml = '';
           if (s.result === 'pending') {
             resHtml = '<span style="font-size:10px;color:#94a3b8">开奖' + (s.draw_number > 0 ? s.draw_number : '—') + ' · 待开奖</span>';
@@ -11415,7 +11713,7 @@ function showLadderSnapshotDetail(calc_date, scheme) {
       var lines = order.lines || [];
       var h = '<div style="background:#fff;border-radius:12px;padding:12px;max-width:360px;width:92%;max-height:78vh;display:flex;flex-direction:column">';
       h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
-      var schemeLabel = (order.scheme === 'b') ? ' · 方案B' : (order.scheme === 'a' ? ' · 方案A' : (order.scheme === 'weekday' ? ' · 周内择时' : (order.scheme === 'bestcombo' ? ' · 选最优单组合' : (order.scheme === 'lose5mart' ? ' · 连负5期翻倍' : ''))));
+      var schemeLabel = (order.scheme === 'b') ? ' · 方案B' : (order.scheme === 'a' ? ' · 方案A' : (order.scheme === 'weekday' ? ' · 周内择时' : (order.scheme === 'bestcombo' ? ' · 选最优单组合' : (order.scheme === 'lose5mart' ? ' · 连负5期翻倍' : (order.scheme === 'stoploss' ? ' · 止损线达朗贝尔' : (order.scheme === 'l3all' ? ' · 4组汇总' : ''))))));
       h += '<span style="font-weight:700;font-size:14px;color:#1e3a5f">📂 存档 ' + s.calc_date + schemeLabel + '</span>';
       h += '<button onclick="document.getElementById(\'ladder-snapshot-detail-overlay\').remove()" style="border:none;background:none;font-size:18px;color:#999;cursor:pointer">✕</button>';
       h += '</div>';
