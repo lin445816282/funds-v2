@@ -391,6 +391,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
     <button onclick="switchTab('ladder2')">楼梯2</button>
     <button onclick="switchTab('ladderorder')">楼梯下单</button>
     <button onclick="switchTab('ladderorder2')">楼梯下单2</button>
+    <button onclick="switchTab('ladderorder3')">楼梯下单3</button>
     <button onclick="switchTab('conclusions')">📋 结论</button>
   </div>
 
@@ -793,6 +794,11 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   <!-- ====== 楼梯下单2面板（最优方案排名前三 · 选最优单组合/连负5期翻倍/周内择时）====== -->
   <div class="panel" id="panel-ladderorder2">
     <div id="ladder-order2-content"><div class="empty">⏳ 加载中...</div></div>
+  </div>
+
+  <!-- ====== 楼梯下单3面板（投产比>4落地方案）====== -->
+  <div class="panel" id="panel-ladderorder3">
+    <div id="ladder-order3-content"><div class="empty">⏳ 加载中...</div></div>
   </div>
 
   <!-- ====== 结论台账面板（已论证结论·事实层·不重复论证）====== -->
@@ -3992,7 +3998,7 @@ function switchTab(tab) {
   currentTab = tab;
   var btns = document.querySelectorAll('.tab-bar button');
   btns.forEach(function(b,i){
-    b.className = ['alerts','order','sim','kelly','ranking','overview','compare','entry','mgmt','records','ladder','ladder2','ladderorder','ladderorder2','conclusions'][i]===tab ? 'on' : '';
+    b.className = ['alerts','order','sim','kelly','ranking','overview','compare','entry','mgmt','records','ladder','ladder2','ladderorder','ladderorder2','ladderorder3','conclusions'][i]===tab ? 'on' : '';
   });
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('on'); });
   document.getElementById('panel-'+tab).classList.add('on');
@@ -4012,6 +4018,7 @@ function switchTab(tab) {
   if (tab === 'ladder2') { onL2SizeChange(); }
   if (tab === 'ladderorder') { renderLadderOrder(); }
   if (tab === 'ladderorder2') { renderLadderOrder2(); }
+  if (tab === 'ladderorder3') { renderLadderOrder3(); }
   if (tab === 'conclusions') { renderConclusions(); }
 }
 
@@ -9355,6 +9362,7 @@ function renderMonthlyVote() {
   });
   // 按等额收益降序排名（= 投入产出比，下单压制后公平）
   metricRows.sort(function(a, b) { return b.cp - a.cp; });
+  window._mvMetricRows = metricRows;
   var bestProfit = Math.max.apply(null, metricRows.map(function(r){ return r.cp; }));
   var bestDD = Math.min.apply(null, metricRows.map(function(r){ return r.cdd; }));
   var bestRoi = Math.max.apply(null, metricRows.map(function(r){ return r.roi; }));
@@ -10564,6 +10572,451 @@ function autoSaveLadderOrder2() {
     s.fn(true);  // 静默自动存档
   });
 }
+
+// ====== 楼梯下单3 Tab（投产比>4 落地方案 · 选最优单组合/连负5期翻倍/周内择时/止损线20%达朗贝尔）======
+
+// 方案④ 止损线20%达朗贝尔：56组，达朗贝尔5±5，peak>0且回撤>20%停手
+function l3StopLossChips() {
+  var TH = 25;
+  var dayMap = l2BuildDayMap();
+  var dates = Object.keys(dayMap).filter(function(d){ return d >= '2026-05'; }).sort();
+  var combos = l2BuildCombos();
+  var results = [];
+  combos.forEach(function(trio) {
+    var chip = 5, profit = 0, peak = 0, stopped = false, streak = 0, lastWin = null, lastDate = '';
+    for (var i = 1; i < dates.length; i++) {
+      var mP = dayMap[dates[i-1]], mC = dayMap[dates[i]];
+      if (!mP || !mC) continue;
+      var aP=mP[trio[0]],bP=mP[trio[1]],cP=mP[trio[2]];
+      var aC=mC[trio[0]],bC=mC[trio[1]],cC=mC[trio[2]];
+      if (aP===undefined||bP===undefined||cP===undefined||aC===undefined||bC===undefined||cC===undefined) continue;
+      if (stopped) { lastDate = dates[i]; continue; }
+      var prevGood = (aP<=TH?1:0)+(bP<=TH?1:0)+(cP<=TH?1:0);
+      if (prevGood >= 2) continue;
+      var curGood = (aC<=TH?1:0)+(bC<=TH?1:0)+(cC<=TH?1:0);
+      var hit = curGood < 2 ? 1 : 0;
+      profit += hit ? chip*23 : -chip*24;
+      if (profit > peak) peak = profit;
+      lastWin = hit; lastDate = dates[i];
+      if (peak > 0 && (peak - profit)/peak > 0.2) { stopped = true; chip = 0; break; }
+      if (hit) { chip = Math.max(5, chip-5); streak = 0; }
+      else { chip += 5; streak++; }
+    }
+    results.push({trio: trio, chip: chip, stopped: stopped, streak: streak, lastWin: lastWin, lastDate: lastDate});
+  });
+  results.sort(function(a,b){ return b.chip - a.chip; });
+  return results;
+}
+
+// ── 逐日下单记录（2026-05起，前日预测今日，无前视）──
+function l3DailyBestCombo() {
+  var TH = 25;
+  var dayMap = l2BuildDayMap();
+  var dates = Object.keys(dayMap).filter(function(d){ return d >= '2026-05'; }).sort();
+  var combos = l2BuildCombos();
+  var best = null, bestRate = -1;
+  combos.forEach(function(trio) {
+    var nh=0, tt=0;
+    for (var dd=1; dd<dates.length; dd++) {
+      var mP=dayMap[dates[dd-1]], mC=dayMap[dates[dd]];
+      if (!mP||!mC) continue;
+      var aP=mP[trio[0]],bP=mP[trio[1]],cP=mP[trio[2]];
+      var aC=mC[trio[0]],bC=mC[trio[1]],cC=mC[trio[2]];
+      if (aP===undefined||bP===undefined||cP===undefined||aC===undefined||bC===undefined||cC===undefined) continue;
+      var prevGood=(aP<=TH?1:0)+(bP<=TH?1:0)+(cP<=TH?1:0);
+      if (prevGood>=2) continue;
+      var curGood=(aC<=TH?1:0)+(bC<=TH?1:0)+(cC<=TH?1:0);
+      tt++; if (curGood<2) nh++;
+    }
+    var rate = tt ? nh/tt : 0;
+    if (rate>bestRate){bestRate=rate;best=trio;}
+  });
+  var rows=[]; var cum=0;
+  for (var dd=1; dd<dates.length; dd++) {
+    var mP=dayMap[dates[dd-1]], mC=dayMap[dates[dd]];
+    if (!mP||!mC) continue;
+    var aP=mP[best[0]],bP=mP[best[1]],cP=mP[best[2]];
+    var aC=mC[best[0]],bC=mC[best[1]],cC=mC[best[2]];
+    if (aP===undefined||bP===undefined||cP===undefined||aC===undefined||bC===undefined||cC===undefined) continue;
+    var prevGood=(aP<=TH?1:0)+(bP<=TH?1:0)+(cP<=TH?1:0);
+    if (prevGood>=2) { rows.push({date:dates[dd], dir:'追负', hit:null, pnl:0, cum:cum, dayBet:0, hitCount:0, betCount:0, skipped:true}); continue; }
+    var curGood=(aC<=TH?1:0)+(bC<=TH?1:0)+(cC<=TH?1:0);
+    var hit = curGood<2?1:0;
+    var pnl = hit?40*23:-40*24;
+    cum += pnl;
+    rows.push({date:dates[dd], dir:'追负', hit:hit, pnl:pnl, cum:cum, dayBet:40*24, hitCount:hit, betCount:1, skipped:false});
+  }
+  return {best:best, rate:bestRate, rows:rows, total:cum, name:'选最优单组合'};
+}
+
+function l3DailyLose5Mart() {
+  var TH = 25;
+  var dayMap = l2BuildDayMap();
+  var dates = Object.keys(dayMap).filter(function(d){ return d >= '2026-05'; }).sort();
+  var combos = l2BuildCombos();
+  var chips=[10,20,40,80,160];
+  var state = {};
+  combos.forEach(function(t){ state[t.join('+')] = {active:false, chipIdx:0, loseStreak:0}; });
+  var rows=[]; var cum=0;
+  for (var i=0; i<dates.length; i++) {
+    var m = dayMap[dates[i]];
+    if (!m) continue;
+    var dayPnl = 0, dayHitCount = 0, dayBetCount = 0, dayBet = 0;
+    combos.forEach(function(trio) {
+      var a=m[trio[0]],b=m[trio[1]],c=m[trio[2]];
+      if (a===undefined||b===undefined||c===undefined) return;
+      var pgood=(a<=TH?1:0)+(b<=TH?1:0)+(c<=TH?1:0);
+      var negHit = pgood<2?1:0;
+      var st = state[trio.join('+')];
+      if (!st.active) {
+        if (negHit) st.loseStreak=0;
+        else { st.loseStreak++; if (st.loseStreak>=5){ st.active=true; st.chipIdx=0; } }
+      } else {
+        var chip = chips[st.chipIdx];
+        dayBet += chip*24;
+        dayBetCount++;
+        if (negHit) { dayPnl += chip*23; dayHitCount++; st.active=false; st.loseStreak=0; st.chipIdx=0; }
+        else { dayPnl -= chip*24; st.chipIdx++; if (st.chipIdx>=chips.length) st.chipIdx=0; }
+      }
+    });
+    cum += dayPnl;
+    rows.push({date:dates[i], dir:'追负', hit: dayBet>0?(dayHitCount>0?1:0):null, pnl:dayPnl, cum:cum, dayBet:dayBet, hitCount:dayHitCount, betCount:dayBetCount, skipped: dayBet===0});
+  }
+  return {rows:rows, total:cum, name:'连负5期翻倍'};
+}
+
+function l3DailyWeekday() {
+  var TH=25;
+  var dayMap=l2BuildDayMap();
+  var dates=Object.keys(dayMap).filter(function(d){return d>='2026-05';}).sort();
+  var rows=[]; var cum=0;
+  for (var i=1;i<dates.length;i++){
+    var mP=dayMap[dates[i-1]], mC=dayMap[dates[i]];
+    if (!mP||!mC) continue;
+    var wd = new Date(dates[i]+'T00:00:00').getDay();
+    var isWeekend = (wd===5||wd===6||wd===0);
+    var dayPnl=0, dayHitCount=0, dayBetCount=0, dayBet=0;
+    stores.forEach(function(s){
+      var p=mP[s], c=mC[s];
+      if (p===undefined||c===undefined) return;
+      if (isWeekend) {
+        if (p<=TH){ dayBet+=40*25; dayBetCount++; if (c<=TH){dayPnl+=40*22; dayHitCount++;} else {dayPnl-=40*25;} }
+      } else {
+        if (p>TH){ dayBet+=40*24; dayBetCount++; if (c>TH){dayPnl+=40*23; dayHitCount++;} else {dayPnl-=40*24;} }
+      }
+    });
+    cum+=dayPnl;
+    rows.push({date:dates[i], dir:isWeekend?'追正':'追负', hit: dayBet>0?(dayHitCount>0?1:0):null, pnl:dayPnl, cum:cum, dayBet:dayBet, hitCount:dayHitCount, betCount:dayBetCount, skipped:dayBet===0});
+  }
+  return {rows:rows, total:cum, name:'周内择时'};
+}
+
+function l3DailyStopLoss() {
+  var TH=25;
+  var dayMap=l2BuildDayMap();
+  var dates=Object.keys(dayMap).filter(function(d){return d>='2026-05';}).sort();
+  var combos=l2BuildCombos();
+  var state={};
+  combos.forEach(function(t){state[t.join('+')]={chip:5,profit:0,peak:0,stopped:false};});
+  var rows=[]; var cum=0;
+  for (var i=1;i<dates.length;i++){
+    var mP=dayMap[dates[i-1]], mC=dayMap[dates[i]];
+    if (!mP||!mC) continue;
+    var dayPnl=0, dayHitCount=0, dayBetCount=0, dayBet=0;
+    combos.forEach(function(trio){
+      var aP=mP[trio[0]],bP=mP[trio[1]],cP=mP[trio[2]];
+      var aC=mC[trio[0]],bC=mC[trio[1]],cC=mC[trio[2]];
+      if (aP===undefined||bP===undefined||cP===undefined||aC===undefined||bC===undefined||cC===undefined) return;
+      var st=state[trio.join('+')];
+      if (st.stopped) return;
+      var prevGood=(aP<=TH?1:0)+(bP<=TH?1:0)+(cP<=TH?1:0);
+      if (prevGood>=2) return;
+      var curGood=(aC<=TH?1:0)+(bC<=TH?1:0)+(cC<=TH?1:0);
+      var hit=curGood<2?1:0;
+      var chip=st.chip;
+      dayBet+=chip*24;
+      dayBetCount++;
+      st.profit += hit?chip*23:-chip*24;
+      if (st.profit>st.peak) st.peak=st.profit;
+      if (hit){dayPnl+=chip*23;dayHitCount++; st.chip=Math.max(5,st.chip-5);}
+      else {dayPnl-=chip*24; st.chip+=5;}
+      if (st.peak>0 && (st.peak-st.profit)/st.peak>0.2) st.stopped=true;
+    });
+    cum+=dayPnl;
+    rows.push({date:dates[i], dir:'追负', hit:dayBet>0?(dayHitCount>0?1:0):null, pnl:dayPnl, cum:cum, dayBet:dayBet, hitCount:dayHitCount, betCount:dayBetCount, skipped:dayBet===0});
+  }
+  return {rows:rows, total:cum, name:'止损线20%达朗贝尔'};
+}
+
+function l3DailyLog(strategy) {
+  if (strategy === 'bestcombo') return l3DailyBestCombo();
+  if (strategy === 'lose5mart') return l3DailyLose5Mart();
+  if (strategy === 'weekday') return l3DailyWeekday();
+  if (strategy === 'stoploss') return l3DailyStopLoss();
+  return null;
+}
+
+// 分析生成：信号命中率 vs 盈亏平衡点（追负51.06% / 追正53.19%）
+function l3Analysis(strategy, actual, hitRate, sumHit, sumBet) {
+  var lines = [];
+  var negBE = 51.06, posBE = 53.19;
+  // 组命中率 = 底层信号命中率（判断信号 alpha 的正确口径；翻倍/达朗贝尔的"按天胜率"会被杠杆扭曲）
+  var groupRate = sumBet ? (sumHit / sumBet * 100) : hitRate;
+  if (strategy === 'weekday') {
+    var wkPos = actual.filter(function(r){ return r.dir === '追正'; });
+    var wkNeg = actual.filter(function(r){ return r.dir === '追负'; });
+    var posW = wkPos.filter(function(r){ return r.pnl > 0; }).length;
+    var negW = wkNeg.filter(function(r){ return r.pnl > 0; }).length;
+    var posRate = wkPos.length ? (posW / wkPos.length * 100) : 0;
+    var negRate = wkNeg.length ? (negW / wkNeg.length * 100) : 0;
+    lines.push('周末追正 ' + wkPos.length + '天，命中率 ' + posRate.toFixed(1) + '%（平衡点 ' + posBE.toFixed(2) + '%）' + (posRate > posBE ? ' ✅正期望' : ' 🔴负期望'));
+    lines.push('工作日追负 ' + wkNeg.length + '天，命中率 ' + negRate.toFixed(1) + '%（平衡点 ' + negBE.toFixed(2) + '%）' + (negRate > negBE ? ' ✅正期望' : ' 🔴负期望'));
+  } else {
+    lines.push('底层追负信号命中率 ' + groupRate.toFixed(1) + '% vs 盈亏平衡点 ' + negBE.toFixed(2) + '%（命中赚23 / 未中亏24）');
+    if (groupRate > negBE + 2) lines.push('✅ 信号命中率显著高于平衡点，正期望，可继续跟踪');
+    else if (groupRate > negBE) lines.push('🟡 信号略高于平衡点，边际优势，建议轻仓跟踪');
+    else if (groupRate > negBE - 3) lines.push('🔴 信号低于平衡点，负期望，注意风险');
+    else lines.push('⛔ 信号远低于平衡点，持续负期望，建议停用');
+    if (strategy === 'bestcombo') lines.push('⚠️ 该组合为历史最优(样本内选择)，存在前视偏差，60%+命中率未必能样本外复现，建议小仓跟踪验证');
+    if ((strategy === 'lose5mart' || strategy === 'stoploss') && groupRate < negBE) {
+      lines.push('⚠️ 该方案靠加注(翻倍/达朗贝尔)放大盈亏，信号本身无 alpha，表面盈利属杠杆假象，回撤风险高');
+    }
+  }
+  return lines;
+}
+
+// 下单记录弹窗（动态 overlay，复用 showAlert 模式）
+var l3DailyCache = {};
+function showL3Daily(strategy) {
+  var name = MG_STRATEGIES[strategy] ? MG_STRATEGIES[strategy].name : strategy;
+  var log = l3DailyLog(strategy);
+  if (!log || !log.rows.length) { showToast('暂无数据'); return; }
+  var overlay = document.getElementById('l3-daily-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'l3-daily-overlay';
+    overlay.className = 'modal-mask';
+    overlay.onclick = function() { overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  var rows = log.rows;
+  var actual = rows.filter(function(r){ return !r.skipped; });
+  var wins = 0, losses = 0, totalBet = 0, sumHit = 0, sumBet = 0;
+  actual.forEach(function(r){
+    if (r.pnl > 0) wins++; else if (r.pnl < 0) losses++;
+    totalBet += (r.dayBet || 0);
+    sumHit += (r.hitCount || 0); sumBet += (r.betCount || 0);
+  });
+  var hitRate = actual.length ? (wins / actual.length * 100) : 0;
+  var curLoss = 0, curWin = 0;
+  for (var i = rows.length - 1; i >= 0; i--) { if (rows[i].skipped) continue; if (rows[i].pnl < 0) curLoss++; else break; }
+  for (var j = rows.length - 1; j >= 0; j--) { if (rows[j].skipped) continue; if (rows[j].pnl > 0) curWin++; else break; }
+  var maxLoss = Math.min.apply(null, rows.map(function(r){ return r.pnl; }));
+  var maxWin = Math.max.apply(null, rows.map(function(r){ return r.pnl; }));
+  var peak = 0, maxDD = 0;
+  rows.forEach(function(r){ if (r.cum > peak) peak = r.cum; var dd = peak - r.cum; if (dd > maxDD) maxDD = dd; });
+  var analysis = l3Analysis(strategy, actual, hitRate, sumHit, sumBet);
+
+  var h = '<div class="modal-box" onclick="event.stopPropagation()" style="width:95%;max-width:600px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+  h += '<div style="font-size:14px;font-weight:700;color:#1e3a5f">📜 ' + name + ' · 每日记录</div>';
+  h += '<button onclick="document.getElementById(\'l3-daily-overlay\').remove()" style="background:none;border:none;font-size:18px;cursor:pointer;color:#94a3b8;padding:0 4px">✕</button>';
+  h += '</div>';
+  h += '<div style="font-size:11px;color:#8899b0;margin-bottom:8px">2026-05-01 起 · 共 ' + rows.length + ' 天（下注 ' + actual.length + ' 天 / 空仓 ' + (rows.length - actual.length) + ' 天）</div>';
+
+  // 汇总卡片
+  h += '<div style="background:#f0f9ff;border:1px solid #dbeafe;border-radius:10px;padding:10px;margin-bottom:8px">';
+  h += '<div style="font-size:12px;font-weight:700;color:#1e40af;margin-bottom:6px">📊 汇总情况</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px">';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">累计盈亏</div><div style="font-weight:700;color:' + (log.total>=0?'#16a34a':'#dc2626') + '">' + (log.total>=0?'+':'') + log.total.toLocaleString() + '</div></div>';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">命中率(天)</div><div style="font-weight:700;color:' + (hitRate>=51.06?'#16a34a':'#dc2626') + '">' + hitRate.toFixed(1) + '%</div></div>';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">胜/负天数</div><div style="font-weight:700"><span style="color:#16a34a">' + wins + '</span>/<span style="color:#dc2626">' + losses + '</span></div></div>';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">当前' + (curLoss>0?'连亏':'连盈') + '</div><div style="font-weight:700;color:' + (curLoss>0?'#dc2626':'#16a34a') + '">' + (curLoss>0?curLoss:curWin) + ' 天</div></div>';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">累计下单额</div><div style="font-weight:700;color:#1e3a5f">' + totalBet.toLocaleString() + '</div></div>';
+  h += '<div style="background:#fff;border-radius:8px;padding:6px"><div style="color:#8899b0;font-size:10px">最大回撤</div><div style="font-weight:700;color:#d97706">' + maxDD.toLocaleString() + '</div></div>';
+  h += '</div>';
+  if (sumBet > 0) {
+    h += '<div style="font-size:11px;color:#5a6b85;margin-top:6px">命中组数 <b>' + sumHit + '</b> / 下注组数 <b>' + sumBet + '</b>（命中率 ' + (sumBet?(sumHit/sumBet*100).toFixed(1):0) + '%） · 最大单日 ' + (maxWin>=-maxLoss?'盈':'亏') + ' <b>' + (maxWin>=-maxLoss?maxWin:maxLoss).toLocaleString() + '</b></div>';
+  }
+  h += '</div>';
+
+  // 分析
+  h += '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px;margin-bottom:8px">';
+  h += '<div style="font-size:12px;font-weight:700;color:#92400e;margin-bottom:6px">🔍 分析情况</div>';
+  analysis.forEach(function(line){ h += '<div style="font-size:11px;color:#5a4a1a;line-height:1.7;padding:2px 0">' + line + '</div>'; });
+  h += '</div>';
+
+  // 每日记录表
+  h += '<div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:10px">';
+  h += '<thead><tr style="background:#f0f3f8;position:sticky;top:0"><th style="padding:4px;text-align:left">日期</th><th style="padding:4px;text-align:center">方向</th><th style="padding:4px;text-align:right">下单</th><th style="padding:4px;text-align:center">命中/下注</th><th style="padding:4px;text-align:right">当日盈亏</th><th style="padding:4px;text-align:right">累计盈亏</th></tr></thead><tbody>';
+  var shown = rows.slice().reverse().slice(0, 400);
+  shown.forEach(function(r){
+    var dirTxt = r.skipped ? '—' : (r.dir || '追负');
+    var dirCls = r.dir === '追正' ? '#16a34a' : '#2563eb';
+    var pnlCls = r.pnl > 0 ? '#16a34a' : (r.pnl < 0 ? '#dc2626' : '#8899b0');
+    var cumCls = r.cum >= 0 ? '#16a34a' : '#dc2626';
+    var hb = r.skipped ? '—' : (r.hitCount + '/' + r.betCount);
+    h += '<tr style="' + (r.skipped ? 'opacity:.5' : '') + '">';
+    h += '<td style="padding:3px 4px">' + r.date + '</td>';
+    h += '<td style="padding:3px;text-align:center;color:' + dirCls + ';font-weight:600">' + dirTxt + '</td>';
+    h += '<td style="padding:3px;text-align:right;color:#5a6b85">' + (r.dayBet || 0).toLocaleString() + '</td>';
+    h += '<td style="padding:3px;text-align:center;color:#5a6b85">' + hb + '</td>';
+    h += '<td style="padding:3px;text-align:right;color:' + pnlCls + ';font-weight:700">' + (r.pnl>=0?'+':'') + r.pnl.toLocaleString() + '</td>';
+    h += '<td style="padding:3px;text-align:right;color:' + cumCls + ';font-weight:700">' + (r.cum>=0?'+':'') + r.cum.toLocaleString() + '</td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+  h += '</div>';
+  overlay.innerHTML = h;
+  overlay.classList.remove('hide');
+}
+
+
+function renderLadderOrder3() {
+  var el = document.getElementById('ladder-order3-content');
+  if (!el) return;
+  el.innerHTML = '<div class="empty">⏳ 加载中...</div>';
+  // 先确保排名数据已算（renderMonthlyVote 会写 window._mvMetricRows）
+  authFetch('/api/simulate/order-sheet?days=30&_t=' + Date.now())
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">⚠️ ' + d.error + '</div>'; return; }
+      ladderOrderSheetData = d;
+      if (!window._mvMetricRows) { renderMonthlyVote(); }
+      renderLadderOrder3UI(d);
+    })
+    .catch(function(e){ el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">加载失败: ' + e.message + '</div>'; });
+}
+
+function renderLadderOrder3UI(d) {
+  var el = document.getElementById('ladder-order3-content');
+  var numbers = d.numbers || {};
+  var metricRows = window._mvMetricRows || [];
+  // 筛选：排名前5 且 投入产出比 > 4%
+  var picked = metricRows.slice(0, 5).filter(function(r){ return r.roi > 4; });
+  var h = '';
+  h += '<div style="background:linear-gradient(135deg,#0e7490,#155e75);border-radius:12px;padding:10px 12px;margin:8px 12px;color:#fff">';
+  h += '<div style="font-size:13px;font-weight:700">📊 楼梯下单3 · 投产比>4 落地方案（' + picked.length + '个）</div>';
+  h += '<div style="font-size:10px;opacity:.85;margin-top:4px">筛选：最优方案排名（下单等额10万）前5 且 投入产出比>4% · 数据 2026-05 起</div>';
+  h += '</div>';
+
+  if (!picked.length) {
+    h += '<div style="text-align:center;color:#8899b0;padding:20px">暂无投入产出比>4%的方案（当前前5名的投产比均未达标）</div>';
+    el.innerHTML = h; return;
+  }
+
+  // ① 新排名
+  var maxRoi = Math.max.apply(null, picked.map(function(r){ return r.roi; }));
+  var maxRrr = Math.max.apply(null, picked.map(function(r){ return r.rrr; }));
+  var minDr = Math.min.apply(null, picked.map(function(r){ return r.dr; }));
+  var maxCp = Math.max.apply(null, picked.map(function(r){ return r.cp; }));
+  h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:13px;font-weight:700;color:#0e7490;margin-bottom:8px">🏆 投产比>4 方案排名（下单等额10万）</div>';
+  picked.forEach(function(r, idx) {
+    var name = MG_STRATEGIES[r.k] ? MG_STRATEGIES[r.k].name : r.k;
+    var medal = ['🥇','🥈','🥉','4.'][idx];
+    function vv(isBest, text, color) { return isBest ? '<b style="color:#2563eb;font-size:13px">'+text+'</b>' : '<b style="color:'+color+';font-size:11px">'+text+'</b>'; }
+    h += '<div style="padding:6px 8px;border-bottom:1px solid #f3f4f6;font-size:12px">';
+    h += '<div style="display:flex;align-items:center;gap:8px">';
+    h += '<span style="width:28px;font-weight:700;color:#0e7490">' + medal + '</span>';
+    h += '<span style="flex:1;font-weight:600">' + name + '</span>';
+    h += '<span style="font-weight:700;color:#16a34a">' + (r.cp>=0?'+':'') + Math.round(r.cp).toLocaleString() + '</span>';
+    h += '</div>';
+    h += '<div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;font-size:11px;color:#5a6b85">';
+    h += '<span>收益(等额) ' + vv(r.cp===maxCp, (r.cp>=0?'+':'')+Math.round(r.cp).toLocaleString(), '#16a34a') + '</span>';
+    h += '<span>投入产出比 ' + vv(r.roi===maxRoi, (r.roi>=0?'+':'')+r.roi.toFixed(2)+'%', (r.roi>=0?'#16a34a':'#dc2626')) + '</span>';
+    h += '<span>风险收益比 ' + vv(r.rrr===maxRrr, (r.rrr>=0?'+':'')+r.rrr.toFixed(2), (r.rrr>=0?'#16a34a':'#dc2626')) + '</span>';
+    h += '<span>回撤率 ' + vv(r.dr===minDr, r.dr.toFixed(2)+'%', '#d97706') + '</span>';
+    h += '<span>回撤(等额) ' + Math.round(r.cdd).toLocaleString() + '</span>';
+    h += '</div>';
+    h += '</div>';
+  });
+  h += '</div>';
+
+  // ② 下单指南（4方案，前3复用 l2，第4新增 stoploss）
+  // 方案1 选最优单组合
+  var bc = l2BestCombo(numbers);
+  h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥇 ① 选最优单组合 <span style="color:#0e7490;font-size:11px">投产比 42.68%</span></div>';
+  h += '<button onclick="showL3Daily(\'bestcombo\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
+  h += '</div>';
+  h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 8px">历史追负命中率最高的3店组合，固定40筹码追负(24号)</div>';
+  if (bc.trio) {
+    h += '<div style="font-size:11px;margin-bottom:6px">最优组合 <b style="color:#2563eb">' + bc.trio.join('+') + '</b> · 追负命中率 <b>' + (bc.rate*100).toFixed(1) + '%</b></div>';
+    h += '<div style="font-size:11px;color:#5a6b85;margin-bottom:6px">🎯 号码（' + bc.nums.length + '号）：' + l2NumsHtml(bc.nums, 'l3bc') + '</div>';
+    h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">下单 ' + bc.nums.length + '号 × ' + bc.chip + ' = <b style="color:#dc2626">' + bc.orderAmt + '</b></div>';
+  } else { h += '<div style="text-align:center;color:#8899b0;font-size:12px;padding:8px">暂无最优组合</div>'; }
+  h += '</div>';
+
+  // 方案2 连负5期翻倍
+  var lm = l2Lose5Mart(numbers);
+  var lmTotal = 0; lm.forEach(function(r){ lmTotal += r.orderAmt; });
+  h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥈 ② 连负5期→翻倍 10-20-40-80-160 <span style="color:#0e7490;font-size:11px">投产比 18.72%</span></div>';
+  h += '<button onclick="showL3Daily(\'lose5mart\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
+  h += '</div>';
+  h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 8px">连负≥5期触发翻倍追号，命中即停；当前' + lm.length + '组处于追号中</div>';
+  if (lm.length) {
+    h += '<div style="max-height:220px;overflow-y:auto;margin-bottom:8px">';
+    lm.forEach(function(r, idx) {
+      h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px;border-bottom:1px solid #f3f4f6;font-size:11px">';
+      h += '<span style="font-weight:600">' + r.trio.join('+') + '</span>';
+      h += '<span style="color:#5a6b85">' + r.nums.length + '号 × <b style="color:#dc2626">' + r.chip + '</b></span>';
+      h += '<span style="font-weight:700;color:#dc2626">' + r.orderAmt + '</span>';
+      h += '</div>';
+    });
+    h += '</div>';
+    h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">总下单 <b style="color:#dc2626">' + lmTotal + '</b></div>';
+  } else { h += '<div style="text-align:center;color:#8899b0;font-size:12px;padding:8px">当前无组合触发追号（连负均未满5期）</div>'; }
+  h += '</div>';
+
+  // 方案3 周内择时
+  var wd = l2Weekday(numbers);
+  h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥉 ③ 周内择时(周末正/工作日负) <span style="color:#0e7490;font-size:11px">投产比 9.64%</span></div>';
+  h += '<button onclick="showL3Daily(\'weekday\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
+  h += '</div>';
+  h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 6px">' + (wd.lastDate||'—') + ' · <b>' + l2WeekName(wd.wd) + '</b> → <b style="color:' + (wd.mode.indexOf('追正')>=0?'#16a34a':'#2563eb') + '">' + wd.mode + '</b></div>';
+  h += '<div style="font-size:11px;color:#5a6b85;margin-bottom:6px">🎯 号码（' + wd.nums.length + '号）：' + l2NumsHtml(wd.nums, 'l3wd') + '</div>';
+  h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">下单 ' + wd.nums.length + '号 × ' + wd.chip + ' = <b style="color:#dc2626">' + wd.orderAmt + '</b></div>';
+  h += '</div>';
+
+  // 方案4 止损线20%达朗贝尔
+  var sl = l3StopLossChips();
+  var slActive = sl.filter(function(r){ return !r.stopped && r.chip > 0; });
+  var slStopped = sl.filter(function(r){ return r.stopped; });
+  var slTotal = 0;
+  slActive.forEach(function(r) { var nums = l2ComboNumbers(r.trio, numbers, 24); r.nums = nums; r.orderAmt = r.chip * nums.length; slTotal += r.orderAmt; });
+  h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">④ 止损线20%达朗贝尔(5±5) <span style="color:#0e7490;font-size:11px">投产比 5.73%</span></div>';
+  h += '<button onclick="showL3Daily(\'stoploss\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
+  h += '</div>';
+  h += '<div style="font-size:10px;color:#8899b0;margin:2px 0 8px">达朗贝尔5±5 + 回撤>20%停手；当前 ' + slActive.length + '组活跃 · ' + slStopped.length + '组已停手</div>';
+  if (slActive.length) {
+    h += '<div style="max-height:220px;overflow-y:auto;margin-bottom:8px">';
+    slActive.forEach(function(r, idx) {
+      h += '<div style="padding:4px;border-bottom:1px solid #f3f4f6;font-size:11px">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+      h += '<span style="font-weight:600">' + r.trio.join('+') + '</span>';
+      h += '<span style="color:#5a6b85">' + (r.nums||[]).length + '号 × <b style="color:#dc2626">' + r.chip + '</b></span>';
+      h += '<span style="font-weight:700;color:#dc2626">' + r.orderAmt + '</span>';
+      h += '</div>';
+      h += '<div style="font-size:10px;color:#5a6b85;line-height:1.6;margin-top:2px">' + l2NumsHtml(r.nums, 'l3sl'+idx) + '</div>';
+      h += '</div>';
+    });
+    h += '</div>';
+    h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">总下单 <b style="color:#dc2626">' + slTotal + '</b></div>';
+  } else { h += '<div style="text-align:center;color:#8899b0;font-size:12px;padding:8px">当前无活跃组合（全部停手）</div>'; }
+  h += '</div>';
+
+  el.innerHTML = h;
+}
+
 
 // 周内择时列表弹窗（56组明细 + 1-49金额网格 + 复制/乘除/前24号，功能对齐楼梯下单列表）
 var weekdayOrderFactor = parseFloat(localStorage.getItem('weekday_order_factor') || '1') || 1;
