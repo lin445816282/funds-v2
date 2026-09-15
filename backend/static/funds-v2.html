@@ -11058,11 +11058,21 @@ function showL3AllDaily() {
 }
 
 // 4组汇总下单列表弹窗（合并号码 + 4组明细）
+// 4组汇总下单列表弹窗（合并号码 + 4组明细 + 乘除/重置/前24号/非0号，对齐楼梯下单列表）
+var l3allOrderFactor = parseFloat(localStorage.getItem('l3all_order_factor') || '1') || 1;
+var l3allOrderManual = null;
+var l3allOrderData = {amounts: {}, total: 0, date: ''};
+
 function showL3AllModal() {
   var d = ladderOrderSheetData;
   if (!d) { showToast('⚠️ 数据未加载'); return; }
   var numbers = d.numbers || {};
   var all = l3AllOrder(numbers);
+  // 手动缩放覆盖（乘除操作后）
+  var useAmounts = all.numAmounts, useTotal = all.total;
+  if (l3allOrderManual) { useAmounts = l3allOrderManual.amounts; useTotal = l3allOrderManual.total; }
+  l3allOrderData = {amounts: useAmounts, total: useTotal, date: d.date || ''};
+
   var overlay = document.getElementById('l3-all-order-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -11073,10 +11083,10 @@ function showL3AllModal() {
   }
   var grid = '<table style="border-collapse:collapse;font-size:10px;margin:0 auto;line-height:1">';
   for (var n = 1; n <= 49; n++) {
-    var amt = all.numAmounts[n] || 0;
+    var amt = useAmounts[n] || 0;
     grid += '<tr><td style="padding:0 6px;border:1px solid #e5e7eb;text-align:center;color:#333">' + n + '</td><td style="padding:0 6px;border:1px solid #e5e7eb;text-align:right;color:#333">' + (amt || 0) + '</td></tr>';
   }
-  grid += '<tr><td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:center;font-weight:700;font-size:10px;color:#333">合计</td><td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:right;font-weight:700;font-size:10px;color:#333">' + all.total + '</td></tr>';
+  grid += '<tr><td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:center;font-weight:700;font-size:10px;color:#333">合计</td><td style="padding:2px 6px;border:1px solid #e5e7eb;text-align:right;font-weight:700;font-size:10px;color:#333">' + useTotal + '</td></tr>';
   grid += '</table>';
   var h = '<div style="background:#fff;border-radius:12px;padding:12px;max-width:360px;width:92%;max-height:82vh;display:flex;flex-direction:column">';
   h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
@@ -11085,6 +11095,16 @@ function showL3AllModal() {
   h += '<button onclick="copyL3AllOrderTable()" style="border:1px solid #e5e7eb;border-radius:6px;background:#f0f7ff;padding:2px 8px;font-size:11px;color:#2563eb;cursor:pointer;white-space:nowrap">📋 复制</button>';
   h += '<button onclick="document.getElementById(\'l3-all-order-overlay\').remove()" style="border:none;background:none;font-size:18px;color:#999;cursor:pointer">✕</button>';
   h += '</div></div>';
+  h += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;justify-content:center">';
+  h += '<input id="l3all-order-num-factor" type="text" inputmode="numeric" pattern="[0-9]*" value="' + l3allOrderFactor + '" oninput="saveL3AllOrderFactor(this.value)" style="width:40px;padding:2px 4px;border:1px solid #e5e7eb;border-radius:4px;font-size:10px;text-align:center">';
+  h += '<button onclick="multiplyL3AllOrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer">× 乘</button>';
+  h += '<button onclick="divideL3AllOrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#fef2f2;font-size:10px;color:#dc2626;cursor:pointer">÷ 除</button>';
+  h += '<button onclick="resetL3AllOrderAmounts()" style="padding:2px 8px;border:1px solid #e5e7eb;border-radius:4px;background:#f8fafc;font-size:10px;color:#5a6b85;cursor:pointer">🔄 重置</button>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:4px;justify-content:center;margin-bottom:6px">';
+  h += '<button onclick="showL3AllTop24()" style="flex:1;padding:3px 6px;border:1px solid #2563eb;border-radius:4px;background:#eff6ff;font-size:10px;color:#1e40af;cursor:pointer">📌 前24号</button>';
+  h += '<button onclick="showL3AllNonZero()" style="flex:1;padding:3px 6px;border:1px solid #16a34a;border-radius:4px;background:#f0fdf4;font-size:10px;color:#16a34a;cursor:pointer">📌 非0号</button>';
+  h += '</div>';
   h += '<div style="flex:1;overflow-y:auto">';
   all.groups.forEach(function(g){
     var uid = 'l3all' + g.name.replace(/[^0-9]/g, '');
@@ -11095,25 +11115,69 @@ function showL3AllModal() {
   h += '<div style="font-size:11px;font-weight:700;color:#1e3a5f;margin:6px 0 4px">💰 合并 1-49 号下单金额（4组累加）</div>';
   h += grid;
   h += '</div>';
-  h += '<div style="text-align:center;font-size:13px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">4组总下单 <b style="color:#dc2626">' + all.total + '</b></div>';
+  h += '<div style="text-align:center;font-size:13px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">4组总下单 <b style="color:#dc2626">' + useTotal + '</b></div>';
   h += '</div>';
   overlay.innerHTML = h;
   overlay.style.display = 'flex';
 }
 
-// 4组汇总下单复制
+// 4组汇总下单复制（49行）
 function copyL3AllOrderTable() {
-  var d = ladderOrderSheetData;
-  if (!d) return;
-  var all = l3AllOrder(d.numbers || {});
+  var amounts = l3allOrderData.amounts || {};
+  var total = l3allOrderData.total || 0;
   var lines = [];
-  for (var n = 1; n <= 49; n++) lines.push(n + '\t' + (all.numAmounts[n] || 0));
-  lines.push('合计\t' + all.total);
+  for (var n = 1; n <= 49; n++) lines.push(n + '\t' + (amounts[n] || 0));
+  lines.push('合计\t' + total);
   navigator.clipboard.writeText(lines.join('\n')).then(function() {
     var btns = document.querySelectorAll('[onclick="copyL3AllOrderTable()"]');
     for (var i = 0; i < btns.length; i++) { btns[i].textContent = '✅ 已复制'; setTimeout(function(b) { b.textContent = '📋 复制'; }, 1500, btns[i]); }
   }).catch(function() { alert('复制失败，请手动选择'); });
 }
+
+// 4组汇总排序金额 + 前24号/非0号
+function getL3AllSortedAmounts() {
+  var amounts = l3allOrderData.amounts || {};
+  var list = [];
+  for (var n = 1; n <= 49; n++) if ((amounts[n] || 0) > 0) list.push({num: n, amt: amounts[n]});
+  list.sort(function(a, b) { return b.amt - a.amt; });
+  return list;
+}
+function copyL3AllTop24() { copyLadderNums(getL3AllSortedAmounts().slice(0, 24), '[onclick="copyL3AllTop24()"]', '📋 复制号码'); }
+function copyL3AllNonZero() { copyLadderNums(getL3AllSortedAmounts(), '[onclick="copyL3AllNonZero()"]', '📋 复制号码'); }
+function copyL3AllRest24() { copyLadderNums(getL3AllSortedAmounts().slice(24), '[onclick="copyL3AllRest24()"]', '📋 复制非前24号码'); }
+function showL3AllTop24() { showLadderNumPopup('📌 筹码前24号', getL3AllSortedAmounts().slice(0, 24), 'copyL3AllTop24'); }
+function showL3AllNonZero() {
+  var extra = '<button onclick="copyL3AllRest24()" style="padding:6px 14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;font-size:12px;color:#b45309;cursor:pointer">📋 复制非前24号码</button>';
+  showLadderNumPopup('📌 非0号', getL3AllSortedAmounts(), 'copyL3AllNonZero', extra);
+}
+function saveL3AllOrderFactor(v) {
+  var f = parseFloat(v);
+  if (!isNaN(f) && f > 0) { l3allOrderFactor = f; localStorage.setItem('l3all_order_factor', String(f)); }
+}
+function getL3AllOrderFactor() {
+  var inp = document.getElementById('l3all-order-num-factor');
+  if (!inp) return null;
+  var v = parseFloat(inp.value);
+  return (isNaN(v) || v <= 0) ? null : v;
+}
+function applyL3AllOrderTransform(op) {
+  var factor = getL3AllOrderFactor();
+  if (!factor) return;
+  var amts = l3allOrderData.amounts || {};
+  var newAmounts = {}, newTotal = 0;
+  for (var n = 1; n <= 49; n++) {
+    if (amts[n] > 0) {
+      newAmounts[n] = Math.round(op === 'mul' ? amts[n] * factor : amts[n] / factor);
+      newTotal += newAmounts[n];
+    }
+  }
+  l3allOrderManual = {amounts: newAmounts, total: newTotal};
+  showL3AllModal();
+}
+function multiplyL3AllOrderAmounts() { applyL3AllOrderTransform('mul'); }
+function divideL3AllOrderAmounts() { applyL3AllOrderTransform('div'); }
+function resetL3AllOrderAmounts() { l3allOrderManual = null; showL3AllModal(); }
+
 
 // 4组汇总存档（scheme='l3all'）
 function saveL3AllSnapshot(silent) {
