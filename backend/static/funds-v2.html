@@ -10124,11 +10124,12 @@ function l2Weekday(numbers) {
   var isWeekend = (wd === 5 || wd === 6 || wd === 0);
   var threshold = isWeekend ? 25 : 24;
   var mode = isWeekend ? '追正(25号)' : '追负(24号)';
+  // 3选2：与楼梯下单一致（computeLadderNumbers 的3店组合投票≥2），4组号码并集
+  var groupNums = computeLadderNumbers(numbers, threshold).groupNums;
   var allNums = {};
-  stores.forEach(function(st) {
-    var arr = (numbers[st] || {})[String(threshold)] || [];
-    arr.forEach(function(n) { allNums[n] = 1; });
-  });
+  for (var key in groupNums) {
+    groupNums[key].forEach(function(n) { allNums[n] = 1; });
+  }
   var nums = Object.keys(allNums).map(Number).sort(function(a, b) { return a - b; });
   return { mode: mode, wd: wd, lastDate: lastDate, threshold: threshold, nums: nums, chip: 40, orderAmt: nums.length * 40 };
 }
