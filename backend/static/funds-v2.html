@@ -11261,6 +11261,16 @@ function renderLadderOrder3UI(d) {
   var metricRows = window._mvMetricRows || [];
   // 筛选：排名前5 且 投入产出比 > 4%
   var picked = metricRows.slice(0, 5).filter(function(r){ return r.roi > 4; });
+  // 动态投产比：从 metricRows 取对应方案 roi（与顶部排名「投入产出比」一致）
+  function roiOf(key) {
+    for (var i = 0; i < metricRows.length; i++) {
+      if (metricRows[i].k === key) {
+        var v = metricRows[i].roi;
+        return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+      }
+    }
+    return '—';
+  }
   var h = '';
   h += '<div style="background:linear-gradient(135deg,#0e7490,#155e75);border-radius:12px;padding:10px 12px;margin:8px 12px;color:#fff">';
   h += '<div style="font-size:13px;font-weight:700">📊 楼梯下单3 · 投产比>4 落地方案（' + picked.length + '个）</div>';
@@ -11305,7 +11315,7 @@ function renderLadderOrder3UI(d) {
   var bc = l2BestCombo(numbers);
   h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
   h += '<div style="display:flex;justify-content:space-between;align-items:center">';
-  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥇 ① 选最优单组合 <span style="color:#0e7490;font-size:11px">投产比 42.68%</span></div>';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥇 ① 选最优单组合 <span style="color:#0e7490;font-size:11px">投产比 ' + roiOf('bestcombo') + '</span></div>';
   h += '<button onclick="showL3Daily(\'bestcombo\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
   h += '<button onclick="saveBestComboSnapshot()" style="padding:3px 10px;border:1px solid #059669;background:#ecfdf5;color:#059669;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">💾 存档</button>';
   h += '</div>';
@@ -11322,7 +11332,7 @@ function renderLadderOrder3UI(d) {
   var lmTotal = 0; lm.forEach(function(r){ lmTotal += r.orderAmt; });
   h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
   h += '<div style="display:flex;justify-content:space-between;align-items:center">';
-  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥈 ② 连负5期→翻倍 10-20-40-80-160 <span style="color:#0e7490;font-size:11px">投产比 18.72%</span></div>';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥈 ② 连负5期→翻倍 10-20-40-80-160 <span style="color:#0e7490;font-size:11px">投产比 ' + roiOf('lose5mart') + '</span></div>';
   h += '<button onclick="showL3Daily(\'lose5mart\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
   h += '<button onclick="saveLose5MartSnapshot()" style="padding:3px 10px;border:1px solid #059669;background:#ecfdf5;color:#059669;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">💾 存档</button>';
   h += '</div>';
@@ -11345,7 +11355,7 @@ function renderLadderOrder3UI(d) {
   var wd = l2Weekday(numbers);
   h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
   h += '<div style="display:flex;justify-content:space-between;align-items:center">';
-  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥉 ③ 周内择时(周末正/工作日负) <span style="color:#0e7490;font-size:11px">投产比 9.64%</span></div>';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🥉 ③ 周内择时(周末正/工作日负) <span style="color:#0e7490;font-size:11px">投产比 ' + roiOf('weekday') + '</span></div>';
   h += '<button onclick="showL3Daily(\'weekday\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
   h += '<button onclick="saveWeekdaySnapshot()" style="padding:3px 10px;border:1px solid #059669;background:#ecfdf5;color:#059669;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">💾 存档</button>';
   h += '</div>';
@@ -11362,7 +11372,7 @@ function renderLadderOrder3UI(d) {
   slActive.forEach(function(r) { var nums = l2ComboNumbers(r.trio, numbers, 24); r.nums = nums; r.orderAmt = r.chip * nums.length; slTotal += r.orderAmt; });
   h += '<div style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
   h += '<div style="display:flex;justify-content:space-between;align-items:center">';
-  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">④ 止损线20%达朗贝尔(5±5) <span style="color:#0e7490;font-size:11px">投产比 5.73%</span></div>';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">④ 止损线20%达朗贝尔(5±5) <span style="color:#0e7490;font-size:11px">投产比 ' + roiOf('stoploss') + '</span></div>';
   h += '<button onclick="showL3Daily(\'stoploss\')" style="padding:3px 10px;border:1px solid #0e7490;background:#ecfeff;color:#0e7490;border-radius:6px;font-size:11px;cursor:pointer">📜 下单记录</button>';
   h += '<button onclick="saveStopLossSnapshot()" style="padding:3px 10px;border:1px solid #059669;background:#ecfdf5;color:#059669;border-radius:6px;font-size:11px;cursor:pointer;margin-left:4px">💾 存档</button>';
   h += '</div>';
