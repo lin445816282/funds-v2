@@ -2511,26 +2511,21 @@ def get_l3_bestcombo_daily():
     def ranks(m, trio):
         return [m.get(t) for t in trio]
 
-    # 选最优组合（方向命中率，前日预测今日，追负）
+    # 选最优组合（当天口径：追负状态占比最高，与前端 l2BestCombo 一致）
     best = None
     bestRate = -1.0
     for trio in combos:
         nh = tt = 0
-        for dd in range(1, len(dates)):
-            mP = dayMap.get(dates[dd - 1])
-            mC = dayMap.get(dates[dd])
-            if not mP or not mC:
+        for d in dates:
+            m = dayMap.get(d)
+            if not m:
                 continue
-            aP, bP, cP = ranks(mP, trio)
-            aC, bC, cC = ranks(mC, trio)
-            if None in (aP, bP, cP, aC, bC, cC):
+            a, b, c = ranks(m, trio)
+            if None in (a, b, c):
                 continue
-            prevGood = (1 if aP <= TH else 0) + (1 if bP <= TH else 0) + (1 if cP <= TH else 0)
-            if prevGood >= 2:
-                continue
-            curGood = (1 if aC <= TH else 0) + (1 if bC <= TH else 0) + (1 if cC <= TH else 0)
+            good = (1 if a <= TH else 0) + (1 if b <= TH else 0) + (1 if c <= TH else 0)
             tt += 1
-            if curGood < 2:
+            if good < 2:
                 nh += 1
         rate = nh / tt if tt else 0.0
         if rate > bestRate:
@@ -2560,5 +2555,18 @@ def get_l3_bestcombo_daily():
             rows.append({"date": d, "dir": "追负", "hit": None, "pnl": 0, "cum": cum,
                          "dayBet": bet, "hitCount": 0, "betCount": 1,
                          "skipped": False, "nums": nums, "draw": None, "hitNum": None})
+
+    # 追加「今天」：号码已拉取但排位/开奖尚未生成 → 待开记录（同步记录当天号码 + 最优组合）
+    try:
+        latest_num_date = _get_latest_numbers_date()
+    except Exception:
+        latest_num_date = None
+    last_row_date = rows[-1]["date"] if rows else ""
+    if latest_num_date and latest_num_date > last_row_date:
+        nums_today = combo_nums(best, nums24.get(latest_num_date) or {})
+        bet_today = 40 * len(nums_today)
+        rows.append({"date": latest_num_date, "dir": "追负", "hit": None, "pnl": 0, "cum": cum,
+                     "dayBet": bet_today, "hitCount": 0, "betCount": 1,
+                     "skipped": False, "nums": nums_today, "draw": drawMap.get(latest_num_date), "hitNum": None})
 
     return {"best": best, "rate": bestRate, "rows": rows, "total": cum, "name": "选最优单组合"}
