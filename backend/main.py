@@ -621,7 +621,7 @@ async def index_predictions(days: int = 30):
     return {"data": [dict(r) for r in rows], "count": len(rows)}
 
 # ═══════════════ 总部出手模拟 ═══════════════
-from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_optimization_log, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts, save_order_history, get_order_history, ack_order_history, load_data, optimize, STORE_NAMES, batch_generate_guides, generate_guides_only, run_single_day, run_single_guide, run_le25_optimize
+from simulate import get_simulate_data, run_optimize, run_manual, run_daily_guide, get_guide_history, get_optimization_log, get_order_sheet, pull_threshold_numbers, list_order_numbers, delete_order_numbers_by_date, get_order_numbers_detail, save_order_amounts, get_order_amounts, save_order_history, get_order_history, ack_order_history, load_data, optimize, STORE_NAMES, batch_generate_guides, generate_guides_only, run_single_day, run_single_guide, run_le25_optimize, get_l3_bestcombo_daily
 
 @app.get("/api/simulate/data")
 async def api_simulate_data(request: Request, days: int = 90):
@@ -684,6 +684,13 @@ async def api_order_sheet(request: Request, days: int = 90, date: str = None, gu
     await require_auth(request)
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(_executor, lambda: get_order_sheet(days, target_date=date, guide_date=guide_date))
+    return JSONResponse(content=result, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+
+@app.get("/api/simulate/l3-bestcombo-daily")
+async def api_l3_bestcombo_daily(request: Request):
+    await require_auth(request)
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(_executor, get_l3_bestcombo_daily)
     return JSONResponse(content=result, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.post("/api/simulate/pull-numbers")

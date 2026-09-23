@@ -2452,3 +2452,113 @@ def run_single_guide(bet_date):
         return {"ok": True, "date": bet_date, "mode_count": ok}
     else:
         return {"ok": False, "date": bet_date, "error": "正反都失败"}
+
+
+def get_l3_bestcombo_daily():
+    """「选最优单组合」逐日实际下单记录（号码命中口径）。
+    选组合：2026-05起，前日排位预测今日方向（追负），命中率最高的3店组合。
+    命中：开奖号是否在「该组合3家24码≥2票」的下单号码里。
+    盈亏：命中 = 40×47 − 40×号码数；未中 = −40×号码数；无开奖号 = 待开奖。"""
+    TH = 25
+    db = sqlite3.connect(FUNDS_DB)
+    db.row_factory = sqlite3.Row
+
+    # 排位 dayMap[date][store] = rank
+    dayMap = {}
+    for r in db.execute(
+        "SELECT date, store, amount FROM records WHERE category=? AND date>=? ORDER BY date",
+        (RANKING_CAT, "2026-05"),
+    ):
+        if r["store"] is None:
+            continue
+        dayMap.setdefault(r["date"], {})[r["store"]] = r["amount"]
+    dates = sorted(d for d in dayMap if d >= "2026-05")
+
+    # 开奖号 drawMap[date] = draw_number
+    drawMap = {}
+    for r in db.execute("SELECT date, draw_number FROM draw_records"):
+        drawMap[r["date"]] = r["draw_number"]
+
+    # 号码 nums24[date][store] = [号码]（threshold=24，追负 Bottom24）
+    nums24 = {}
+    for r in db.execute("SELECT date, collection_id, numbers_json FROM order_numbers WHERE threshold=24"):
+        store = COLLECTION_TO_STORE.get(r["collection_id"])
+        if not store:
+            continue
+        try:
+            nums24.setdefault(r["date"], {})[store] = json.loads(r["numbers_json"])
+        except Exception:
+            pass
+
+    db.close()
+
+    n = len(STORE_NAMES)
+    combos = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            for k in range(j + 1, n):
+                combos.append((STORE_NAMES[i], STORE_NAMES[j], STORE_NAMES[k]))
+
+    def combo_nums(trio, day_nums):
+        vote = {}
+        for st in trio:
+            for num in (day_nums.get(st) or []):
+                vote[num] = vote.get(num, 0) + 1
+        picked = [num for num, c in vote.items() if c >= 2]
+        picked.sort()
+        return picked
+
+    def ranks(m, trio):
+        return [m.get(t) for t in trio]
+
+    # 选最优组合（方向命中率，前日预测今日，追负）
+    best = None
+    bestRate = -1.0
+    for trio in combos:
+        nh = tt = 0
+        for dd in range(1, len(dates)):
+            mP = dayMap.get(dates[dd - 1])
+            mC = dayMap.get(dates[dd])
+            if not mP or not mC:
+                continue
+            aP, bP, cP = ranks(mP, trio)
+            aC, bC, cC = ranks(mC, trio)
+            if None in (aP, bP, cP, aC, bC, cC):
+                continue
+            prevGood = (1 if aP <= TH else 0) + (1 if bP <= TH else 0) + (1 if cP <= TH else 0)
+            if prevGood >= 2:
+                continue
+            curGood = (1 if aC <= TH else 0) + (1 if bC <= TH else 0) + (1 if cC <= TH else 0)
+            tt += 1
+            if curGood < 2:
+                nh += 1
+        rate = nh / tt if tt else 0.0
+        if rate > bestRate:
+            bestRate = rate
+            best = trio
+
+    if not best:
+        return {"best": None, "rate": 0, "rows": [], "total": 0, "name": "选最优单组合"}
+
+    rows = []
+    cum = 0
+    for dd in range(1, len(dates)):
+        d = dates[dd]
+        # 实际下单：每天固定追负（无空仓），号码 = 该组合3家24码≥2票
+        nums = combo_nums(best, nums24.get(d) or {})
+        draw = drawMap.get(d)
+        bet = 40 * len(nums)
+        if draw is not None:
+            hit = draw in nums
+            pnl = (40 * 47 - bet) if hit else (-bet)
+            cum += pnl
+            rows.append({"date": d, "dir": "追负", "hit": hit, "pnl": pnl, "cum": cum,
+                         "dayBet": bet, "hitCount": 1 if hit else 0, "betCount": 1,
+                         "skipped": False, "nums": nums, "draw": draw,
+                         "hitNum": draw if hit else None})
+        else:
+            rows.append({"date": d, "dir": "追负", "hit": None, "pnl": 0, "cum": cum,
+                         "dayBet": bet, "hitCount": 0, "betCount": 1,
+                         "skipped": False, "nums": nums, "draw": None, "hitNum": None})
+
+    return {"best": best, "rate": bestRate, "rows": rows, "total": cum, "name": "选最优单组合"}

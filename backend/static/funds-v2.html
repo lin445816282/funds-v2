@@ -10790,8 +10790,22 @@ function l3Analysis(strategy, actual, hitRate, sumHit, sumBet) {
 var l3DailyCache = {};
 function showL3Daily(strategy) {
   var name = MG_STRATEGIES[strategy] ? MG_STRATEGIES[strategy].name : strategy;
+  if (strategy === 'bestcombo') {
+    authFetch('/api/simulate/l3-bestcombo-daily')
+      .then(function(r) { return r.json(); })
+      .then(function(log) {
+        if (!log || !log.rows || !log.rows.length) { showToast('暂无数据'); return; }
+        renderL3Daily(log, strategy, name);
+      })
+      .catch(function(e) { showToast('加载失败: ' + e.message); });
+    return;
+  }
   var log = l3DailyLog(strategy);
   if (!log || !log.rows.length) { showToast('暂无数据'); return; }
+  renderL3Daily(log, strategy, name);
+}
+
+function renderL3Daily(log, strategy, name) {
   var overlay = document.getElementById('l3-daily-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -10850,19 +10864,36 @@ function showL3Daily(strategy) {
   // 每日记录表
   h += '<div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px">';
   h += '<table style="width:100%;border-collapse:collapse;font-size:10px">';
-  h += '<thead><tr style="background:#f0f3f8;position:sticky;top:0"><th style="padding:4px;text-align:left">日期</th><th style="padding:4px;text-align:center">方向</th><th style="padding:4px;text-align:right">下单</th><th style="padding:4px;text-align:center">命中/下注</th><th style="padding:4px;text-align:right">当日盈亏</th><th style="padding:4px;text-align:right">累计盈亏</th></tr></thead><tbody>';
+  var isBC = (strategy === 'bestcombo');
+  h += '<thead><tr style="background:#f0f3f8;position:sticky;top:0"><th style="padding:4px;text-align:left">日期</th><th style="padding:4px;text-align:center">方向</th>';
+  if (isBC) h += '<th style="padding:4px;text-align:center">开奖</th><th style="padding:4px;text-align:center">命中</th>';
+  h += '<th style="padding:4px;text-align:right">下单</th>';
+  if (!isBC) h += '<th style="padding:4px;text-align:center">命中/下注</th>';
+  h += '<th style="padding:4px;text-align:right">当日盈亏</th><th style="padding:4px;text-align:right">累计盈亏</th></tr></thead><tbody>';
   var shown = rows.slice().reverse().slice(0, 400);
   shown.forEach(function(r){
     var dirTxt = r.skipped ? '—' : (r.dir || '追负');
     var dirCls = r.dir === '追正' ? '#16a34a' : '#2563eb';
     var pnlCls = r.pnl > 0 ? '#16a34a' : (r.pnl < 0 ? '#dc2626' : '#8899b0');
     var cumCls = r.cum >= 0 ? '#16a34a' : '#dc2626';
-    var hb = r.skipped ? '—' : (r.hitCount + '/' + r.betCount);
     h += '<tr style="' + (r.skipped ? 'opacity:.5' : '') + '">';
     h += '<td style="padding:3px 4px">' + r.date + '</td>';
     h += '<td style="padding:3px;text-align:center;color:' + dirCls + ';font-weight:600">' + dirTxt + '</td>';
+    if (isBC) {
+      var drawTxt = (r.draw != null) ? r.draw : '—';
+      var hitTxt, hitCls;
+      if (r.skipped) { hitTxt = '—'; hitCls = '#8899b0'; }
+      else if (r.hit === true || r.hit === 1) { hitTxt = '✅' + (r.hitNum ? r.hitNum : ''); hitCls = '#16a34a'; }
+      else if (r.hit === false || r.hit === 0) { hitTxt = '✗'; hitCls = '#dc2626'; }
+      else { hitTxt = '待开'; hitCls = '#8899b0'; }
+      h += '<td style="padding:3px;text-align:center;color:#5a6b85">' + drawTxt + '</td>';
+      h += '<td style="padding:3px;text-align:center;color:' + hitCls + ';font-weight:700">' + hitTxt + '</td>';
+    }
     h += '<td style="padding:3px;text-align:right;color:#5a6b85">' + (r.dayBet || 0).toLocaleString() + '</td>';
-    h += '<td style="padding:3px;text-align:center;color:#5a6b85">' + hb + '</td>';
+    if (!isBC) {
+      var hb = r.skipped ? '—' : (r.hitCount + '/' + r.betCount);
+      h += '<td style="padding:3px;text-align:center;color:#5a6b85">' + hb + '</td>';
+    }
     h += '<td style="padding:3px;text-align:right;color:' + pnlCls + ';font-weight:700">' + (r.pnl>=0?'+':'') + r.pnl.toLocaleString() + '</td>';
     h += '<td style="padding:3px;text-align:right;color:' + cumCls + ';font-weight:700">' + (r.cum>=0?'+':'') + r.cum.toLocaleString() + '</td>';
     h += '</tr>';
