@@ -10095,9 +10095,16 @@ function renderLadderOrderUI(d) {
   }
   h += '</div></div>';
 
+  // ── 真实下单规则约束（10期窗口 + 连亏熔断，与楼梯下单2同规则）──
+  h += '<div id="ladderorder-constraint" style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🛡️ 真实下单规则约束</div>';
+  h += '<div class="empty" style="padding:8px;font-size:12px">⏳ 约束评估中...</div>';
+  h += '</div>';
+
   el.innerHTML = h;
   // 方案A 复出评估横幅填充（动态）
   if (ladderScheme === 'a') loadLadderOrderReeval();
+  loadLadderOrderConstraint();
 }
 
 // ── 楼梯下单 tab 方案A 复出评估横幅（复用结论 tab 的评估接口）──
@@ -10123,6 +10130,21 @@ function loadLadderOrderReeval() {
     h += '</div></div></div>';
     box.innerHTML = h;
   }).catch(function(){ box.innerHTML = ''; });
+}
+
+// ── 楼梯下单 tab 真实下单规则约束（与楼梯下单2同规则，共用渲染函数）──
+function loadLadderOrderConstraint() {
+  var box = document.getElementById('ladderorder-constraint');
+  if (!box) return;
+  authFetch('/api/track/real-trade-constraint?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) { box.innerHTML = '<div style="font-size:12px;color:#8899b0;padding:8px">' + (d.error || '无数据') + '</div>'; return; }
+      renderRealTradeConstraint(d, 'ladderorder-constraint');
+    })
+    .catch(function(e) {
+      box.innerHTML = '<div style="font-size:12px;color:#dc2626;padding:8px">加载失败: ' + e.message + '</div>';
+    });
 }
 
 
@@ -10454,8 +10476,8 @@ function loadRealTradeConstraint() {
     });
 }
 
-function renderRealTradeConstraint(d) {
-  var box = document.getElementById('ladderorder2-constraint');
+function renderRealTradeConstraint(d, boxId) {
+  var box = document.getElementById(boxId || 'ladderorder2-constraint');
   if (!box) return;
   var h = '';
   var statusColor = d.stopped ? '#dc2626' : '#16a34a';
