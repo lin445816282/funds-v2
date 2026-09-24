@@ -4071,10 +4071,26 @@ function renderConclusions() {
   h += '</div>';
   // 方案A 复出评估横幅（动态，每日重算停手后命中率 vs 平衡点，替代旧「永久停手」）
   h += '<div id="schemea-reeval-banner" style="margin-top:12px"><div class="empty" style="padding:8px">⏳ 评估中...</div></div>';
+  // 真实下单规则约束（10期窗口 + 连亏熔断，与楼梯下单同规则）
+  h += '<div id="conclusions-constraint" style="margin-top:12px"><div class="empty" style="padding:8px">⏳ 约束评估中...</div></div>';
   h += '<div id="schemea-box" style="margin-top:12px"><div class="empty">⏳ 加载方案A...</div></div>';
   el.innerHTML = h;
   loadLadderSchemeA();
   loadSchemeAReeval();
+  loadConclusionsConstraint();
+}
+
+// ── 结论 tab 真实下单规则约束（与楼梯下单同规则，共用渲染函数）──
+function loadConclusionsConstraint() {
+  var box = document.getElementById('conclusions-constraint');
+  if (!box) return;
+  authFetch('/api/track/real-trade-constraint?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) { box.innerHTML = ''; return; }
+      renderRealTradeConstraint(d, 'conclusions-constraint');
+    })
+    .catch(function(e) { box.innerHTML = ''; });
 }
 
 // ── 方案A 复出评估横幅（动态）──
