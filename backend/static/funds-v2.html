@@ -359,6 +359,10 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   #panel-mgmt.on { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-items: start; }
   #panel-mgmt.on .mgmt-section { margin-top: 0; }
   #panel-mgmt.on .mgmt-section:last-child { grid-column: 1 / -1; }
+  /* 凯利门店卡片：双列，标题跨全宽 */
+  #kelly-stores { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  #kelly-stores .kelly-title { grid-column: 1 / -1; }
+  #kelly-stores .kelly-card { margin-bottom: 0; }
   /* FAB 贴内容区右侧 */
   .fab-btn { right: calc(50vw - 450px + 16px); }
 }
@@ -369,6 +373,7 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
   .ov-cards { grid-template-columns: repeat(3, 1fr); }
   .alert-list { grid-template-columns: repeat(3, 1fr); }
   .record-list { grid-template-columns: repeat(3, 1fr); }
+  #kelly-stores { grid-template-columns: repeat(3, 1fr); }
   .fab-btn { right: calc(50vw - 700px + 16px); }
 }
 </style>
@@ -7860,10 +7865,10 @@ function renderKellyStores(d) {
     });
   });
   
-  var h = '<div style="font-size:13px;font-weight:700;color:#5a6b85;margin-bottom:6px">📋 门店共识对比（30/60/90天）</div>';
+  var h = '<div class="kelly-title" style="font-size:13px;font-weight:700;color:#5a6b85;margin-bottom:6px">📋 门店共识对比（30/60/90天）</div>';
   
   stores.forEach(function(store) {
-    h += '<div style="background:#fff;border-radius:10px;padding:10px 12px;margin-bottom:6px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+    h += '<div class="kelly-card" style="background:#fff;border-radius:10px;padding:10px 12px;margin-bottom:6px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
     h += '<div style="font-size:14px;font-weight:700;color:#1a2438;margin-bottom:6px">' + store.store + '</div>';
     
     ['positive', 'negative'].forEach(function(mode) {
