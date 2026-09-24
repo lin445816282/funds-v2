@@ -337,6 +337,40 @@ body::before{content:'';position:fixed;top:-60px;right:-80px;width:480px;height:
 .streak-yr-btn{padding:1px 6px;border-radius:8px;border:1px solid #cdd7e5;background:#fff;font-size:10px;color:#8899b0;cursor:pointer;white-space:nowrap}
 .streak-yr-btn:active{background:#eef3ff}
 .streak-yr-btn.streak-yr-sel{background:#1e3a5f;color:#fff;border-color:#1e3a5f}
+
+/* ══════════ 响应式适配：平板 & 电脑端 ══════════ */
+/* 平板 ≥768px：放宽到 900px，卡片双列 */
+@media (min-width: 768px) {
+  body { max-width: 900px; }
+  .header { padding: 10px 24px; }
+  .sync-bar { padding: 4px 24px; }
+  .tab-bar { margin: 8px 24px; }
+  .panel { padding: 0 24px 90px; }
+  /* 总览门店卡片：双列 */
+  .ov-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .ov-cards .ov-card2 { margin-bottom: 0; }
+  /* 预警列表：双列 */
+  .alert-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .alert-list .alert-item { margin-bottom: 0; }
+  /* 记录列表：双列 */
+  .record-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .record-list .record-item { margin-bottom: 0; }
+  /* 管理页：双列，操作日志跨全宽 */
+  #panel-mgmt.on { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-items: start; }
+  #panel-mgmt.on .mgmt-section { margin-top: 0; }
+  #panel-mgmt.on .mgmt-section:last-child { grid-column: 1 / -1; }
+  /* FAB 贴内容区右侧 */
+  .fab-btn { right: calc(50vw - 450px + 16px); }
+}
+
+/* 电脑 ≥1200px：放宽到 1400px，卡片三列 */
+@media (min-width: 1200px) {
+  body { max-width: 1400px; }
+  .ov-cards { grid-template-columns: repeat(3, 1fr); }
+  .alert-list { grid-template-columns: repeat(3, 1fr); }
+  .record-list { grid-template-columns: repeat(3, 1fr); }
+  .fab-btn { right: calc(50vw - 700px + 16px); }
+}
 </style>
 </head>
 <body>
@@ -8115,6 +8149,19 @@ window.addEventListener('unhandledrejection', function(e) {
   console.error('[funds-v2] 未捕获异步错误:', e.reason);
   showToast('⚠️ 网络异常，请重试');
 });
+
+// ═══════ 窗口缩放重绘图表（平板/电脑自适应） ═══════
+(function(){
+  var resizeTimer = null;
+  window.addEventListener('resize', function(){
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function(){
+      // 仅重绘当前可见面板的 canvas 图表
+      if (currentTab === 'compare') { drawCompare(); }
+      else if (currentTab === 'ranking') { drawRankChart(); }
+    }, 200);
+  });
+})();
 
 // ====== 楼梯 Tab ======
 function daysAgo(dateStr) {
