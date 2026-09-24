@@ -10297,6 +10297,7 @@ function renderLadderOrder2() {
       if (d.error) { el.innerHTML = '<div style="color:#dc2626;text-align:center;padding:16px">⚠️ ' + d.error + '</div>'; return; }
       ladderOrderSheetData = d;
       renderLadderOrder2UI(d);
+      loadRealTradeConstraint();
       autoSaveLadderOrder2();
     })
     .catch(function(e) {
@@ -10429,7 +10430,70 @@ function renderLadderOrder2UI(d) {
   h += '<div style="text-align:center;font-size:12px;font-weight:700;color:#1e3a5f;border-top:1px solid #e5e7eb;padding-top:8px">总下单 <b style="color:#dc2626">' + wTotal + '</b></div>';
   h += '</div>';
 
+  // ── 真实下单规则约束（10期窗口 + 连亏熔断）──
+  h += '<div id="ladderorder2-constraint" style="background:#fff;border-radius:12px;padding:12px;margin:8px 12px;box-shadow:0 1px 3px rgba(0,0,0,.03)">';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f">🛡️ 真实下单规则约束</div>';
+  h += '<div class="empty" style="padding:8px;font-size:12px">⏳ 约束评估中...</div>';
+  h += '</div>';
+
   el.innerHTML = h;
+}
+
+// 真实下单规则约束：拉取后端 /api/track/real-trade-constraint 并渲染
+function loadRealTradeConstraint() {
+  var box = document.getElementById('ladderorder2-constraint');
+  if (!box) return;
+  authFetch('/api/track/real-trade-constraint?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) { box.innerHTML = '<div style="font-size:12px;color:#8899b0;padding:8px">' + (d.error || '无数据') + '</div>'; return; }
+      renderRealTradeConstraint(d);
+    })
+    .catch(function(e) {
+      box.innerHTML = '<div style="font-size:12px;color:#dc2626;padding:8px">加载失败: ' + e.message + '</div>';
+    });
+}
+
+function renderRealTradeConstraint(d) {
+  var box = document.getElementById('ladderorder2-constraint');
+  if (!box) return;
+  var h = '';
+  var statusColor = d.stopped ? '#dc2626' : '#16a34a';
+  var statusText = d.stopped ? '🔴 已触发停止 — 禁止下单' : '🟢 正常 — 可继续下单';
+  var statusBg = d.stopped ? '#fef2f2' : '#f0fdf4';
+  h += '<div style="font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:6px">🛡️ 真实下单规则约束 <span style="font-size:10px;font-weight:400;color:#8899b0">（方案A 真实下单 · 自动约束）</span></div>';
+  h += '<div style="background:' + statusBg + ';border:1px solid ' + statusColor + ';color:' + statusColor + ';border-radius:8px;padding:8px 10px;font-size:13px;font-weight:700;margin-bottom:8px">' + statusText + '</div>';
+
+  var r1c = d.rule1_triggered ? '#dc2626' : '#16a34a';
+  var r1i = d.rule1_triggered ? '✅ 触发' : '— 未触发';
+  h += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #f3f4f6">';
+  h += '<span style="color:#5a6b85">规则1 · 近10期亏损天数 ≥ 7 天</span>';
+  h += '<span style="font-weight:700;color:' + r1c + '">' + d.last10_loss_days + ' 天 ' + r1i + '</span>';
+  h += '</div>';
+
+  var r2c = d.rule2_triggered ? '#dc2626' : '#16a34a';
+  var r2i = d.rule2_triggered ? '✅ 触发' : '— 未触发';
+  h += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #f3f4f6">';
+  h += '<span style="color:#5a6b85">规则2 · 连续亏损 > 4 天</span>';
+  h += '<span style="font-weight:700;color:' + r2c + '">连续 ' + d.consecutive_loss + ' 天 ' + r2i + '</span>';
+  h += '</div>';
+
+  if (d.stop_reasons && d.stop_reasons.length) {
+    h += '<div style="font-size:11px;color:#dc2626;margin-top:6px;line-height:1.6">停止原因：' + d.stop_reasons.join('；') + '</div>';
+  }
+
+  h += '<div style="font-size:12px;font-weight:700;color:#1e3a5f;margin:8px 0 4px">近10期盈亏明细</div>';
+  h += '<div style="max-height:180px;overflow-y:auto">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+  h += '<thead><tr style="background:#f0f3f8;position:sticky;top:0"><th style="padding:3px;text-align:left">日期</th><th style="padding:3px;text-align:right">盈亏</th></tr></thead><tbody>';
+  (d.last10 || []).forEach(function(r) {
+    var c = r.is_loss ? '#dc2626' : '#16a34a';
+    var sign = r.profit > 0 ? '+' : '';
+    h += '<tr><td style="padding:2px 3px;color:#5a6b85">' + r.date.slice(5) + '</td><td style="padding:2px;text-align:right;font-weight:700;color:' + c + '">' + sign + r.profit + '</td></tr>';
+  });
+  h += '</tbody></table></div>';
+
+  box.innerHTML = h;
 }
 
 

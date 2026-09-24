@@ -1871,6 +1871,67 @@ def get_scheme_a_reeval():
     }
 
 
+# ═══════════════ 方案A 真实下单规则约束（10期窗口 + 连亏熔断） ═══════════════
+REAL_TRADE_WINDOW = 10          # 约束窗口：10期
+REAL_TRADE_MAX_LOSS_DAYS = 7    # 窗口内亏损天数 ≥7 → 停止
+REAL_TRADE_MAX_STREAK = 4       # 连续亏损 >4 天 → 停止
+
+@app.get("/api/track/real-trade-constraint")
+async def api_real_trade_constraint(request: Request):
+    """方案A 真实下单自动约束：近10期≥7天负 或 连续>4天负 → 停止下单"""
+    await require_auth(request)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, get_real_trade_constraint)
+
+
+def get_real_trade_constraint():
+    sync_scheme_a_if_stale()  # 数据落后即重算
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT date, profit, capital FROM ladder_scheme_a_daily ORDER BY date"
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return {"ok": False, "error": "无方案A数据"}
+
+    # 近10期亏损天数
+    last10 = rows[-REAL_TRADE_WINDOW:]
+    last10_loss_days = sum(1 for r in last10 if r["profit"] < 0)
+
+    # 连续亏损（从最后一期往前数，遇到非负即断）
+    consecutive_loss = 0
+    for r in reversed(rows):
+        if r["profit"] < 0:
+            consecutive_loss += 1
+        else:
+            break
+
+    rule1 = last10_loss_days >= REAL_TRADE_MAX_LOSS_DAYS
+    rule2 = consecutive_loss > REAL_TRADE_MAX_STREAK
+
+    stop_reasons = []
+    if rule1:
+        stop_reasons.append(f"近{REAL_TRADE_WINDOW}期亏损 {last10_loss_days} 天（≥{REAL_TRADE_MAX_LOSS_DAYS}天）")
+    if rule2:
+        stop_reasons.append(f"连续亏损 {consecutive_loss} 天（>{REAL_TRADE_MAX_STREAK}天）")
+
+    return {
+        "ok": True,
+        "window": REAL_TRADE_WINDOW,
+        "last10_loss_days": last10_loss_days,
+        "rule1_triggered": rule1,
+        "rule1_desc": f"近{REAL_TRADE_WINDOW}期亏损天数 ≥ {REAL_TRADE_MAX_LOSS_DAYS} 天",
+        "consecutive_loss": consecutive_loss,
+        "rule2_triggered": rule2,
+        "rule2_desc": f"连续亏损 > {REAL_TRADE_MAX_STREAK} 天",
+        "stopped": rule1 or rule2,
+        "stop_reasons": stop_reasons,
+        "last10": [{"date": r["date"], "profit": r["profit"], "capital": r["capital"],
+                    "is_loss": r["profit"] < 0} for r in last10],
+    }
+
+
 
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 if os.path.isdir(STATIC_DIR):
