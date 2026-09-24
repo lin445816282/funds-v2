@@ -1806,6 +1806,71 @@ def get_ladder_scheme_a_detail(date):
             "count": len(detail), "hit_count": hit}
 
 
+# ═══════════════ 方案A 复出评估（每日自动重算） ═══════════════
+SCHEME_A_STOP_DATE = "2026-09-13"   # 方案A 停手决策日（连亏6天破历史极值）
+SCHEME_A_BREAK_EVEN = 51.06          # 追负命中率盈亏平衡点（%）
+
+@app.get("/api/track/scheme-a-reeval")
+async def api_scheme_a_reeval(request: Request):
+    """方案A 复出评估：停手后（09-14 起）样本外命中率/盈亏 vs 平衡点，动态推翻「永久停手」"""
+    await require_auth(request)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, get_scheme_a_reeval)
+
+
+def get_scheme_a_reeval():
+    sync_scheme_a_if_stale()  # 数据落后即重算
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT date, profit, order_amount, capital, hits, total FROM ladder_scheme_a_daily ORDER BY date"
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return {"ok": False, "error": "无方案A数据"}
+
+    before = [r for r in rows if r["date"] <= SCHEME_A_STOP_DATE]
+    after = [r for r in rows if r["date"] > SCHEME_A_STOP_DATE]
+
+    stop_capital = before[-1]["capital"] if before else None
+    stop_profit_6d = sum(r["profit"] for r in before[-6:]) if len(before) >= 6 else None
+
+    if not after:
+        return {
+            "ok": True, "stop_date": SCHEME_A_STOP_DATE, "after_days": 0,
+            "stop_capital": stop_capital, "status": "no_data",
+            "break_even": SCHEME_A_BREAK_EVEN,
+        }
+
+    after_hits = sum(r["hits"] for r in after)
+    after_total = sum(r["total"] for r in after)
+    after_rate = round(after_hits / after_total * 100, 1) if after_total else None
+    after_profit = sum(r["profit"] for r in after)
+    final_capital = after[-1]["capital"]
+    capital_gain = final_capital - stop_capital if stop_capital is not None else None
+
+    # 对称判定：与停手时同一标准（命中率 vs 平衡点）
+    if after_rate is None:
+        status = "no_data"
+    elif after_rate > SCHEME_A_BREAK_EVEN and after_profit > 0:
+        status = "recovered"   # 🟢 正期望恢复 + 盈亏转正 → 可复出
+    elif after_rate > SCHEME_A_BREAK_EVEN:
+        status = "watching"    # 🟡 命中率恢复但盈亏未转正
+    else:
+        status = "still_bad"   # 🔴 仍负期望，维持停手
+
+    return {
+        "ok": True,
+        "stop_date": SCHEME_A_STOP_DATE,
+        "after_days": len(after),
+        "after": {"hits": after_hits, "total": after_total, "rate": after_rate, "profit": after_profit},
+        "capital": {"stop": stop_capital, "now": final_capital, "gain": capital_gain},
+        "stop_6d_profit": stop_profit_6d,
+        "break_even": SCHEME_A_BREAK_EVEN,
+        "status": status,
+    }
+
+
 
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 if os.path.isdir(STATIC_DIR):

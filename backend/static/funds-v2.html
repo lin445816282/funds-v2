@@ -4069,18 +4069,40 @@ function renderConclusions() {
   h += '<div style="font-size:15px;font-weight:700">📋 方案A 下单数据</div>';
   h += '<div style="font-size:10px;opacity:.85;margin-top:2px">楼梯下单方案A · 56组追负达朗贝尔±5 · 2026-05-01起</div>';
   h += '</div>';
-  // ⛔ 方案A 永久停手横幅（结论 tab 顶部常驻红字，2026-09-13 决策）
-  h += '<div style="margin-top:12px;border-radius:12px;padding:14px 16px;background:linear-gradient(135deg,#7f1d1d,#b91c1c);color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.15)">';
-  h += '<div style="display:flex;align-items:center;gap:10px">';
-  h += '<span style="font-size:28px;line-height:1">⛔</span>';
-  h += '<div style="flex:1">';
-  h += '<div style="font-size:15px;font-weight:800;letter-spacing:.5px">方案A 已永久停手（2026-09-13）</div>';
-  h += '<div style="font-size:11px;opacity:.92;margin-top:3px">连亏6天 −17.4万（09-08~09-13）· 单日最大 −46,950 · 命中率随机无复出时机</div>';
-  h += '<div style="font-size:11px;opacity:.85;margin-top:2px">负期望 −4%（命中47% < 平衡点51.06%）· 凯利 f*&lt;0（仓位为负）· 止损保本不再下单</div>';
-  h += '</div></div></div>';
+  // 方案A 复出评估横幅（动态，每日重算停手后命中率 vs 平衡点，替代旧「永久停手」）
+  h += '<div id="schemea-reeval-banner" style="margin-top:12px"><div class="empty" style="padding:8px">⏳ 评估中...</div></div>';
   h += '<div id="schemea-box" style="margin-top:12px"><div class="empty">⏳ 加载方案A...</div></div>';
   el.innerHTML = h;
   loadLadderSchemeA();
+  loadSchemeAReeval();
+}
+
+// ── 方案A 复出评估横幅（动态）──
+function loadSchemeAReeval() {
+  var box = document.getElementById('schemea-reeval-banner');
+  if (!box) return;
+  authFetch('/api/track/scheme-a-reeval').then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) { box.innerHTML = ''; return; }
+    if (d.status === 'no_data') {
+      box.innerHTML = '<div style="border-radius:12px;padding:12px 16px;background:#f8fafc;color:#5a6b85;font-size:12px;text-align:center">方案A 停手后暂无新数据</div>';
+      return;
+    }
+    var conf = {
+      recovered: {grad:'linear-gradient(135deg,#16a34a,#22c55e)', emoji:'🟢', title:'方案A 已恢复正期望', sub:'停手后命中率 ' + d.after.rate + '% > 平衡点 ' + d.break_even + '%，盈利转正，可复出'},
+      watching:  {grad:'linear-gradient(135deg,#f59e0b,#fbbf24)', emoji:'🟡', title:'方案A 观察中', sub:'停手后命中率 ' + d.after.rate + '% > 平衡点，但盈亏未转正'},
+      still_bad: {grad:'linear-gradient(135deg,#7f1d1d,#b91c1c)', emoji:'🔴', title:'方案A 仍负期望', sub:'停手后命中率 ' + d.after.rate + '% < 平衡点 ' + d.break_even + '%，维持停手'}
+    }[d.status] || {grad:'linear-gradient(135deg,#7f1d1d,#b91c1c)', emoji:'⛔', title:'方案A 已停手', sub:''};
+    var gain = d.capital.gain != null ? (d.capital.gain >= 0 ? '+' : '') + Math.round(d.capital.gain).toLocaleString() : '—';
+    var h = '<div style="border-radius:12px;padding:14px 16px;background:' + conf.grad + ';color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.15)">';
+    h += '<div style="display:flex;align-items:center;gap:10px">';
+    h += '<span style="font-size:28px;line-height:1">' + conf.emoji + '</span>';
+    h += '<div style="flex:1">';
+    h += '<div style="font-size:15px;font-weight:800;letter-spacing:.5px">' + conf.title + '</div>';
+    h += '<div style="font-size:11px;opacity:.92;margin-top:3px">' + conf.sub + '</div>';
+    h += '<div style="font-size:10px;opacity:.85;margin-top:2px">停手后 ' + d.after_days + ' 天：命中 ' + d.after.hits + '/' + d.after.total + '（' + d.after.rate + '%）· 盈亏 ' + (d.after.profit >= 0 ? '+' : '') + Math.round(d.after.profit).toLocaleString() + ' · 本金 ' + Math.round(d.capital.stop).toLocaleString() + ' → ' + Math.round(d.capital.now).toLocaleString() + '（' + gain + '）</div>';
+    h += '</div></div></div>';
+    box.innerHTML = h;
+  }).catch(function(){ box.innerHTML = ''; });
 }
 
 // ── 方案A 真实下单查询（日期段 + 逐日/分月/分周 + 指标）──
@@ -9919,15 +9941,9 @@ function renderLadderOrderUI(d) {
   h += '<div style="font-size:10px;opacity:.85;margin-top:6px">' + schemeName + ' · 追负(24号) · 2026-05起 · ' + chipsData.dates.length + '天</div>';
   h += '</div>';
 
-  // ⛔ 方案A 永久停手（2026-09-13 决策：连亏6天破历史极值、命中率随机无复出时机、负期望-4%）
+  // 方案A 复出评估横幅（动态，替代旧「永久停手」）
   if (ladderScheme === 'a') {
-    h += '<div style="margin:8px 12px 0;border-radius:12px;padding:14px 16px;background:linear-gradient(135deg,#7f1d1d,#b91c1c);color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.15)">';
-    h += '<div style="display:flex;align-items:center;gap:10px">';
-    h += '<span style="font-size:28px;line-height:1">⛔</span>';
-    h += '<div style="flex:1">';
-    h += '<div style="font-size:15px;font-weight:800;letter-spacing:.5px">方案A 已永久停手</div>';
-    h += '<div style="font-size:11px;opacity:.92;margin-top:3px">连亏6天 −17.4万 · 命中率随机无复出时机（负期望 −4%）· 止损保本，不再下单</div>';
-    h += '</div></div></div>';
+    h += '<div id="ladderorder-reeval-banner" style="margin:8px 12px 0"><div class="empty" style="padding:8px">⏳ 评估中...</div></div>';
   }
 
   // ═══ 健康度状态灯 ═══
@@ -10080,6 +10096,33 @@ function renderLadderOrderUI(d) {
   h += '</div></div>';
 
   el.innerHTML = h;
+  // 方案A 复出评估横幅填充（动态）
+  if (ladderScheme === 'a') loadLadderOrderReeval();
+}
+
+// ── 楼梯下单 tab 方案A 复出评估横幅（复用结论 tab 的评估接口）──
+function loadLadderOrderReeval() {
+  var box = document.getElementById('ladderorder-reeval-banner');
+  if (!box) return;
+  authFetch('/api/track/scheme-a-reeval').then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok || d.status === 'no_data') { box.innerHTML = ''; return; }
+    var conf = {
+      recovered: {grad:'linear-gradient(135deg,#16a34a,#22c55e)', emoji:'🟢', title:'方案A 已恢复正期望', sub:'停手后命中率 ' + d.after.rate + '% > 平衡点 ' + d.break_even + '%，盈利转正，可复出'},
+      watching:  {grad:'linear-gradient(135deg,#f59e0b,#fbbf24)', emoji:'🟡', title:'方案A 观察中', sub:'停手后命中率 ' + d.after.rate + '% > 平衡点，但盈亏未转正'},
+      still_bad: {grad:'linear-gradient(135deg,#7f1d1d,#b91c1c)', emoji:'🔴', title:'方案A 仍负期望', sub:'停手后命中率 ' + d.after.rate + '% < 平衡点 ' + d.break_even + '%，维持停手'}
+    }[d.status];
+    if (!conf) { box.innerHTML = ''; return; }
+    var gain = d.capital.gain != null ? (d.capital.gain >= 0 ? '+' : '') + Math.round(d.capital.gain).toLocaleString() : '—';
+    var h = '<div style="border-radius:12px;padding:12px 16px;background:' + conf.grad + ';color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.15)">';
+    h += '<div style="display:flex;align-items:center;gap:10px">';
+    h += '<span style="font-size:24px;line-height:1">' + conf.emoji + '</span>';
+    h += '<div style="flex:1">';
+    h += '<div style="font-size:14px;font-weight:800;letter-spacing:.5px">' + conf.title + '</div>';
+    h += '<div style="font-size:10px;opacity:.9;margin-top:2px">' + conf.sub + '</div>';
+    h += '<div style="font-size:10px;opacity:.85;margin-top:2px">停手后 ' + d.after_days + ' 天命中 ' + d.after.rate + '% · 本金 ' + Math.round(d.capital.stop).toLocaleString() + ' → ' + Math.round(d.capital.now).toLocaleString() + '（' + gain + '）</div>';
+    h += '</div></div></div>';
+    box.innerHTML = h;
+  }).catch(function(){ box.innerHTML = ''; });
 }
 
 
